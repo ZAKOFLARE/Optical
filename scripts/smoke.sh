@@ -291,7 +291,9 @@ echo "-- WebSocket / TOTP 二维码 / 采样间隔 --"
 WS_CODE="$(curl -s -o /dev/null -w '%{http_code}' -m 2   -H 'Connection: Upgrade' -H 'Upgrade: websocket'   -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw=='   -b "$COOKIE" "http://$ADM/api/ws" 2>/dev/null || true)"
 check "管理面 WebSocket 升级返回 101" '101' "$WS_CODE"
 # 历史和排行榜不再走 HTTP 轮询：客户端在 WS 上声明视角，服务端按视角推
-check "WS 按视角推送历史与排行榜" 'VIEW_OK' "$(python3 scripts/ws_probe.py "http://$ADM" "$COOKIE" 2>&1 | head -1)"
+check "WS 按视角推送历史/排行榜/配置" 'VIEW_OK' "$(python3 scripts/ws_probe.py "http://$ADM" "$COOKIE" 2>&1 | head -1)"
+check "状态接口带进程占用" '"rss_bytes":' "$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/status")"
+check "进程占用带线程数" '"threads":' "$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/status")"
 check "TOTP 二维码返回 SVG" '<svg' "$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/totp/qr?secret=JBSWY3DPEHPK3PXP&user=admin")"
 check "二维码响应不缓存" 'no-store' "$(curl -si -m 6 "${AUTH[@]}" "http://$ADM/api/totp/qr?secret=JBSWY3DPEHPK3PXP" | tr -d '\r' | grep -i '^cache-control:')"
 

@@ -144,6 +144,8 @@ pub struct AppState {
     pub sample_rev: AtomicU64,
     /// 统计版本号：每记一次请求 +1，没流量时 WS 不必反复算排行榜
     pub stats_rev: AtomicU64,
+    /// 进程 CPU 时间的上一次采样（算百分比用）
+    sys_prev: Mutex<Option<(f64, std::time::Instant)>>,
     last_sample: Mutex<LastSample>,
     pub cache: ResponseCache,
     pub backends: Arc<BackendRegistry>,
@@ -206,6 +208,7 @@ impl AppState {
             stats: Mutex::new(crate::stats::StatsStore::default()),
             sample_rev: AtomicU64::new(0),
             stats_rev: AtomicU64::new(0),
+            sys_prev: Mutex::new(None),
             last_sample: Mutex::new(LastSample::default()),
             cache: ResponseCache::default(),
             backends: Arc::new(BackendRegistry::default()),
@@ -423,6 +426,24 @@ impl AppState {
             .unwrap_or_else(|e| e.into_inner())
             .record_request(minute, dims, status, &counters, ua, ip);
         self.stats_rev.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// 进程自身占用。CPU% 用两次采样的差值算，所以第一次调用只建立基线。
+    pub fn sys_snapshot(&self) -> crate::sys::SysSample {
+        let mut out = crate::sys::sample();
+        let cpu = crate::sys::cpu_seconds();
+        let now = std::time::Instant::now();
+        let mut g = self.sys_prev.lock().unwrap_or_else(|e| e.into_inner());
+        if let (Some(c), Some((prev_c, prev_t))) = (cpu, *g) {
+            let dt = now.duration_since(prev_t).as_secs_f64();
+            if dt > 0.2 {
+                out.cpu_pct = (((c - prev_c) / dt) * 100.0).clamp(0.0, 6400.0);
+            }
+        }
+        if let Some(c) = cpu {
+            *g = Some((c, now));
+        }
+        out
     }
 
     /// 排行榜查询：维度 + 范围 + 筛选。粒度只是图表的展示方式，不影响这里。

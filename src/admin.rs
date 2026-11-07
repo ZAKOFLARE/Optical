@@ -352,6 +352,7 @@ async fn status_payload(st: &Arc<AppState>) -> Value {
             "content_type": cfg.error_pages.content_type,
             "inline": cfg.error_pages.bodies.len(),
         },
+        "sys": st.sys_snapshot(),
         "sample_interval_ms": cfg.metrics.sample_interval_ms,
         "history_points": cfg.metrics.history_points,
         "stored_bucket_ms": st.history_meta().0,
@@ -390,6 +391,9 @@ struct WsView {
     limit: usize,
     #[serde(default)]
     filters: Vec<WsFilter>,
+    /// 底部三张小排行卡要看的维度（最多 3 个）
+    #[serde(default)]
+    cards: Vec<String>,
 }
 
 impl WsView {
@@ -433,6 +437,8 @@ async fn ws_loop(mut socket: WebSocket, st: Arc<AppState>) {
     // 上次推送时的数据版本号：没变就不重算、不重发
     let mut sent_sample_rev = u64::MAX;
     let mut sent_stats_rev = u64::MAX;
+    // 配置也走这条通道：别的会话改了规则/路由，这边不用刷新页面就能看到
+    let mut sent_config_rev = u64::MAX;
 
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(1));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -479,6 +485,13 @@ async fn ws_loop(mut socket: WebSocket, st: Arc<AppState>) {
         payload["backend_list"] = json!(st.backends.snapshot(&cfg));
         payload["backend_groups"] = json!(st.backends.groups(&cfg));
 
+        let cfg_rev = st.config_rev();
+        if cfg_rev != sent_config_rev {
+            payload["rev"] = json!(cfg_rev);
+            payload["config"] = json!(cfg);
+            sent_config_rev = cfg_rev;
+        }
+
         // 历史/排行榜按客户端视角算，并且只在数据真的变了才带上
         if let Some(v) = &view {
             let sr = st.sample_rev.load(std::sync::atomic::Ordering::Relaxed);
@@ -489,6 +502,20 @@ async fn ws_loop(mut socket: WebSocket, st: Arc<AppState>) {
             let tr = st.stats_rev.load(std::sync::atomic::Ordering::Relaxed);
             if tr != sent_stats_rev {
                 payload["stats"] = stats_json(&st, &v.stats_query());
+                if !v.cards.is_empty() {
+                    let mut cards = serde_json::Map::new();
+                    for (i, name) in v.cards.iter().take(3).enumerate() {
+                        let dim = crate::stats::Dim::parse(name).unwrap_or(crate::stats::Dim::Ip);
+                        let q = StatsQuery {
+                            by: dim,
+                            range_secs: v.range.clamp(60, 7 * 86_400),
+                            limit: 5,
+                            filters: Vec::new(),
+                        };
+                        cards.insert(format!("{i}"), stats_json(&st, &q));
+                    }
+                    payload["cards"] = Value::Object(cards);
+                }
                 sent_stats_rev = tr;
             }
         }
