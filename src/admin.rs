@@ -9,7 +9,8 @@
 use crate::config::{AdminConfig, Config};
 use crate::state::AppState;
 use axum::body::Bytes;
-use axum::extract::{Path as AxumPath, Request, State};
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::{Path as AxumPath, Query, Request, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Response};
@@ -44,7 +45,9 @@ pub async fn serve(state: Arc<AppState>, listener: TcpListener) -> anyhow::Resul
         .route("/api/audit", get(api_audit).delete(api_clear_audit))
         .route("/api/cache/purge", post(api_cache_purge))
         .route("/api/totp/new", post(api_totp_new))
+        .route("/api/totp/qr", get(api_totp_qr))
         .route("/api/error-pages/preview", get(api_error_preview))
+        .route("/api/ws", get(api_ws))
         .route("/api/admin/password", post(api_set_password))
         .route("/api/backends", get(api_backends))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
@@ -225,7 +228,11 @@ async fn api_set_password(
 
 async fn index() -> impl IntoResponse {
     (
-        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            // 不缓存：否则改完 UI 用户还在看旧页面，以为改动没生效
+            (header::CACHE_CONTROL, "no-store"),
+        ],
         Html(INDEX_HTML),
     )
 }
@@ -248,8 +255,13 @@ async fn api_health() -> Json<Value> {
 }
 
 async fn api_status(State(st): State<Arc<AppState>>) -> Json<Value> {
+    Json(status_payload(&st).await)
+}
+
+/// 管理面状态载荷：REST 与 WebSocket 共用，避免两边字段漂移。
+async fn status_payload(st: &Arc<AppState>) -> Value {
     let cfg = st.snapshot().await;
-    Json(json!({
+    json!({
         "ok": true,
         "name": "optical",
         "version": env!("CARGO_PKG_VERSION"),
@@ -301,7 +313,128 @@ async fn api_status(State(st): State<Arc<AppState>>) -> Json<Value> {
             "content_type": cfg.error_pages.content_type,
             "inline": cfg.error_pages.bodies.len(),
         },
-    }))
+        "sample_interval_ms": cfg.metrics.sample_interval_ms,
+        // 档位保留点数：前端用它算窗口（间隔 × 点数），不用等 /api/history
+        "sample_points": st.sampling().1,
+        "ws_clients": st.metrics.ws_clients.load(std::sync::atomic::Ordering::Relaxed),
+        "config_rev": st.config_rev(),
+        "listen_v6": cfg.server.listen_v6,
+        "admin_listen_v6": cfg.server.admin_listen_v6,
+        "tls_listen_v6": cfg.tls.listen_v6,
+    })
+}
+
+/// WebSocket 实时通道：每秒推一份与 REST 同构的快照，前端不用再轮询。
+/// 鉴权由 require_auth 中间件在升级前完成（Cookie 无效直接 401，不会进入升级）。
+async fn api_ws(ws: WebSocketUpgrade, State(st): State<Arc<AppState>>) -> Response {
+    ws.on_upgrade(move |socket| ws_loop(socket, st))
+}
+
+async fn ws_loop(mut socket: WebSocket, st: Arc<AppState>) {
+    st.metrics
+        .ws_clients
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    struct Guard(Arc<AppState>);
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            self.0
+                .metrics
+                .ws_clients
+                .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+    let _guard = Guard(st.clone());
+
+    let mut ticker = tokio::time::interval(std::time::Duration::from_secs(1));
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            _ = ticker.tick() => {
+                let cfg = st.snapshot().await;
+                let mut payload = status_payload(&st).await;
+                payload["type"] = json!("snapshot");
+                payload["history"] = json!(st.history_snapshot());
+                payload["top"] = json!({
+                    "ua": st.top_ua(cfg.metrics.top_n.max(1)),
+                    "ip": st.top_ip(cfg.metrics.top_n.max(1)),
+                    "rules": st.top_rules(cfg.metrics.top_n.max(1)),
+                });
+                payload["backend_list"] = json!(st.backends.snapshot(&cfg));
+                payload["backend_groups"] = json!(st.backends.groups(&cfg));
+                if socket
+                    .send(Message::Text(payload.to_string().into()))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            msg = socket.recv() => {
+                match msg {
+                    Some(Ok(Message::Close(_))) | None => break,
+                    Some(Err(_)) => break,
+                    // 客户端不需要发消息；忽略 ping/pong 之外的输入
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct QrQuery {
+    secret: String,
+    #[serde(default)]
+    user: String,
+    #[serde(default)]
+    alg: String,
+}
+
+/// TOTP 二维码：服务端直接渲染 SVG，避免引入前端 QR 库或 CDN。
+async fn api_totp_qr(
+    State(st): State<Arc<AppState>>,
+    Query(q): Query<QrQuery>,
+) -> Response {
+    if q.secret.trim().is_empty() {
+        return (StatusCode::BAD_REQUEST, "missing secret").into_response();
+    }
+    let cfg = st.snapshot().await;
+    let alg = match q.alg.trim().to_ascii_lowercase().as_str() {
+        "sha256" => crate::config::TotpAlgorithm::Sha256,
+        "sha512" => crate::config::TotpAlgorithm::Sha512,
+        "sha1" => crate::config::TotpAlgorithm::Sha1,
+        _ => cfg.admin.totp_algorithm,
+    };
+    let user = if q.user.trim().is_empty() {
+        cfg.admin.username.as_str()
+    } else {
+        q.user.trim()
+    };
+    let uri = crate::auth::otpauth_uri(q.secret.trim(), user, alg);
+    match qrcode::QrCode::new(uri.as_bytes()) {
+        Ok(code) => {
+            let svg = code
+                .render::<qrcode::render::svg::Color>()
+                .min_dimensions(200, 200)
+                .dark_color(qrcode::render::svg::Color("#1b222e"))
+                .light_color(qrcode::render::svg::Color("#ffffff"))
+                .build();
+            (
+                StatusCode::OK,
+                [
+                    (header::CONTENT_TYPE, "image/svg+xml"),
+                    (header::CACHE_CONTROL, "no-store"),
+                ],
+                svg,
+            )
+                .into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("生成二维码失败: {e}"),
+        )
+            .into_response(),
+    }
 }
 
 async fn api_metrics(State(st): State<Arc<AppState>>) -> Json<Value> {
@@ -342,6 +475,7 @@ async fn api_get_config(State(st): State<Arc<AppState>>) -> Json<Value> {
     Json(json!({
         "ok": true,
         "path": st.config_path.display().to_string(),
+        "rev": st.config_rev(),
         "toml": cfg.to_toml(),
         "config": cfg,
     }))
@@ -378,6 +512,18 @@ async fn api_put_config(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<Value>, ApiError> {
+    // 乐观锁：客户端带上读取时的版本号；版本不一致说明别的会话已经改过，拒绝覆盖。
+    if let Some(raw) = headers.get("x-optical-config-rev").and_then(|v| v.to_str().ok()) {
+        if let Ok(base) = raw.trim().parse::<u64>() {
+            let current = st.config_rev();
+            if base != current {
+                return Err(ApiError::conflict(format!(
+                    "配置已被其他会话修改（你的版本 {base}，当前 {current}）。请刷新页面后重试，避免覆盖别人的改动。"
+                )));
+            }
+        }
+    }
+
     let ctype = headers
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
@@ -450,6 +596,10 @@ impl ApiError {
     #[allow(dead_code)]
     fn not_found(msg: String) -> Self {
         ApiError(StatusCode::NOT_FOUND, msg)
+    }
+
+    fn conflict(msg: String) -> Self {
+        ApiError(StatusCode::CONFLICT, msg)
     }
 }
 

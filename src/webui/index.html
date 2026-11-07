@@ -51,7 +51,9 @@
   .rail-item{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;
     padding:9px 0;color:var(--ink-2);font-size:10.5px;cursor:pointer;border:0;background:none;font-family:inherit}
   .rail-item svg{width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fill:none}
+  .rail-item{transition:background .14s,color .14s,transform .06s}
   .rail-item:hover{background:var(--hover);color:var(--ink)}
+  .rail-item:active{transform:scale(.96)}
   .rail-item.active{color:var(--blue);background:var(--blue-soft);font-weight:600}
   .rail-item.active::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--blue)}
   .rail-foot{margin:auto 0 12px;font:400 10px/1 var(--mono);color:var(--ink-3);writing-mode:vertical-rl}
@@ -85,13 +87,29 @@
   #qtip{position:fixed;z-index:120;display:none;max-width:300px;background:var(--panel);border:1px solid var(--line-2);
     box-shadow:0 8px 24px rgba(16,24,40,.16);padding:8px 10px;font-size:12px;line-height:1.65;color:var(--ink-2)}
   .fam-desc{font-size:11.5px;color:var(--ink-3);line-height:1.6;margin:-3px 0 9px;padding-left:1px}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);margin-bottom:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);margin-bottom:14px;
+    transition:border-color .15s,box-shadow .15s}
+  .card:hover{border-color:var(--line-2)}
+  .page.active{animation:pagein .18s ease-out}
+  @keyframes pagein{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
   .card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border-bottom:1px solid var(--line)}
   .card-head h3{margin:0;font-size:13px;font-weight:600}
   .card-body{padding:12px 14px}
 
   .btn{height:30px;padding:0 12px;border-radius:var(--r);cursor:pointer;font-family:inherit;font-size:12.5px;
-    border:1px solid var(--line-2);background:var(--panel);color:var(--ink);white-space:nowrap}
+    border:1px solid var(--line-2);background:var(--panel);color:var(--ink);white-space:nowrap;
+    transition:background .14s,border-color .14s,color .14s,transform .06s,box-shadow .14s}
+  .btn:active:not(:disabled){transform:translateY(1px)}
+  .btn:disabled{opacity:.55;cursor:progress}
+  .btn[data-busy="1"]{position:relative;color:transparent!important}
+  .btn[data-busy="1"]::after{content:"";position:absolute;left:50%;top:50%;width:12px;height:12px;
+    margin:-6px 0 0 -6px;border:2px solid var(--ink-2);border-right-color:transparent;border-radius:50%;
+    animation:spin .7s linear infinite}
+  .btn-primary[data-busy="1"]::after{border-color:#fff;border-right-color:transparent}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  :focus-visible{outline:2px solid var(--blue);outline-offset:1px}
+  .danger-btn{color:var(--red)}
+  .danger-btn:hover{color:var(--red);border-color:var(--red);background:var(--red-soft)}
   .btn:hover{border-color:var(--blue);color:var(--blue)}
   .btn-primary{background:var(--blue);border-color:var(--blue);color:#fff}
   .btn-primary:hover{background:var(--blue-d);border-color:var(--blue-d);color:#fff}
@@ -114,6 +132,12 @@
   .kpi .s.ok{color:var(--green)}
 
   .chart-head{display:flex;align-items:center;justify-content:space-between;padding:0 14px;height:40px;border-bottom:1px solid var(--line)}
+  .gran{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-3)}
+  .gran select{height:24px;padding:0 4px;border:1px solid var(--line-2);background:var(--panel);color:var(--ink);
+    font-family:var(--mono);font-size:11.5px;border-radius:var(--r);outline:none;cursor:pointer}
+  .gran select:focus{border-color:var(--blue)}
+  .totp-qr{display:flex;align-items:center;gap:14px}
+  .totp-qr img{border:1px solid var(--line);background:#fff;padding:6px}
   .tabs{display:flex;gap:20px;height:100%}
   .tab{position:relative;border:0;background:none;padding:0;height:100%;font-family:inherit;font-size:12.5px;color:var(--ink-2);cursor:pointer}
   .tab.active{color:var(--blue);font-weight:600}
@@ -159,6 +183,7 @@
   .tbl th{text-align:left;font-size:11.5px;font-weight:500;color:var(--ink-3);background:var(--thead);
     border-bottom:1px solid var(--line);padding:8px 10px;white-space:nowrap}
   .tbl td{border-bottom:1px solid var(--line);padding:5px 10px;vertical-align:middle;font-size:12.5px}
+  .tbl tbody tr{transition:background .12s}
   .tbl tbody tr:hover{background:var(--hover)}
   .tbl tbody tr:last-child td{border-bottom:0}
   .tbl th:first-child,.tbl td:first-child{padding-left:14px}
@@ -216,6 +241,9 @@
   .formfoot .spacer{flex:1}
   .note{font-size:11.5px;color:var(--ink-3);line-height:1.6}
 
+  #progress{position:fixed;left:0;top:0;height:2px;width:0;background:var(--blue);z-index:200;opacity:0;transition:opacity .15s}
+  #progress.on{opacity:1;animation:prog 1.1s ease-in-out infinite}
+  @keyframes prog{0%{width:2%;margin-left:0}50%{width:55%;margin-left:25%}100%{width:2%;margin-left:98%}}
   #toast{position:fixed;right:18px;bottom:18px;z-index:90;display:flex;flex-direction:column;gap:8px}
   .toast{min-width:200px;max-width:400px;background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--blue);
     border-radius:var(--r);padding:9px 12px;font-size:12.5px;box-shadow:0 6px 20px rgba(16,24,40,.14);animation:sin .18s ease-out}
@@ -313,7 +341,12 @@
               <button class="tab" data-k="cache" data-i18n="ov.tab.cache">缓存</button>
               <button class="tab" data-k="blocks" data-i18n="ov.tab.block">拦截</button>
             </div>
-            <span class="sec-hint" id="chart-note">—</span>
+            <div style="display:flex;align-items:center;gap:12px">
+              <label class="gran"><span data-i18n="ov.gran">采样</span>
+                <select id="chart-gran"></select>
+              </label>
+              <span class="sec-hint" id="chart-note">—</span>
+            </div>
           </div>
           <div class="chart-wrap">
             <div class="plot" id="plot">
@@ -475,7 +508,6 @@
       <section class="page" id="p-config">
         <div class="sec-head">
           <h2 data-i18n="cf.title">配置</h2>
-          <span class="sec-hint"><code id="cfg-path">—</code></span>
         </div>
         <div class="split">
           <div class="card">
@@ -484,6 +516,8 @@
               <div class="fields">
                 <div class="field"><label>listen</label><input type="text" id="f-listen"></div>
                 <div class="field"><label>admin_listen</label><input type="text" id="f-admin"></div>
+                <div class="field"><label>server.listen_v6</label><input type="text" id="f-listen-v6" data-i18n-ph="ph.v6" placeholder="留空 = 不监听 IPv6"></div>
+                <div class="field"><label>server.admin_listen_v6</label><input type="text" id="f-admin-v6" data-i18n-ph="ph.v6" placeholder="留空 = 不监听 IPv6"></div>
                 <div class="field wide"><label>default_upstream</label><input type="text" id="f-upstream"></div>
                 <div class="field wide"><label>server.server_header</label><input type="text" id="f-server-header" data-i18n-ph="ph.serverheader" placeholder="留空 = 不发送 Server 头"></div>
                 <div class="field"><label>request_timeout_ms</label><input type="number" id="f-timeout" min="1"></div>
@@ -492,6 +526,7 @@
                 <div class="field"><label>tls.enabled</label>
                   <select id="f-tls-enabled"><option value="false">false</option><option value="true">true</option></select></div>
                 <div class="field"><label>tls.listen</label><input type="text" id="f-tls-listen"></div>
+                <div class="field"><label>tls.listen_v6</label><input type="text" id="f-tls-listen-v6" data-i18n-ph="ph.v6" placeholder="留空 = 不监听 IPv6"></div>
                 <div class="field"><label>tls.min_version</label>
                   <select id="f-tls-min"><option value="1.2">1.2</option><option value="1.3">1.3</option></select></div>
                 <div class="field"><label>tls.cert</label><input type="text" id="f-tls-cert" data-i18n-ph="ph.selfsigned" placeholder="留空自动生成自签"></div>
@@ -524,6 +559,7 @@
                   <select id="f-au-enabled"><option value="true">true</option><option value="false">false</option></select></div>
                 <div class="field"><label>metrics.top_n</label><input type="number" id="f-top-n" min="1"></div>
                 <div class="field"><label>metrics.history_secs</label><input type="number" id="f-hist" min="30"></div>
+                <div class="field"><label>metrics.sample_interval_ms</label><input type="number" id="f-sample-ms" min="15000" max="2592000000" step="1000"></div>
                 <div class="field wide"><label>paths.data_dir</label><input type="text" id="f-data-dir" data-i18n-ph="ph.autodir" placeholder="留空 = 配置文件所在目录"></div>
                 <div class="field"><label>paths.config_history_dir</label><input type="text" id="f-hist-dir" data-i18n-ph="ph.subdir" placeholder="留空 = &lt;data_dir&gt;/conf-history"></div>
                 <div class="field"><label>paths.audit_file</label><input type="text" id="f-audit-file" data-i18n-ph="ph.subfile" placeholder="留空 = &lt;data_dir&gt;/optical.audit.jsonl"></div>
@@ -571,6 +607,7 @@
           <div class="card-head">
             <h3 data-i18n="cf.toml">原始配置 (TOML)</h3>
             <div style="display:flex;gap:8px">
+              <button class="btn btn-sm danger-btn" id="btn-reset-data" data-i18n="cf.clear.data">清空示例数据</button>
               <button class="btn btn-sm" id="btn-toml-refresh" data-i18n="btn.reload">重新载入</button>
               <button class="btn btn-primary btn-sm" id="btn-toml-save" data-i18n="btn.write">写入</button>
             </div>
@@ -583,7 +620,6 @@
       <section class="page" id="p-history">
         <div class="sec-head">
           <h2 data-i18n="hs.title">配置回溯</h2>
-          <span class="sec-hint" id="hs-dir">—</span>
         </div>
         <div class="card">
           <div class="card-head"><h3 data-i18n="hs.snap">快照</h3>
@@ -653,11 +689,15 @@
                   <select id="f-totp-alg"><option value="sha1">sha1</option><option value="sha256">sha256</option><option value="sha512">sha512</option></select></div>
                 <div class="field wide"><label>totp_secret (Base32)</label><input type="text" id="f-totp-secret"></div>
                 <div class="field wide"><label>otpauth URI</label><input type="text" id="f-totp-uri" readonly></div>
+                <div class="wide totp-qr" id="totp-qr-wrap" style="display:none">
+                  <img id="totp-qr" alt="TOTP QR" width="180" height="180">
+                  <span class="note" data-i18n="sc.totp.qr">扫码导入验证器；二维码由网关本地渲染，不走任何外部服务。</span>
+                </div>
               </div>
+              <div class="note" style="margin-top:10px" data-i18n="sc.totp.note">用 Google Authenticator / 1Password 扫码或手输 Base32。</div>
+              <div class="note" data-i18n="sc.totp.sha1">SHA1 是 RFC 6238 默认值，只为兼容验证器；口令用 argon2id，会话令牌是 256 位 CSPRNG。</div>
               <div class="formfoot">
                 <button class="btn btn-sm" id="btn-totp-gen" data-i18n="sc.gen">生成密钥</button>
-                <span class="sec-hint" data-i18n="sc.totp.note">用 Google Authenticator / 1Password 扫码或手输 Base32。</span>
-                <span class="sec-hint" data-i18n="sc.totp.sha1">SHA1 是 RFC 6238 默认值，只为兼容验证器；口令用 argon2id，会话令牌是 256 位 CSPRNG。</span>
                 <span class="spacer"></span>
                 <button class="btn btn-primary btn-sm" id="btn-totp-save" data-i18n="btn.save">保存</button>
               </div>
@@ -669,6 +709,7 @@
   </div>
 </div>
 
+<div id="progress"></div>
 <div id="toast"></div>
 <div id="qtip"></div>
 
@@ -684,16 +725,17 @@
       "nav.overview":"概览","nav.routes":"路由","nav.waf":"WAF","nav.backends":"后端","nav.config":"配置",
       "nav.history":"历史","nav.security":"安全",
       "btn.reload":"热重载","btn.logout":"退出","btn.save":"保存","btn.write":"写入",
-      "btn.restore":"恢复","btn.preview":"预览","btn.cancel":"取消",
+      "btn.restore":"恢复","btn.preview":"预览","btn.cancel":"取消","btn.saving":"保存中",
       "status.live":"在线","status.offline":"离线",
       "lock.prefix":"启动参数锁定：",
       "lock.suffix":"（本次进程内不可改）",
       "empty.generic":"暂无数据",
       "ov.title":"运行概览",
-      "ov.tab.req":"请求 / 秒","ov.tab.bw":"带宽","ov.tab.cache":"缓存","ov.tab.block":"拦截",
+      "ov.tab.req":"请求 / 采样","ov.tab.bw":"带宽","ov.tab.cache":"缓存","ov.tab.block":"拦截",
       "ov.top.ua":"User-Agent Top","ov.top.ip":"客户端 IP Top","ov.top.rule":"规则命中 Top",
       "ov.top.ua.hint":"按请求数排序","ov.top.ip.hint":"按请求数排序","ov.top.rule.hint":"不含分族汇总",
-      "ov.chart.sampling":"采样粒度：1 秒 · 窗口 {n}s","ov.chart.peak":"峰值",
+      "ov.chart.sampling":"采样粒度：{label} · {n} 点 · 覆盖 {span}","ov.chart.peak":"峰值",
+      "ov.gran":"采样","ov.gran.saved":"采样粒度已更新","ov.gran.need":"采样间隔 15 秒 ~ 1 个月",
       "rt.title":"路由表","rt.hint":"顺序即优先级；未命中走默认上游","rt.add":"+ 新增路由",
       "rt.filter":"筛选 name / host / upstream / group",
       "rt.empty.none":"还没有路由","rt.empty.nomatch":"没有匹配项",
@@ -720,12 +762,13 @@
       "cf.err.hint":"优先级：目录下的 <status>.html → 这里的行内模板 → 内置模板。占位符 {{status}} {{reason}} {{message}} {{footer}}。",
       "cf.server.saved":"服务配置已保存","cf.storage.saved":"存储与路径配置已保存",
       "cf.err.saved":"错误页配置已保存","cf.toml.saved":"TOML 已写入并生效","cf.cache.purged":"缓存已清空",
+      "cf.clear.data":"清空示例数据","cf.clear.confirm":"清空所有路由、后端、分组与头改写规则？此操作会覆盖当前配置。","cf.clear.done":"示例数据已清空",
       "cf.restart.listen":"监听地址变更需重启进程","cf.restart.tls":"TLS 开关/端口变更需重启进程",
       "cf.paths.resolved":"当前解析结果：data={data} · history={history} · audit={audit} · tls={tls} · errors={errors}",
       "cf.err.dir":"错误页目录：{dir}",
       "ph.autodir":"留空 = 配置文件所在目录","ph.subdir":"留空 = <data_dir>/子目录",
       "ph.serverheader":"留空 = 不发送 Server 头",
-      "ph.subfile":"留空 = <data_dir>/文件名","ph.errdir":"留空 = paths.error_pages_dir",
+      "ph.subfile":"留空 = <data_dir>/文件名","ph.errdir":"留空 = paths.error_pages_dir","ph.v6":"留空 = 不监听 IPv6",
       "ph.selfsigned":"留空 = 自动生成自签证书",
       "hs.title":"配置回溯","hs.snap":"快照","hs.audit":"审计日志","hs.clear":"清空",
       "hs.empty.snapshots":"还没有快照","hs.empty.audit":"还没有事件",
@@ -735,6 +778,7 @@
       "sc.newpass.note":"落盘只存 argon2 哈希，明文不落任何地方。","sc.changepass":"改口令",
       "sc.totp":"二次验证 (TOTP)","sc.gen":"生成密钥","sc.totp.note":"用 Google Authenticator / 1Password 扫码或手输 Base32。",
       "sc.totp.sha1":"SHA1 是 RFC 6238 默认值，只为兼容验证器；口令用 argon2id，会话令牌是 256 位 CSPRNG。",
+      "sc.totp.qr":"扫码导入验证器；二维码由网关本地渲染，不走任何外部服务。",
       "sc.saved":"安全配置已保存","sc.pass.short":"口令至少 8 位","sc.pass.changed":"口令已修改",
       "sc.totp.generated":"密钥已生成，保存后生效","sc.totp.need":"先生成密钥","sc.totp.saved":"2FA 配置已保存",
       "f.dos":"DoS / 应用层","f.xml":"XML (XXE)","f.jwt":"JWT","f.sql":"SQL 注入","f.ssrf":"SSRF",
@@ -809,16 +853,17 @@
       "nav.overview":"Overview","nav.routes":"Routes","nav.waf":"WAF","nav.backends":"Backends","nav.config":"Config",
       "nav.history":"History","nav.security":"Security",
       "btn.reload":"Reload","btn.logout":"Sign out","btn.save":"Save","btn.write":"Write",
-      "btn.restore":"Restore","btn.preview":"Preview","btn.cancel":"Cancel",
+      "btn.restore":"Restore","btn.preview":"Preview","btn.cancel":"Cancel","btn.saving":"Saving",
       "status.live":"Live","status.offline":"Offline",
       "lock.prefix":"Locked by CLI flags: ",
       "lock.suffix":" (cannot change in this process)",
       "empty.generic":"No data",
       "ov.title":"Overview",
-      "ov.tab.req":"Requests / s","ov.tab.bw":"Bandwidth","ov.tab.cache":"Cache","ov.tab.block":"Blocks",
+      "ov.tab.req":"Requests / sample","ov.tab.bw":"Bandwidth","ov.tab.cache":"Cache","ov.tab.block":"Blocks",
       "ov.top.ua":"Top User-Agent","ov.top.ip":"Top Client IP","ov.top.rule":"Top Rule Hits",
       "ov.top.ua.hint":"Sorted by requests","ov.top.ip.hint":"Sorted by requests","ov.top.rule.hint":"Family rollups excluded",
-      "ov.chart.sampling":"Granularity: 1s · window {n}s","ov.chart.peak":"peak",
+      "ov.chart.sampling":"Granularity: {label} · {n} points · spans {span}","ov.chart.peak":"peak",
+      "ov.gran":"Sample","ov.gran.saved":"Sampling interval updated","ov.gran.need":"Interval must be 15s to 1 month",
       "rt.title":"Route Table","rt.hint":"Order is priority; unmatched goes to default upstream","rt.add":"+ Route",
       "rt.filter":"Filter name / host / upstream / group",
       "rt.empty.none":"No routes yet","rt.empty.nomatch":"No match",
@@ -845,12 +890,13 @@
       "cf.err.hint":"Priority: <status>.html on disk → inline template here → built-in. Placeholders: {{status}} {{reason}} {{message}} {{footer}}.",
       "cf.server.saved":"Server config saved","cf.storage.saved":"Storage & paths saved",
       "cf.err.saved":"Error pages saved","cf.toml.saved":"TOML applied","cf.cache.purged":"Cache purged",
+      "cf.clear.data":"Clear sample data","cf.clear.confirm":"Remove all routes, backends, groups and header rules? This overwrites the current config.","cf.clear.done":"Sample data cleared",
       "cf.restart.listen":"Listen address changed; restart required","cf.restart.tls":"TLS toggle/port changed; restart required",
       "cf.paths.resolved":"Resolved: data={data} · history={history} · audit={audit} · tls={tls} · errors={errors}",
       "cf.err.dir":"Error page dir: {dir}",
       "ph.autodir":"Empty = config file directory","ph.subdir":"Empty = <data_dir>/subdir",
       "ph.serverheader":"Empty = do not send a Server header",
-      "ph.subfile":"Empty = <data_dir>/file","ph.errdir":"Empty = paths.error_pages_dir",
+      "ph.subfile":"Empty = <data_dir>/file","ph.errdir":"Empty = paths.error_pages_dir","ph.v6":"Empty = no IPv6 listener",
       "ph.selfsigned":"Empty = auto-generate self-signed",
       "hs.title":"Config History","hs.snap":"Snapshots","hs.audit":"Audit Log","hs.clear":"Clear",
       "hs.empty.snapshots":"No snapshots yet","hs.empty.audit":"No events yet",
@@ -860,6 +906,7 @@
       "sc.newpass.note":"Only the argon2 hash is stored; plaintext never touches disk.","sc.changepass":"Change",
       "sc.totp":"Two-factor (TOTP)","sc.gen":"Generate secret","sc.totp.note":"Import the Base32 secret into any TOTP app.",
       "sc.totp.sha1":"SHA1 is the RFC 6238 default for authenticator compatibility; passwords use argon2id and session tokens are 256-bit CSPRNG.",
+      "sc.totp.qr":"Scan to import; the QR is rendered locally by the gateway, no third-party service.",
       "sc.saved":"Security settings saved","sc.pass.short":"Password must be at least 8 characters","sc.pass.changed":"Password changed",
       "sc.totp.generated":"Secret generated; save to enable","sc.totp.need":"Generate a secret first","sc.totp.saved":"2FA saved",
       "f.dos":"DoS / App Layer","f.xml":"XML (XXE)","f.jwt":"JWT","f.sql":"SQL Injection","f.ssrf":"SSRF",
@@ -930,10 +977,54 @@
   };
 
   var lang = localStorage.getItem("optical.lang") || "zh";
+
+  // 采样档位：[间隔ms, 保留点数, 英文短标签, 中文短标签]
+  // 每档的窗口 = 间隔 × 点数，跟后端 config::GRANULARITIES 一一对应（smoke 会校验）
+  var GRANS = [
+    [15000, 240, "15s", "15 秒"],
+    [300000, 288, "5m", "5 分"],
+    [1800000, 240, "30m", "30 分"],
+    [3600000, 168, "1h", "1 小时"],
+    [21600000, 120, "6h", "6 小时"],
+    [43200000, 120, "12h", "12 小时"],
+    [86400000, 90, "1d", "1 天"],
+    [604800000, 48, "7d", "7 天"],
+    [1209600000, 26, "14d", "14 天"],
+    [2592000000, 24, "1mo", "1 个月"]
+  ];
+
+  function granOf(ms){
+    for (var i = 0; i < GRANS.length; i++) if (GRANS[i][0] === ms) return GRANS[i];
+    return null;
+  }
+  function granShort(ms){
+    var g = granOf(ms);
+    if (g) return g[2];
+    return ms % 1000 ? ms + "ms" : (ms / 1000) + "s";
+  }
+  function granLabel(ms){
+    var g = granOf(ms);
+    if (g) return lang === "zh" ? g[3] : g[2];
+    return granShort(ms);
+  }
+  // 窗口 = 间隔 × 保留点数；点数优先取服务端 status.sample_points，回退到档位表
+  function granWindow(ms){
+    var g = granOf(ms);
+    var pts = g ? g[1] : ((state.status && state.status.sample_points) || 240);
+    return fmtSpan(ms * pts / 1000);
+  }
+  function fmtSpan(secs){
+    var zh = lang === "zh";
+    if (secs < 120) return Math.round(secs) + (zh ? " 秒" : "s");
+    if (secs < 3600) return Math.round(secs / 60) + (zh ? " 分" : "min");
+    if (secs < 172800) return Math.round(secs / 3600) + (zh ? " 小时" : "h");
+    if (secs < 63072000) return Math.round(secs / 86400) + (zh ? " 天" : "d");
+    return Math.round(secs / 31536000) + (zh ? " 年" : "y");
+  }
   var state = {
     cfg:null, status:null, metrics:null, history:null, snapshots:[], audit:[],
     chart:"requests", rows:[], headerRules:[], backends:[], groups:[], errorBodies:[],
-    filter:"", authed:false, paths:null
+    filter:"", authed:false, paths:null, ws:null, pollTimer:null, wsRetry:0, rev:0
   };
 
   function t(k, vars){
@@ -988,6 +1079,8 @@
     document.title = t("app.title");
     var active = document.querySelector(".rail-item.active span");
     if (active) $("crumb-now").textContent = active.textContent;
+    // 档位下拉与图表里的"1 小时 / 1 天"都是拼出来的文案，换语言要跟着重建
+    if ($("chart-gran") && state.cfg) syncGranSelect(state.cfg.metrics.sample_interval_ms || 15000);
     renderAll();
   }
   function applyTheme(){
@@ -997,9 +1090,16 @@
   }
 
   // ---------- API ----------
+  var pendingApi = 0;
   function api(path, opts){
     opts = opts || {};
     opts.credentials = "same-origin";
+    pendingApi++;
+    $("progress").className = "on";
+    var done = function(){
+      pendingApi = Math.max(0, pendingApi - 1);
+      if (!pendingApi) $("progress").className = "";
+    };
     return fetch(path, opts).then(function(r){
       return r.text().then(function(txt){
         var data=null;
@@ -1008,11 +1108,14 @@
         if (!r.ok || (data && data.ok === false)) throw new Error((data&&data.error)||("HTTP "+r.status));
         return data;
       });
-    });
+    }).finally(done);
   }
 
   // ---------- 登录 ----------
-  function showLogin(){ $("login").classList.add("show"); }
+  function showLogin(){
+    $("login").classList.add("show");
+    stopLive();
+  }
   function hideLogin(){ $("login").classList.remove("show"); }
 
   $("loginform").addEventListener("submit", function(ev){
@@ -1075,21 +1178,25 @@
     }).join("");
   }
 
+  function perLabel(base){
+    return base + " / " + granShort(sampleStep());
+  }
+
   function series(){
     var h = (state.history && state.history.samples) || [];
     if (state.chart === "requests") return [
-      {k:"requests", label:"requests/s", color:"#0052d9", data:h.map(function(x){return x.requests})},
-      {k:"errors", label:"errors/s", color:"#e34d59", data:h.map(function(x){return x.errors})}
+      {k:"requests", label:perLabel("requests"), color:"#0052d9", data:h.map(function(x){return x.requests})},
+      {k:"errors", label:perLabel("errors"), color:"#e34d59", data:h.map(function(x){return x.errors})}
     ];
     if (state.chart === "bytes") return [
-      {k:"bytes_in", label:"in B/s", color:"#00a870", data:h.map(function(x){return x.bytes_in})},
-      {k:"bytes_out", label:"out B/s", color:"#0052d9", data:h.map(function(x){return x.bytes_out})}
+      {k:"bytes_in", label:perLabel("in B"), color:"#00a870", data:h.map(function(x){return x.bytes_in})},
+      {k:"bytes_out", label:perLabel("out B"), color:"#0052d9", data:h.map(function(x){return x.bytes_out})}
     ];
     if (state.chart === "cache") return [
       {k:"cache_hit", label:"hit", color:"#00a870", data:h.map(function(x){return x.cache_hit})},
       {k:"cache_miss", label:"miss", color:"#ed7b2f", data:h.map(function(x){return x.cache_miss})}
     ];
-    return [{k:"waf_blocks", label:"blocks/s", color:"#e34d59", data:h.map(function(x){return x.waf_blocks})}];
+    return [{k:"waf_blocks", label:perLabel("blocks"), color:"#e34d59", data:h.map(function(x){return x.waf_blocks})}];
   }
 
   // 刻度取整：1/2/5 × 10^n，保证 Y 轴读数是整数而不是 3.7 这种
@@ -1099,6 +1206,8 @@
     var mag = Math.pow(10, Math.floor(Math.log10(raw)));
     var norm = raw / mag;
     var step = (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * mag;
+    // 计数类指标不显示 0.5 这种刻度：步长小于 1 时强制取 1，否则标签会被四舍五入成重复值
+    if (step < 1) step = 1;
     return { step: step, max: step * ticks };
   }
 
@@ -1108,11 +1217,25 @@
     return String(Math.round(v));
   }
 
-  // 第 i 个采样点对应的时间：最新一个是「现在」，往前每点 1 秒
-  function sampleTime(i, n){ return new Date(Date.now() - (n-1-i)*1000); }
+  function sampleStep(){
+    var ms = (state.history && state.history.interval_ms) ||
+             (state.status && state.status.sample_interval_ms) || 15000;
+    return Math.max(15000, ms);
+  }
+
+  // 第 i 个采样点对应的时间：最新一个是「现在」，往前每个点一个采样间隔
+  function sampleTime(i, n){ return new Date(Date.now() - (n-1-i)*sampleStep()); }
   function pad2(x){ return (x<10?"0":"")+x; }
   function hhmmss(d){ return pad2(d.getHours())+":"+pad2(d.getMinutes())+":"+pad2(d.getSeconds()); }
   function ymd(d){ return d.getFullYear()+"-"+pad2(d.getMonth()+1)+"-"+pad2(d.getDate()); }
+
+  // 横轴标签随粒度变形：秒级看时分秒，天级看月日，月级带年份
+  function xLabel(d){
+    var ms = sampleStep();
+    if (ms >= 86400000) return ymd(d).slice(2);
+    if (ms >= 3600000) return pad2(d.getMonth()+1)+"-"+pad2(d.getDate())+" "+pad2(d.getHours())+":00";
+    return hhmmss(d);
+  }
 
   function drawChart(){
     var ss = series();
@@ -1138,12 +1261,22 @@
              esc(isBytes ? fmtBytes(val) : compact(val))+'</text>';
     }
     var ticks = 5;
+    // 采样点比刻度还少时（刚切档位、刚启动），多个刻度会落到同一个索引上，
+    // 文字叠在一起糊成一片。先去重，再按首尾对齐画。
+    var xs = [];
+    if (n <= 1) xs = [0];
+    else {
+      for (var ti = 0; ti <= ticks; ti++){
+        var idx = Math.round((n-1) * ti / ticks);
+        if (xs.indexOf(idx) < 0) xs.push(idx);
+      }
+    }
     // 变量名不要叫 t：var 是函数级作用域，会把翻译函数 t() 整个函数内遮蔽掉
-    for (var ti = 0; ti <= ticks; ti++){
-      var idx = n > 1 ? Math.round((n-1) * ti / ticks) : 0;
+    for (var xi = 0; xi < xs.length; xi++){
+      var idx = xs[xi];
       var tx = n > 1 ? xOf(idx) : x0;
-      var anchor = ti === 0 ? "start" : (ti === ticks ? "end" : "middle");
-      var label = n > 0 ? hhmmss(sampleTime(idx, n)) : "--:--:--";
+      var anchor = xi === 0 ? "start" : (xi === xs.length-1 ? "end" : "middle");
+      var label = n > 0 ? xLabel(sampleTime(idx, n)) : "--";
       out += '<text class="xl" x="'+tx.toFixed(1)+'" y="'+(H-8)+'" text-anchor="'+anchor+'">'+label+'</text>';
     }
     ss.forEach(function(s){
@@ -1178,7 +1311,7 @@
     }).join("");
 
     $("chart-note").textContent = (peak ? (t("ov.chart.peak") + " " + (isBytes ? fmtBytes(peak) : peak)) : "—") +
-      (hi != null && n ? (" · " + hhmmss(sampleTime(hi, n))) : "");
+      (hi != null && n ? (" · " + xLabel(sampleTime(hi, n))) : "");
   }
 
   function showTip(ev, idx, n){
@@ -1191,8 +1324,10 @@
       return '<div class="tr"><i style="background:'+s.color+'"></i><span class="n">'+esc(s.label)+'</span>'+
              '<b>'+(isBytes ? fmtBytes(v) : v)+'</b></div>';
     }).join("");
-    tip.innerHTML = '<div class="tt">'+ymd(d)+" "+hhmmss(d)+'</div>'+rows+
-                    '<div class="tg">'+esc(t("ov.chart.sampling",{n:n}))+'</div>';
+    // 天/月级粒度下时分秒没有意义，只写到日期
+    var when = sampleStep() >= 86400000 ? ymd(d) : ymd(d) + " " + hhmmss(d);
+    tip.innerHTML = '<div class="tt">'+when+'</div>'+rows+
+                    '<div class="tg">'+esc(t("ov.chart.sampling",{n:n, label:granLabel(sampleStep()), span:granWindow(sampleStep())}))+'</div>';
     tip.style.display = "block";
 
     var rect = plot.getBoundingClientRect();
@@ -1346,7 +1481,7 @@
       return o;
     });
     if (bad){ toast(t("rt.need.target"), "err"); return; }
-    save(cfg, t("rt.saved"));
+    save(cfg, t("rt.saved"), this);
   });
 
   // ---------- WAF ----------
@@ -1484,10 +1619,10 @@
         value:r.value||"", match_path:r.match_path||"", match_host:r.match_host||"",
         when_status:Number(r.when_status)||0 };
     });
-    save(cfg, t("waf.hr.saved"));
+    save(cfg, t("waf.hr.saved"), this);
   });
   $("btn-waf-save").addEventListener("click", function(){
-    var cfg = clone(); collectWaf(cfg); save(cfg, "WAF policy saved");
+    var cfg = clone(); collectWaf(cfg); save(cfg, t("waf.saved"), this);
   });
   $("btn-frame-deny").addEventListener("click", function(){
     var cfg = clone();
@@ -1497,7 +1632,7 @@
       cfg.header_rules = (cfg.header_rules||[]).concat([{enabled:true,phase:"response",action:"set",
         name:"X-Frame-Options",value:"DENY",match_path:"",match_host:"",when_status:0}]);
     }
-    save(cfg, t("waf.frame.saved"));
+    save(cfg, t("waf.frame.saved"), this);
   });
 
   // ---------- 后端 ----------
@@ -1564,7 +1699,7 @@
     if (bad){ toast(t("be.grp.need.name") + " / " + t("be.grp.dup"), "err"); return; }
     var cfg = clone();
     cfg.backend_groups = list;
-    save(cfg, t("be.grp.saved"));
+    save(cfg, t("be.grp.saved"), this);
   });
 
   function backendBadge(st){
@@ -1654,7 +1789,7 @@
         enabled:!!b.enabled,health_path:b.health_path||"/",health_interval_secs:Number(b.health_interval_secs)||0,
         timeout_ms:Number(b.timeout_ms)||30000};
     });
-    save(cfg, t("be.saved"));
+    save(cfg, t("be.saved"), this);
   });
 
   // ---------- 配置 ----------
@@ -1699,7 +1834,7 @@
     });
     if (bad){ toast("status 400-599", "err"); return; }
     cfg.error_pages.bodies = bodies;
-    save(cfg, t("cf.err.saved"));
+    save(cfg, t("cf.err.saved"), this);
   });
   $("btn-err-preview").addEventListener("click", function(){
     var code = state.errorBodies.length ? Number(state.errorBodies[0].code) : 502;
@@ -1707,14 +1842,38 @@
     window.open("/api/error-pages/preview?status=" + code, "_blank");
   });
 
+  function syncGranSelect(ms){
+    var sel = $("chart-gran");
+    var want = String(ms);
+    // 文案随语言变，所以每次重建；自定义（不在档位表里的）额外追加一条
+    sel.innerHTML = GRANS.map(function(g){
+      return '<option value="'+g[0]+'">'+esc(granLabel(g[0]) + " · " + fmtSpan(g[0] * g[1] / 1000))+'</option>';
+    }).join("");
+    if (!granOf(ms)){
+      sel.innerHTML += '<option value="'+want+'">'+esc(granShort(ms) + " · " + granWindow(ms))+'</option>';
+    }
+    sel.value = want;
+  }
+
+  function updateTotpQr(secret, alg){
+    var wrap = $("totp-qr-wrap"), img = $("totp-qr");
+    if (!secret){ wrap.style.display = "none"; $("f-totp-uri").value=""; return; }
+    var user = $("f-admin-user").value.trim() || "admin";
+    var a = alg || $("f-totp-alg").value || "sha1";
+    $("f-totp-uri").value = "otpauth://totp/Optical:"+user+"?secret="+secret+"&issuer=Optical&algorithm="+a.toUpperCase()+"&digits=6&period=30";
+    img.src = "/api/totp/qr?secret="+encodeURIComponent(secret)+"&user="+encodeURIComponent(user)+"&alg="+encodeURIComponent(a);
+    wrap.style.display = "flex";
+  }
+
   function renderConfig(){
     var c = state.cfg;
-    $("cfg-path").textContent = state.status ? state.status.config_path : "";
     $("f-listen").value=c.server.listen; $("f-admin").value=c.server.admin_listen;
+    $("f-listen-v6").value=c.server.listen_v6||""; $("f-admin-v6").value=c.server.admin_listen_v6||"";
     $("f-upstream").value=c.server.default_upstream; $("f-timeout").value=c.server.request_timeout_ms;
     $("f-server-header").value=c.server.server_header==null?"":c.server.server_header;
     $("f-loglevel").value=c.server.log_level;
     $("f-tls-enabled").value=String(!!c.tls.enabled); $("f-tls-listen").value=c.tls.listen;
+    $("f-tls-listen-v6").value=c.tls.listen_v6||"";
     $("f-tls-min").value=c.tls.min_version; $("f-tls-cert").value=c.tls.cert||""; $("f-tls-key").value=c.tls.key||"";
     $("f-cache-enabled").value=String(!!c.cache.enabled); $("f-cache-ttl").value=c.cache.ttl_secs;
     $("f-cache-bytes").value=c.cache.max_bytes; $("f-cache-entries").value=c.cache.max_entries;
@@ -1722,6 +1881,8 @@
     $("f-sh-days").value=c.storage.config_history_keep_days; $("f-au-keep").value=c.storage.audit_keep;
     $("f-au-bytes").value=c.storage.audit_max_bytes; $("f-au-enabled").value=String(!!c.storage.audit_enabled);
     $("f-top-n").value=c.metrics.top_n; $("f-hist").value=c.metrics.history_secs;
+    $("f-sample-ms").value=c.metrics.sample_interval_ms||15000;
+    syncGranSelect(c.metrics.sample_interval_ms||15000);
     var p = c.paths || {};
     $("f-data-dir").value=p.data_dir||""; $("f-hist-dir").value=p.config_history_dir||"";
     $("f-audit-file").value=p.audit_file||""; $("f-tls-dir").value=p.tls_dir||"";
@@ -1745,8 +1906,7 @@
     $("f-totp-enabled").value=String(!!c.admin.totp_enabled);
     $("f-totp-alg").value=c.admin.totp_algorithm||"sha1";
     $("f-totp-secret").value=c.admin.totp_secret||"";
-    $("f-totp-uri").value = c.admin.totp_secret
-      ? ("otpauth://totp/Optical:"+c.admin.username+"?secret="+c.admin.totp_secret+"&issuer=Optical") : "";
+    updateTotpQr(c.admin.totp_secret||"", c.admin.totp_algorithm||"sha1");
     $("toml").value = state.toml || "";
     var locked = (state.status && state.status.overrides) || [];
     $("lock-note").textContent = locked.length
@@ -1762,12 +1922,15 @@
     var cfg = clone();
     cfg.server.listen=$("f-listen").value.trim();
     cfg.server.admin_listen=$("f-admin").value.trim();
+    cfg.server.listen_v6=$("f-listen-v6").value.trim();
+    cfg.server.admin_listen_v6=$("f-admin-v6").value.trim();
     cfg.server.default_upstream=$("f-upstream").value.trim();
     cfg.server.server_header=$("f-server-header").value.trim();
     cfg.server.request_timeout_ms=Number($("f-timeout").value)||1;
     cfg.server.log_level=$("f-loglevel").value;
     cfg.tls.enabled=$("f-tls-enabled").value==="true";
     cfg.tls.listen=$("f-tls-listen").value.trim();
+    cfg.tls.listen_v6=$("f-tls-listen-v6").value.trim();
     cfg.tls.min_version=$("f-tls-min").value;
     cfg.tls.cert=$("f-tls-cert").value.trim();
     cfg.tls.key=$("f-tls-key").value.trim();
@@ -1775,7 +1938,7 @@
     cfg.cache.ttl_secs=Number($("f-cache-ttl").value)||1;
     cfg.cache.max_bytes=Number($("f-cache-bytes").value)||1048576;
     cfg.cache.max_entries=Number($("f-cache-entries").value)||128;
-    save(cfg, t("cf.server.saved"));
+    save(cfg, t("cf.server.saved"), this);
   });
 
   $("btn-storage-save").addEventListener("click", function(){
@@ -1788,13 +1951,14 @@
     cfg.storage.audit_enabled=$("f-au-enabled").value==="true";
     cfg.metrics.top_n=Number($("f-top-n").value)||8;
     cfg.metrics.history_secs=Number($("f-hist").value)||300;
+    cfg.metrics.sample_interval_ms=Number($("f-sample-ms").value)||15000;
     cfg.paths = cfg.paths || {};
     cfg.paths.data_dir=$("f-data-dir").value.trim();
     cfg.paths.config_history_dir=$("f-hist-dir").value.trim();
     cfg.paths.audit_file=$("f-audit-file").value.trim();
     cfg.paths.tls_dir=$("f-tls-dir").value.trim();
     cfg.paths.error_pages_dir=$("f-err-dir").value.trim();
-    save(cfg, t("cf.storage.saved"));
+    save(cfg, t("cf.storage.saved"), this);
   });
 
   $("btn-auth-save").addEventListener("click", function(){
@@ -1803,7 +1967,7 @@
     cfg.admin.username=$("f-admin-user").value.trim();
     cfg.admin.session_ttl_secs=Number($("f-admin-ttl").value)||3600;
     cfg.admin.max_failed_attempts=Number($("f-admin-max").value)||5;
-    save(cfg, t("sc.saved"));
+    save(cfg, t("sc.saved"), this);
   });
   $("btn-pass-save").addEventListener("click", function(){
     var pw = $("f-newpass").value;
@@ -1815,6 +1979,7 @@
   $("btn-totp-gen").addEventListener("click", function(){
     api("/api/totp/new", {method:"POST"}).then(function(d){
       $("f-totp-secret").value = d.secret; $("f-totp-uri").value = d.uri;
+      updateTotpQr(d.secret, $("f-totp-alg").value);
       toast(t("sc.totp.generated"), "warn");
     }).catch(function(e){ toast(e.message,"err"); });
   });
@@ -1824,10 +1989,37 @@
     cfg.admin.totp_enabled = $("f-totp-enabled").value==="true";
     cfg.admin.totp_algorithm = $("f-totp-alg").value;
     if (cfg.admin.totp_enabled && !cfg.admin.totp_secret){ toast(t("sc.totp.need"), "err"); return; }
-    save(cfg, t("sc.totp.saved")).then(function(){ return checkAuth(); });
+    save(cfg, t("sc.totp.saved"), this).then(function(){ return checkAuth(); });
   });
+  $("f-totp-alg").addEventListener("change", function(){
+    updateTotpQr($("f-totp-secret").value.trim(), this.value);
+  });
+  $("f-totp-secret").addEventListener("change", function(){
+    updateTotpQr(this.value.trim(), $("f-totp-alg").value);
+  });
+
+  $("chart-gran").addEventListener("change", function(){
+    var ms = Number(this.value);
+    if (!ms || ms < 15000 || ms > 2592000000){ toast(t("ov.gran.need"), "err"); return; }
+    var cfg = clone();
+    cfg.metrics.sample_interval_ms = ms;
+    save(cfg, t("ov.gran.saved"), null);
+  });
+
+  $("btn-reset-data").addEventListener("click", function(){
+    if (!confirm(t("cf.clear.confirm"))) return;
+    var cfg = clone();
+    cfg.routes = [];
+    cfg.backends = [];
+    cfg.backend_groups = [];
+    cfg.header_rules = [];
+    save(cfg, t("cf.clear.done"), this);
+  });
+
   $("btn-toml-save").addEventListener("click", function(){
-    api("/api/config", {method:"PUT",headers:{"content-type":"text/plain"},body:$("toml").value})
+    var th = {"content-type":"text/plain"};
+    if (state.rev) th["x-optical-config-rev"] = String(state.rev);
+    api("/api/config", {method:"PUT",headers:th,body:$("toml").value})
       .then(function(){ toast(t("cf.toml.saved"), "ok"); return loadConfig(); })
       .catch(function(e){ toast(e.message,"err"); });
   });
@@ -1840,7 +2032,6 @@
   // ---------- 历史 ----------
   function renderHistory(){
     var list = state.snapshots || [];
-    $("hs-dir").textContent = state.snapDir || "";
     if (state.snapQuota) $("hs-quota").textContent =
       "keep " + state.snapQuota.config_history_keep + " / " + state.snapQuota.config_history_max_bytes + "B / " +
       state.snapQuota.config_history_keep_days + "d";
@@ -1887,15 +2078,38 @@
 
   // ---------- 通用 ----------
   function clone(){ return JSON.parse(JSON.stringify(state.cfg)); }
-  function save(cfg, msg){
-    return api("/api/config", {method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify(cfg)})
+  function setBusy(btn, on){
+    if (!btn) return;
+    if (on){
+      if (!btn.dataset.label) btn.dataset.label = btn.textContent;
+      btn.dataset.busy = "1";
+      btn.disabled = true;
+      btn.textContent = t("btn.saving");
+    } else {
+      delete btn.dataset.busy;
+      btn.disabled = false;
+      if (btn.dataset.label) btn.textContent = btn.dataset.label;
+    }
+  }
+
+  function save(cfg, msg, btn){
+    setBusy(btn, true);
+    var headers = {"content-type":"application/json"};
+    if (state.rev) headers["x-optical-config-rev"] = String(state.rev);
+    return api("/api/config", {method:"PUT",headers:headers,body:JSON.stringify(cfg)})
       .then(function(d){
-        toast(msg || "saved", "ok");
+        toast(msg || t("btn.save"), "ok");
         if (d.restart_required) toast(t("cf.restart.listen"), "warn");
         if (d.tls_restart_required) toast(t("cf.restart.tls"), "warn");
         return loadConfig();
       })
-      .catch(function(e){ toast(e.message, "err"); throw e; });
+      .catch(function(e){
+        toast(e.message, "err");
+        // 版本冲突：刷新配置拿到最新 rev，避免用户继续在旧数据上操作
+        if (/配置已被其他会话修改/.test(e.message)) loadConfig();
+        throw e;
+      })
+      .finally(function(){ setBusy(btn, false); });
   }
 
   function renderAll(){
@@ -1905,7 +2119,7 @@
 
   function loadConfig(){
     return api("/api/config").then(function(d){
-      state.cfg = d.config; state.toml = d.toml;
+      state.cfg = d.config; state.toml = d.toml; state.rev = d.rev || 0;
       state.rows = normRoutes(d.config.routes);
       state.headerRules = (d.config.header_rules||[]).map(function(r){ return Object.assign({}, r); });
       state.backends = (d.config.backends||[]).map(function(b){ return Object.assign({}, b); });
@@ -1945,6 +2159,67 @@
 
   function refreshAll(){ return Promise.all([refresh(), loadConfig(), loadSnapshots(), loadAudit()]); }
 
+  // ---------- 实时通道（WebSocket，轮询仅作兜底） ----------
+  function wsUrl(){
+    return (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/api/ws";
+  }
+
+  function applySnapshot(s){
+    state.status = s;
+    state.metrics = s.metrics || {};
+    state.metrics.top = s.top || {ua:[],ip:[],rules:[]};
+    state.metrics.backends = s.backend_list || [];
+    state.metrics.backend_groups = s.backend_groups || [];
+    if (s.history) state.history = s.history;
+    $("dot").className = "on";
+    $("conn").textContent = t("status.live") + " · " + s.listen;
+    renderOverview();
+    updateBackendLive();
+    drawChart();
+  }
+
+  function connectWs(){
+    if (!state.authed || state.ws) return;
+    var sock;
+    try { sock = new WebSocket(wsUrl()); } catch(e){ startPolling(); return; }
+    state.ws = sock;
+    sock.onopen = function(){ state.wsRetry = 0; stopPolling(); $("dot").className = "on"; };
+    sock.onmessage = function(ev){
+      var d = null;
+      try { d = JSON.parse(ev.data); } catch(e){ return; }
+      if (d && d.type === "snapshot") applySnapshot(d);
+    };
+    sock.onerror = function(){ try { sock.close(); } catch(e){} };
+    sock.onclose = function(){
+      if (state.ws === sock) state.ws = null;
+      if (!state.authed) return;
+      $("dot").className = "off";
+      startPolling();
+      var wait = Math.min(10000, 800 * (state.wsRetry + 1));
+      state.wsRetry++;
+      setTimeout(connectWs, wait);
+    };
+  }
+
+  function startPolling(){
+    if (state.pollTimer || !state.authed) return;
+    state.pollTimer = setInterval(function(){ if (state.authed) refresh(); }, 2000);
+  }
+
+  function stopPolling(){
+    if (state.pollTimer){ clearInterval(state.pollTimer); state.pollTimer = null; }
+  }
+
+  function stopLive(){
+    stopPolling();
+    if (state.ws){
+      var w = state.ws;
+      state.ws = null;
+      w.onclose = null;
+      try { w.close(); } catch(e){}
+    }
+  }
+
   // ---------- 导航 / 主题 / 语言 ----------
   document.querySelectorAll(".rail-item").forEach(function(item){
     item.addEventListener("click", function(){
@@ -1974,6 +2249,8 @@
       .catch(function(e){ toast(e.message,"err"); });
   });
   $("btn-logout").addEventListener("click", function(){
+    state.authed = false;
+    stopLive();
     api("/api/auth/logout", {method:"POST"}).then(function(){ showLogin(); }).catch(function(){ showLogin(); });
   });
   $("chart-tabs").addEventListener("click", function(ev){
@@ -1987,8 +2264,9 @@
     return checkAuth().then(function(ok){
       if (!ok) return;
       return refreshAll().then(function(){
-        setInterval(function(){ if (state.authed) refresh(); }, 2000);
-        setInterval(function(){ if (state.authed) loadSnapshots(); }, 15000);
+        // 先起轮询兜底，WS 连上后立即停掉；断线会自动回退并重连
+        startPolling();
+        connectWs();
       });
     });
   }
