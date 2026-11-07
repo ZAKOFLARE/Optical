@@ -293,6 +293,21 @@ check "管理面 WebSocket 升级返回 101" '101' "$WS_CODE"
 check "TOTP 二维码返回 SVG" '<svg' "$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/totp/qr?secret=JBSWY3DPEHPK3PXP&user=admin")"
 check "二维码响应不缓存" 'no-store' "$(curl -si -m 6 "${AUTH[@]}" "http://$ADM/api/totp/qr?secret=JBSWY3DPEHPK3PXP" | tr -d '\r' | grep -i '^cache-control:')"
 
+# 验证码校验：正解要过、错码要拒、算法不一致也要拒（这是"存完就登不进去"的防线）
+TOTP_CODE="$(python3 -c "
+import hmac,hashlib,base64,struct,time
+k=base64.b32decode('JBSWY3DPEHPK3PXP')
+d=hmac.new(k,struct.pack('>Q',int(time.time())//30),hashlib.sha1).digest()
+o=d[-1]&15
+print('%06d' % ((struct.unpack('>I',d[o:o+4])[0] & 0x7fffffff) % 1000000))
+" 2>/dev/null)"
+check "TOTP 校验接口接受正确码" '"ok":true' "$(curl -s -m 6 -X POST "${AUTH[@]}" -H 'content-type: application/json' \
+  -d "{\"secret\":\"JBSWY3DPEHPK3PXP\",\"algorithm\":\"sha1\",\"code\":\"$TOTP_CODE\"}" "http://$ADM/api/totp/check")"
+check "TOTP 校验接口拒绝错码" '"ok":false' "$(curl -s -m 6 -X POST "${AUTH[@]}" -H 'content-type: application/json' \
+  -d '{"secret":"JBSWY3DPEHPK3PXP","algorithm":"sha1","code":"000000"}' "http://$ADM/api/totp/check")"
+check "算法与 App 不一致时被拒" '"ok":false' "$(curl -s -m 6 -X POST "${AUTH[@]}" -H 'content-type: application/json' \
+  -d "{\"secret\":\"JBSWY3DPEHPK3PXP\",\"algorithm\":\"sha256\",\"code\":\"$TOTP_CODE\"}" "http://$ADM/api/totp/check")"
+
 patch_sample() {
   curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config" \
     | python3 -c "import sys,json; c=json.load(sys.stdin)['config']; c['metrics']['sample_interval_ms']=$1; print(json.dumps(c))" 2>/dev/null

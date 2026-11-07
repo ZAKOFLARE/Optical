@@ -131,12 +131,24 @@ optical route list | add [--backend NAME | --backend-group GROUP] | remove
 optical passwd <明文口令> [--write]      # 生成 argon2 哈希；--write 直接写进配置
 optical status [--json] [--admin ADDR]
 optical upstream-echo --listen 127.0.0.1:8081
+optical install [--dir DIR] [--force] [--no-path]   # 把 optical 装进 PATH，任何目录都能敲
+optical totp status | off                           # 离线看/关 2FA（忘密钥时的应急出口）
 ```
 
 `status` 通过进程启动时写下的本地令牌（配置同目录、0600、退出即删）访问管理面，
 不靠"回环免登录"这种口子。
 
 `config set` 支持 `listen / admin-listen / default-upstream / timeout-ms / log-level / waf-mode`。
+
+`install` 默认装到 `~/.local/bin`（Windows 是 `%LOCALAPPDATA%\Programs\Optical`），
+Unix 写进 `~/.bashrc`/`~/.zshrc`，Windows 只改用户 PATH（用 `[Environment]` 而不是会截断的 `setx`）。
+
+### 二次验证（TOTP）注意
+
+- **算法要和 App 一致**：Google Authenticator 会忽略 otpauth 里的 `algorithm` 参数、永远用 SHA1；
+  选 SHA256/SHA512 必须用 1Password / Aegis / FreeOTP 这类支持该参数的 App，否则验证码永远对不上。
+- WebUI「安全」里保存 2FA 前会先让你验证一次当前验证码——算法/密钥不一致当场拦下，不会存完就登不进去。
+- 真被锁在门外：服务器上执行 `optical totp off` 即可离线关掉，热重载立即生效。
 
 ---
 

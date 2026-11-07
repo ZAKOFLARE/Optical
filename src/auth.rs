@@ -41,7 +41,8 @@ impl AuthError {
                 format!("尝试过于频繁，请 {retry_after_secs}s 后再试")
             }
             AuthError::TotpRequired => "需要 6 位动态验证码".into(),
-            AuthError::TotpInvalid => "动态验证码错误或已过期".into(),
+            // 把"下一步该干嘛"写进错误里：只说"错误或已过期"，人只会去重装 App
+            AuthError::TotpInvalid => "动态验证码错误或已过期（算法必须与 App 一致：Google Authenticator 只认 SHA1；密钥换了就要重新扫码。彻底进不去可在服务器上执行 optical totp off）".into(),
         }
     }
 }

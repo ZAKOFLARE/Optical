@@ -243,6 +243,7 @@
   .formfoot{display:flex;align-items:center;gap:8px;margin-top:12px}
   .formfoot .spacer{flex:1}
   .note{font-size:11.5px;color:var(--ink-3);line-height:1.6}
+  .note.ok-note{color:var(--green)}
 
   #progress{position:fixed;left:0;top:0;height:2px;width:0;background:var(--blue);z-index:200;opacity:0;transition:opacity .15s}
   #progress.on{opacity:1;animation:prog 1.1s ease-in-out infinite}
@@ -699,6 +700,12 @@
                   <img id="totp-qr" alt="TOTP QR" width="180" height="180">
                   <span class="note" data-i18n="sc.totp.qr">扫码导入验证器；二维码由网关本地渲染，不走任何外部服务。</span>
                 </div>
+                <div class="field"><label data-i18n="sc.totp.code">当前验证码</label>
+                  <input type="text" id="f-totp-code" inputmode="numeric" maxlength="6" autocomplete="one-time-code" data-i18n-ph="sc.totp.code.ph" placeholder="App 里的 6 位数字"></div>
+                <div class="wide" style="display:flex;align-items:center;gap:10px">
+                  <button class="btn btn-sm" id="btn-totp-check" data-i18n="sc.totp.verify">验证</button>
+                  <span class="note" id="totp-check-note" data-i18n="sc.totp.verify.hint">保存前必须验证一次：算法对不上时当场拦下来，不会让你存完就登不进去。</span>
+                </div>
               </div>
               <div class="note" style="margin-top:10px" data-i18n="sc.totp.note">用 Google Authenticator / 1Password 扫码或手输 Base32。</div>
               <div class="note" data-i18n="sc.totp.sha1">SHA1 是 RFC 6238 默认值，只为兼容验证器；口令用 argon2id，会话令牌是 256 位 CSPRNG。</div>
@@ -789,8 +796,12 @@
       "sc.title":"管理面安全","sc.auth":"登录与口令","sc.newpass":"新口令（≥8 位）",
       "sc.newpass.note":"落盘只存 argon2 哈希，明文不落任何地方。","sc.changepass":"改口令",
       "sc.totp":"二次验证 (TOTP)","sc.gen":"生成密钥","sc.totp.note":"用 Google Authenticator / 1Password 扫码或手输 Base32。",
-      "sc.totp.sha1":"SHA1 是 RFC 6238 默认值，只为兼容验证器；口令用 argon2id，会话令牌是 256 位 CSPRNG。",
+      "sc.totp.sha1":"SHA1 是 RFC 6238 默认值，绝大多数验证器只认它（Google Authenticator 不读 algorithm 参数）。选 SHA256/SHA512 必须用 1Password / Aegis / FreeOTP 这类支持该参数的 App，否则验证码永远对不上。",
       "sc.totp.qr":"扫码导入验证器；二维码由网关本地渲染，不走任何外部服务。",
+      "sc.totp.code":"当前验证码","sc.totp.code.ph":"App 里的 6 位数字",
+      "sc.totp.verify":"验证","sc.totp.verify.hint":"保存前必须验证一次：算法对不上时当场拦下来，不会让你存完就登不进去。",
+      "sc.totp.verify.first":"先点\"验证\"确认 App 能算出正确验证码，再保存",
+      "sc.totp.code.need":"验证码是 6 位数字","sc.totp.ok":"验证通过","sc.totp.bad":"验证码错误或已过期",
       "sc.saved":"安全配置已保存","sc.pass.short":"口令至少 8 位","sc.pass.changed":"口令已修改",
       "sc.totp.generated":"密钥已生成，保存后生效","sc.totp.need":"先生成密钥","sc.totp.saved":"2FA 配置已保存",
       "f.dos":"DoS / 应用层","f.xml":"XML (XXE)","f.jwt":"JWT","f.sql":"SQL 注入","f.ssrf":"SSRF",
@@ -923,8 +934,12 @@
       "sc.title":"Admin Security","sc.auth":"Login & Password","sc.newpass":"New password (≥8)",
       "sc.newpass.note":"Only the argon2 hash is stored; plaintext never touches disk.","sc.changepass":"Change",
       "sc.totp":"Two-factor (TOTP)","sc.gen":"Generate secret","sc.totp.note":"Import the Base32 secret into any TOTP app.",
-      "sc.totp.sha1":"SHA1 is the RFC 6238 default for authenticator compatibility; passwords use argon2id and session tokens are 256-bit CSPRNG.",
+      "sc.totp.sha1":"SHA1 is the RFC 6238 default and what most apps actually use (Google Authenticator ignores the algorithm parameter). SHA256/SHA512 requires 1Password / Aegis / FreeOTP — otherwise codes will never match.",
       "sc.totp.qr":"Scan to import; the QR is rendered locally by the gateway, no third-party service.",
+      "sc.totp.code":"Current code","sc.totp.code.ph":"6-digit code from your app",
+      "sc.totp.verify":"Verify","sc.totp.verify.hint":"Verify once before saving: a mismatched algorithm gets caught here instead of locking you out.",
+      "sc.totp.verify.first":"Click Verify first — prove your app produces a valid code before saving",
+      "sc.totp.code.need":"Code must be 6 digits","sc.totp.ok":"Verified","sc.totp.bad":"Code is wrong or expired",
       "sc.saved":"Security settings saved","sc.pass.short":"Password must be at least 8 characters","sc.pass.changed":"Password changed",
       "sc.totp.generated":"Secret generated; save to enable","sc.totp.need":"Generate a secret first","sc.totp.saved":"2FA saved",
       "f.dos":"DoS / App Layer","f.xml":"XML (XXE)","f.jwt":"JWT","f.sql":"SQL Injection","f.ssrf":"SSRF",
@@ -2023,18 +2038,53 @@
       toast(t("sc.totp.generated"), "warn");
     }).catch(function(e){ toast(e.message,"err"); });
   });
+  $("btn-totp-check").addEventListener("click", function(){
+    var secret = $("f-totp-secret").value.trim();
+    var alg = $("f-totp-alg").value;
+    var code = $("f-totp-code").value.trim();
+    if (!secret){ toast(t("sc.totp.need"), "err"); return; }
+    if (code.length !== 6){ toast(t("sc.totp.code.need"), "err"); return; }
+    setBusy(this, true);
+    api("/api/totp/check", {method:"POST",headers:{"content-type":"application/json"},
+      body: JSON.stringify({secret:secret, algorithm:alg, code:code})})
+      .then(function(d){
+        if (!d.ok) throw new Error(d.error || t("sc.totp.bad"));
+        state.totpOk = {secret:secret, alg:alg};
+        $("totp-check-note").textContent = t("sc.totp.ok");
+        $("totp-check-note").className = "note ok-note";
+        toast(t("sc.totp.ok"), "ok");
+      })
+      .catch(function(e){ toast(e.message, "err"); })
+      .finally(function(){ setBusy($("btn-totp-check"), false); });
+  });
+
   $("btn-totp-save").addEventListener("click", function(){
     var cfg = clone();
-    cfg.admin.totp_secret = $("f-totp-secret").value.trim();
-    cfg.admin.totp_enabled = $("f-totp-enabled").value==="true";
-    cfg.admin.totp_algorithm = $("f-totp-alg").value;
-    if (cfg.admin.totp_enabled && !cfg.admin.totp_secret){ toast(t("sc.totp.need"), "err"); return; }
+    var secret = $("f-totp-secret").value.trim();
+    var alg = $("f-totp-alg").value;
+    var enabled = $("f-totp-enabled").value==="true";
+    cfg.admin.totp_secret = secret;
+    cfg.admin.totp_enabled = enabled;
+    cfg.admin.totp_algorithm = alg;
+    if (enabled && !secret){ toast(t("sc.totp.need"), "err"); return; }
+    // 凭据变了却没验证过：不许存。存进去就等于把自己锁在门外。
+    var changed = secret !== (state.cfg.admin.totp_secret||"") || alg !== (state.cfg.admin.totp_algorithm||"sha1");
+    var verified = state.totpOk && state.totpOk.secret === secret && state.totpOk.alg === alg;
+    if (enabled && changed && !verified){ toast(t("sc.totp.verify.first"), "err"); return; }
     save(cfg, t("sc.totp.saved"), this).then(function(){ return checkAuth(); });
   });
+  // 换算法/换密钥都要重新扫码重新验证，旧验证结果立刻作废
+  function totpDirty(){
+    state.totpOk = null;
+    $("totp-check-note").textContent = t("sc.totp.verify.hint");
+    $("totp-check-note").className = "note";
+  }
   $("f-totp-alg").addEventListener("change", function(){
+    totpDirty();
     updateTotpQr($("f-totp-secret").value.trim(), this.value);
   });
   $("f-totp-secret").addEventListener("change", function(){
+    totpDirty();
     updateTotpQr(this.value.trim(), $("f-totp-alg").value);
   });
 

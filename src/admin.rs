@@ -45,6 +45,7 @@ pub async fn serve(state: Arc<AppState>, listener: TcpListener) -> anyhow::Resul
         .route("/api/audit", get(api_audit).delete(api_clear_audit))
         .route("/api/cache/purge", post(api_cache_purge))
         .route("/api/totp/new", post(api_totp_new))
+        .route("/api/totp/check", post(api_totp_check))
         .route("/api/totp/qr", get(api_totp_qr))
         .route("/api/error-pages/preview", get(api_error_preview))
         .route("/api/ws", get(api_ws))
@@ -175,6 +176,43 @@ async fn api_totp_new(State(st): State<Arc<AppState>>) -> Json<Value> {
         "algorithm": alg.otpauth_name(),
         "uri": crate::auth::otpauth_uri(&secret, &cfg.admin.username, alg),
     }))
+}
+
+#[derive(Deserialize)]
+struct TotpCheck {
+    secret: String,
+    #[serde(default)]
+    algorithm: String,
+    code: String,
+}
+
+/// 保存 2FA 之前先校验一次验证码。
+///
+/// 为什么必须有这一步：算法是配置项，验证码是 App 算的。两者不一致时配置照样能存进去，
+/// 但人再也登不进来——之前就是这样，扫码时 App 只认 SHA1、配置却写着 sha256，
+/// 保存成功、登录永远"验证码错误"。这里当场把不一致挡在保存之前。
+async fn api_totp_check(
+    State(st): State<Arc<AppState>>,
+    Json(req): Json<TotpCheck>,
+) -> Json<Value> {
+    let cfg = st.snapshot().await;
+    let alg = match req.algorithm.trim().to_ascii_lowercase().as_str() {
+        "sha256" => crate::config::TotpAlgorithm::Sha256,
+        "sha512" => crate::config::TotpAlgorithm::Sha512,
+        "sha1" | "" => crate::config::TotpAlgorithm::Sha1,
+        _ => cfg.admin.totp_algorithm,
+    };
+    if req.secret.trim().is_empty() {
+        return Json(json!({ "ok": false, "error": "先点「生成密钥」拿到 Base32 密钥" }));
+    }
+    if crate::auth::totp_verify_alg(req.secret.trim(), &req.code, alg) {
+        Json(json!({ "ok": true, "algorithm": alg.otpauth_name() }))
+    } else {
+        Json(json!({
+            "ok": false,
+            "error": "验证码对不上。确认 App 里的算法与这里一致：Google Authenticator 只支持 SHA1；SHA256/SHA512 需要 1Password / Aegis / FreeOTP 这类支持 algorithm 参数的 App。"
+        }))
+    }
 }
 
 #[derive(Deserialize)]

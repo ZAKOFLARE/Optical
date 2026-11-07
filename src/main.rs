@@ -38,6 +38,8 @@ async fn main() -> anyhow::Result<()> {
         Command::Route { cmd } => commands::route_cmd(args.config, cmd).await,
         Command::Status(st) => commands::status_cmd(args.config, st).await,
         Command::Passwd(p) => commands::passwd_cmd(args.config, p).await,
+        Command::Install(i) => commands::install_cmd(i).await,
+        Command::Totp { cmd } => commands::totp_cmd(args.config, cmd).await,
         Command::UpstreamEcho(e) => {
             commands::init_logging("info");
             echo::serve(&e.listen).await
