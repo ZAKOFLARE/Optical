@@ -136,6 +136,9 @@
   .gran select{height:24px;padding:0 4px;border:1px solid var(--line-2);background:var(--panel);color:var(--ink);
     font-family:var(--mono);font-size:11.5px;border-radius:var(--r);outline:none;cursor:pointer}
   .gran select:focus{border-color:var(--blue)}
+  /* 概览小表：单元格可选中、可点击复制。别让"看得到复制不了"再发生 */
+  .tbl td.mono{user-select:text;cursor:copy}
+  .tbl td.copyable:hover{color:var(--blue);text-decoration:underline;text-underline-offset:2px}
   .totp-qr{display:flex;align-items:center;gap:14px}
   .totp-qr img{border:1px solid var(--line);background:#fff;padding:6px}
   .tabs{display:flex;gap:20px;height:100%}
@@ -341,9 +344,12 @@
               <button class="tab" data-k="cache" data-i18n="ov.tab.cache">缓存</button>
               <button class="tab" data-k="blocks" data-i18n="ov.tab.block">拦截</button>
             </div>
-            <div style="display:flex;align-items:center;gap:12px">
-              <label class="gran"><span data-i18n="ov.gran">采样</span>
-                <select id="chart-gran"></select>
+            <div style="display:flex;align-items:center;gap:10px">
+              <label class="gran"><span data-i18n="ov.gran">粒度</span>
+                <select id="gran-sel"></select>
+              </label>
+              <label class="gran"><span data-i18n="ov.range">范围</span>
+                <select id="range-sel"></select>
               </label>
               <span class="sec-hint" id="chart-note">—</span>
             </div>
@@ -558,7 +564,7 @@
                 <div class="field"><label>audit_enabled</label>
                   <select id="f-au-enabled"><option value="true">true</option><option value="false">false</option></select></div>
                 <div class="field"><label>metrics.top_n</label><input type="number" id="f-top-n" min="1"></div>
-                <div class="field"><label>metrics.history_secs</label><input type="number" id="f-hist" min="30"></div>
+                <div class="field"><label>metrics.history_points<i class="q" data-i18n-tip="tip.histpoints">?</i></label><input type="number" id="f-hist" min="240" max="20000" step="120"></div>
                 <div class="field"><label>metrics.sample_interval_ms</label><input type="number" id="f-sample-ms" min="15000" max="2592000000" step="1000"></div>
                 <div class="field wide"><label>paths.data_dir</label><input type="text" id="f-data-dir" data-i18n-ph="ph.autodir" placeholder="留空 = 配置文件所在目录"></div>
                 <div class="field"><label>paths.config_history_dir</label><input type="text" id="f-hist-dir" data-i18n-ph="ph.subdir" placeholder="留空 = &lt;data_dir&gt;/conf-history"></div>
@@ -734,8 +740,14 @@
       "ov.tab.req":"请求 / 采样","ov.tab.bw":"带宽","ov.tab.cache":"缓存","ov.tab.block":"拦截",
       "ov.top.ua":"User-Agent Top","ov.top.ip":"客户端 IP Top","ov.top.rule":"规则命中 Top",
       "ov.top.ua.hint":"按请求数排序","ov.top.ip.hint":"按请求数排序","ov.top.rule.hint":"不含分族汇总",
-      "ov.chart.sampling":"采样粒度：{label} · {n} 点 · 覆盖 {span}","ov.chart.peak":"峰值",
-      "ov.gran":"采样","ov.gran.saved":"采样粒度已更新","ov.gran.need":"采样间隔 15 秒 ~ 1 个月",
+      "ov.chart.window":"粒度 {gran} · 范围 {range} · {n} 点","ov.chart.peak":"峰值",
+      "ov.gran":"粒度","ov.range":"范围","ov.gran.toofine":"比采集间隔细，无数据",
+      "ov.copy":"点击复制","ov.copied":"已复制：","ov.copy.manual":"已选中，按 Ctrl+C 复制",
+      "ov.down":" · 更早的数据已降采样到 ",
+      "ov.toofew":" · 点太少，把范围调大或粒度调细",
+      "tip.histpoints":"历史点数上限。写满后自动合并相邻点、分辨率翻倍，窗口变长但内存不涨。",
+      "lg.requests":"请求","lg.errors":"错误","lg.in":"入","lg.out":"出",
+      "lg.hit":"命中","lg.miss":"未命中","lg.blocks":"拦截",
       "rt.title":"路由表","rt.hint":"顺序即优先级；未命中走默认上游","rt.add":"+ 新增路由",
       "rt.filter":"筛选 name / host / upstream / group",
       "rt.empty.none":"还没有路由","rt.empty.nomatch":"没有匹配项",
@@ -862,8 +874,14 @@
       "ov.tab.req":"Requests / sample","ov.tab.bw":"Bandwidth","ov.tab.cache":"Cache","ov.tab.block":"Blocks",
       "ov.top.ua":"Top User-Agent","ov.top.ip":"Top Client IP","ov.top.rule":"Top Rule Hits",
       "ov.top.ua.hint":"Sorted by requests","ov.top.ip.hint":"Sorted by requests","ov.top.rule.hint":"Family rollups excluded",
-      "ov.chart.sampling":"Granularity: {label} · {n} points · spans {span}","ov.chart.peak":"peak",
-      "ov.gran":"Sample","ov.gran.saved":"Sampling interval updated","ov.gran.need":"Interval must be 15s to 1 month",
+      "ov.chart.window":"Bucket {gran} · range {range} · {n} points","ov.chart.peak":"peak",
+      "ov.gran":"Bucket","ov.range":"Range","ov.gran.toofine":"finer than sampling",
+      "ov.copy":"Click to copy","ov.copied":"Copied: ","ov.copy.manual":"Selected — press Ctrl+C",
+      "ov.down":" · older data downsampled to ",
+      "ov.toofew":" · too few points — widen the range or refine the bucket",
+      "tip.histpoints":"Max stored points. When full, neighbours merge and resolution doubles: longer window, same memory.",
+      "lg.requests":"requests","lg.errors":"errors","lg.in":"in","lg.out":"out",
+      "lg.hit":"hit","lg.miss":"miss","lg.blocks":"blocks",
       "rt.title":"Route Table","rt.hint":"Order is priority; unmatched goes to default upstream","rt.add":"+ Route",
       "rt.filter":"Filter name / host / upstream / group",
       "rt.empty.none":"No routes yet","rt.empty.nomatch":"No match",
@@ -978,48 +996,24 @@
 
   var lang = localStorage.getItem("optical.lang") || "zh";
 
-  // 采样档位：[间隔ms, 保留点数, 英文短标签, 中文短标签]
-  // 每档的窗口 = 间隔 × 点数，跟后端 config::GRANULARITIES 一一对应（smoke 会校验）
-  var GRANS = [
-    [15000, 240, "15s", "15 秒"],
-    [300000, 288, "5m", "5 分"],
-    [1800000, 240, "30m", "30 分"],
-    [3600000, 168, "1h", "1 小时"],
-    [21600000, 120, "6h", "6 小时"],
-    [43200000, 120, "12h", "12 小时"],
-    [86400000, 90, "1d", "1 天"],
-    [604800000, 48, "7d", "7 天"],
-    [1209600000, 26, "14d", "14 天"],
-    [2592000000, 24, "1mo", "1 个月"]
-  ];
+  // ---------- 采样视图：粒度 × 范围 ----------
+  // 这两个是"看的人"的选择，只存在 localStorage 里，通过 ?gran=&range= 查询；
+  // 绝不写进服务端配置——否则两个人各切各的就会互相覆盖，还会撞配置乐观锁。
+  var GRAINS = [15, 30, 60, 300, 900, 1800, 3600, 21600, 43200, 86400];
+  var RANGES = [900, 3600, 21600, 86400, 604800, 2592000];
 
-  function granOf(ms){
-    for (var i = 0; i < GRANS.length; i++) if (GRANS[i][0] === ms) return GRANS[i];
-    return null;
-  }
-  function granShort(ms){
-    var g = granOf(ms);
-    if (g) return g[2];
-    return ms % 1000 ? ms + "ms" : (ms / 1000) + "s";
-  }
-  function granLabel(ms){
-    var g = granOf(ms);
-    if (g) return lang === "zh" ? g[3] : g[2];
-    return granShort(ms);
-  }
-  // 窗口 = 间隔 × 保留点数；点数优先取服务端 status.sample_points，回退到档位表
-  function granWindow(ms){
-    var g = granOf(ms);
-    var pts = g ? g[1] : ((state.status && state.status.sample_points) || 240);
-    return fmtSpan(ms * pts / 1000);
-  }
-  function fmtSpan(secs){
+  var view = {
+    gran: Number(localStorage.getItem("optical.gran")) || 60,
+    range: Number(localStorage.getItem("optical.range")) || 3600
+  };
+
+  // 秒 → "15 秒 / 5 分 / 1 小时 / 1 天"
+  function spanText(secs){
     var zh = lang === "zh";
-    if (secs < 120) return Math.round(secs) + (zh ? " 秒" : "s");
-    if (secs < 3600) return Math.round(secs / 60) + (zh ? " 分" : "min");
-    if (secs < 86400) return Math.round(secs / 3600) + (zh ? " 小时" : "h");
-    if (secs < 63072000) return Math.round(secs / 86400) + (zh ? " 天" : "d");
-    return Math.round(secs / 31536000) + (zh ? " 年" : "y");
+    if (secs < 60) return secs + (zh ? " 秒" : "s");
+    if (secs < 3600) return (secs / 60) + (zh ? " 分" : "min");
+    if (secs < 86400) return (secs / 3600) + (zh ? " 小时" : "h");
+    return (secs / 86400) + (zh ? " 天" : "d");
   }
   var state = {
     cfg:null, status:null, metrics:null, history:null, snapshots:[], audit:[],
@@ -1079,8 +1073,9 @@
     document.title = t("app.title");
     var active = document.querySelector(".rail-item.active span");
     if (active) $("crumb-now").textContent = active.textContent;
-    // 档位下拉与图表里的"1 小时 / 1 天"都是拼出来的文案，换语言要跟着重建
-    if ($("chart-gran") && state.cfg) syncGranSelect(state.cfg.metrics.sample_interval_ms || 15000);
+    // 粒度/范围下拉的文案是拼出来的，"1 小时 / 1 天"要跟着语言重建
+    state.viewKey = "";
+    fillViewSelects();
     renderAll();
   }
   function applyTheme(){
@@ -1178,25 +1173,31 @@
     }).join("");
   }
 
-  function perLabel(base){
-    return base + " / " + granShort(sampleStep());
+  function pointsOf(){
+    return (state.history && state.history.points) || [];
+  }
+  function bucketMs(){
+    return (state.history && state.history.bucket_ms) || (view.gran * 1000);
+  }
+  function bucketLabel(){
+    return spanText(Math.round(bucketMs() / 1000));
   }
 
   function series(){
-    var h = (state.history && state.history.samples) || [];
+    var h = pointsOf();
     if (state.chart === "requests") return [
-      {k:"requests", label:perLabel("requests"), color:"#0052d9", data:h.map(function(x){return x.requests})},
-      {k:"errors", label:perLabel("errors"), color:"#e34d59", data:h.map(function(x){return x.errors})}
+      {k:"requests", label:t("lg.requests") + " / " + bucketLabel(), color:"#0052d9", data:h.map(function(x){return x.requests})},
+      {k:"errors", label:t("lg.errors") + " / " + bucketLabel(), color:"#e34d59", data:h.map(function(x){return x.errors})}
     ];
     if (state.chart === "bytes") return [
-      {k:"bytes_in", label:perLabel("in B"), color:"#00a870", data:h.map(function(x){return x.bytes_in})},
-      {k:"bytes_out", label:perLabel("out B"), color:"#0052d9", data:h.map(function(x){return x.bytes_out})}
+      {k:"bytes_in", label:t("lg.in") + " / " + bucketLabel(), color:"#00a870", data:h.map(function(x){return x.bytes_in})},
+      {k:"bytes_out", label:t("lg.out") + " / " + bucketLabel(), color:"#0052d9", data:h.map(function(x){return x.bytes_out})}
     ];
     if (state.chart === "cache") return [
-      {k:"cache_hit", label:"hit", color:"#00a870", data:h.map(function(x){return x.cache_hit})},
-      {k:"cache_miss", label:"miss", color:"#ed7b2f", data:h.map(function(x){return x.cache_miss})}
+      {k:"cache_hit", label:t("lg.hit"), color:"#00a870", data:h.map(function(x){return x.cache_hit})},
+      {k:"cache_miss", label:t("lg.miss"), color:"#ed7b2f", data:h.map(function(x){return x.cache_miss})}
     ];
-    return [{k:"waf_blocks", label:perLabel("blocks"), color:"#e34d59", data:h.map(function(x){return x.waf_blocks})}];
+    return [{k:"waf_blocks", label:t("lg.blocks") + " / " + bucketLabel(), color:"#e34d59", data:h.map(function(x){return x.waf_blocks})}];
   }
 
   // 刻度取整：1/2/5 × 10^n，保证 Y 轴读数是整数而不是 3.7 这种
@@ -1217,29 +1218,23 @@
     return String(Math.round(v));
   }
 
-  function sampleStep(){
-    var ms = (state.history && state.history.interval_ms) ||
-             (state.status && state.status.sample_interval_ms) || 15000;
-    return Math.max(15000, ms);
-  }
-
-  // 第 i 个采样点对应的时间：最新一个是「现在」，往前每个点一个采样间隔
-  function sampleTime(i, n){ return new Date(Date.now() - (n-1-i)*sampleStep()); }
   function pad2(x){ return (x<10?"0":"")+x; }
   function hhmmss(d){ return pad2(d.getHours())+":"+pad2(d.getMinutes())+":"+pad2(d.getSeconds()); }
   function ymd(d){ return d.getFullYear()+"-"+pad2(d.getMonth()+1)+"-"+pad2(d.getDate()); }
 
-  // 横轴标签随粒度变形：秒级看时分秒，天级看月日，月级带年份
-  function xLabel(d){
-    var ms = sampleStep();
-    if (ms >= 86400000) return ymd(d).slice(2);
-    if (ms >= 3600000) return pad2(d.getMonth()+1)+"-"+pad2(d.getDate())+" "+pad2(d.getHours())+":00";
+  // 横轴标签跟着桶宽走：秒级看时分秒，分钟级看时分，天级看年月日
+  function xLabel(ms){
+    var d = new Date(ms), b = bucketMs();
+    if (b >= 86400000) return ymd(d).slice(2);
+    if (b >= 3600000) return pad2(d.getMonth()+1)+"-"+pad2(d.getDate())+" "+pad2(d.getHours())+":00";
+    if (b >= 60000) return pad2(d.getHours())+":"+pad2(d.getMinutes());
     return hhmmss(d);
   }
 
   function drawChart(){
     var ss = series();
-    var n = (ss[0] && ss[0].data) ? ss[0].data.length : 0;
+    var pts = pointsOf();
+    var n = pts.length;
     var plot = $("plot");
     var W = Math.max(360, plot.clientWidth || 800);
     var H = Math.max(120, plot.clientHeight || 172);
@@ -1251,7 +1246,12 @@
     var sc = niceScale(peak, 4);
 
     function yOf(v){ return y1 - (v / sc.max) * (y1 - y0); }
-    function xOf(i){ return n <= 1 ? x0 : x0 + (i / (n - 1)) * (x1 - x0); }
+    // 横轴按真实时间戳铺开：桶宽可能中途变过（降采样），按比例画才不失真
+    var t0 = n ? pts[0].t : 0, t1 = n ? pts[n-1].t : 0;
+    function xOf(i){
+      if (n <= 1 || t1 <= t0) return x0;
+      return x0 + (pts[i].t - t0) / (t1 - t0) * (x1 - x0);
+    }
 
     var out = "";
     for (var k = 0; k <= 4; k++){
@@ -1261,8 +1261,7 @@
              esc(isBytes ? fmtBytes(val) : compact(val))+'</text>';
     }
     var ticks = 5;
-    // 采样点比刻度还少时（刚切档位、刚启动），多个刻度会落到同一个索引上，
-    // 文字叠在一起糊成一片。先去重，再按首尾对齐画。
+    // 点比刻度还少时，多个刻度会落到同一个索引上，文字叠在一起糊成一片。先去重。
     var xs = [];
     if (n <= 1) xs = [0];
     else {
@@ -1276,15 +1275,15 @@
       var idx = xs[xi];
       var tx = n > 1 ? xOf(idx) : x0;
       var anchor = xi === 0 ? "start" : (xi === xs.length-1 ? "end" : "middle");
-      var label = n > 0 ? xLabel(sampleTime(idx, n)) : "--";
+      var label = n > 0 ? xLabel(pts[idx].t) : "--";
       out += '<text class="xl" x="'+tx.toFixed(1)+'" y="'+(H-8)+'" text-anchor="'+anchor+'">'+label+'</text>';
     }
     ss.forEach(function(s){
-      var pts = [];
-      if (n === 0) pts = [[x0, y1], [x1, y1]];
-      else if (n === 1) pts = [[x0, yOf(s.data[0])], [x1, yOf(s.data[0])]];
-      else for (var i = 0; i < n; i++) pts.push([xOf(i), yOf(s.data[i])]);
-      out += '<polyline points="'+pts.map(function(p){ return p[0].toFixed(1)+","+p[1].toFixed(1); }).join(" ")+
+      var poly = [];
+      if (n === 0) poly = [[x0, y1], [x1, y1]];
+      else if (n === 1) poly = [[x0, yOf(s.data[0])], [x1, yOf(s.data[0])]];
+      else for (var i = 0; i < n; i++) poly.push([xOf(i), yOf(s.data[i])]);
+      out += '<polyline points="'+poly.map(function(p){ return p[0].toFixed(1)+","+p[1].toFixed(1); }).join(" ")+
              '" fill="none" stroke="'+s.color+'" stroke-width="1.6" stroke-linejoin="round"/>';
     });
     var hi = state.hoverIdx;
@@ -1311,23 +1310,29 @@
     }).join("");
 
     $("chart-note").textContent = (peak ? (t("ov.chart.peak") + " " + (isBytes ? fmtBytes(peak) : peak)) : "—") +
-      (hi != null && n ? (" · " + xLabel(sampleTime(hi, n))) : "");
+      (hi != null && n ? (" · " + xLabel(pts[hi].t)) : "") + (state.histNote || "") +
+      (n > 0 && n < 3 ? t("ov.toofew") : "");
   }
 
   function showTip(ev, idx, n){
     var ss = series();
     var plot = $("plot"), tip = $("tip");
     var isBytes = state.chart === "bytes";
-    var d = sampleTime(idx, n);
+    var pts = pointsOf();
+    var at = pts[idx] ? pts[idx].t : Date.now();
     var rows = ss.map(function(s){
       var v = s.data[idx] == null ? 0 : s.data[idx];
       return '<div class="tr"><i style="background:'+s.color+'"></i><span class="n">'+esc(s.label)+'</span>'+
              '<b>'+(isBytes ? fmtBytes(v) : v)+'</b></div>';
     }).join("");
-    // 天/月级粒度下时分秒没有意义，只写到日期
-    var when = sampleStep() >= 86400000 ? ymd(d) : ymd(d) + " " + hhmmss(d);
+    var d = new Date(at);
+    var when = bucketMs() >= 86400000 ? ymd(d) : ymd(d) + " " + hhmmss(d);
     tip.innerHTML = '<div class="tt">'+when+'</div>'+rows+
-                    '<div class="tg">'+esc(t("ov.chart.sampling",{n:n, label:granLabel(sampleStep()), span:granWindow(sampleStep())}))+'</div>';
+                    '<div class="tg">'+esc(t("ov.chart.window",{
+                      gran: spanText(Math.round(bucketMs()/1000)),
+                      range: spanText(view.range),
+                      n: n
+                    }))+'</div>';
     tip.style.display = "block";
 
     var rect = plot.getBoundingClientRect();
@@ -1343,7 +1348,7 @@
     var plot = $("plot");
     state.hoverIdx = null;
     plot.addEventListener("mousemove", function(ev){
-      var n = (state.history && state.history.samples) ? state.history.samples.length : 0;
+      var n = pointsOf().length;
       if (!n) return;
       var rect = plot.getBoundingClientRect();
       var x0 = 56, x1 = rect.width - 12;
@@ -1363,12 +1368,61 @@
     }
   }
 
+  // 概览的小表：单元格可点即复制。
+  // 另外——每次快照都重建 tbody 会把用户正在拖的选区抹掉（就是"连 IP 都复制不了"的根因），
+  // 所以内容没变就一个字节都不动。
   function tableSimple(el, rows, emptyText){
-    if (!rows || !rows.length){ el.innerHTML = '<tr class="empty-row"><td colspan="2">'+esc(emptyText||"—")+'</td></tr>'; return; }
-    el.innerHTML = rows.map(function(r){
-      return '<tr><td class="mono" style="word-break:break-all">'+esc(r[0])+'</td>'+
-        '<td class="num" style="text-align:right">'+r[1]+'</td></tr>';
-    }).join("");
+    var html;
+    if (!rows || !rows.length){
+      html = '<tr class="empty-row"><td colspan="2">'+esc(emptyText||"—")+'</td></tr>';
+    } else {
+      html = rows.map(function(r){
+        return '<tr><td class="mono copyable" data-copy="'+esc(r[0])+'" title="'+esc(t("ov.copy"))+'">'+esc(r[0])+'</td>'+
+          '<td class="num" style="text-align:right">'+r[1]+'</td></tr>';
+      }).join("");
+    }
+    if (el.dataset.html === html) return;
+    el.dataset.html = html;
+    el.innerHTML = html;
+  }
+
+  // 点一下就复制。CUA/键盘用户也能用：单元格可选中，不依赖剪贴板权限。
+  function bindCopy(){
+    document.addEventListener("click", function(ev){
+      var cell = ev.target.closest("td.copyable");
+      if (!cell) return;
+      var text = cell.getAttribute("data-copy") || "";
+      if (!text) return;
+      copyText(text, cell);
+    });
+  }
+
+  // 剪贴板 API 只在安全上下文（https / localhost）可用，网关常年跑在 http 上，
+  // 所以必须有 execCommand 兜底——"点了没反应"比"复制不了"更让人火大。
+  function copyText(text, cell){
+    var done = function(){ toast(t("ov.copied") + " " + text, "ok"); };
+    if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(done).catch(function(){ legacyCopy(text, cell); });
+      return;
+    }
+    legacyCopy(text, cell);
+  }
+
+  function legacyCopy(text, cell){
+    var r = document.createRange();
+    r.selectNodeContents(cell);
+    var sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
+    var ok = false;
+    try { ok = document.execCommand("copy"); } catch(e){ ok = false; }
+    if (ok){
+      sel.removeAllRanges();
+      toast(t("ov.copied") + " " + text, "ok");
+    } else {
+      // 真的没辙了，至少让用户省掉拖选这一步
+      toast(t("ov.copy.manual"), "warn");
+    }
   }
 
   function renderOverview(){
@@ -1842,19 +1896,6 @@
     window.open("/api/error-pages/preview?status=" + code, "_blank");
   });
 
-  function syncGranSelect(ms){
-    var sel = $("chart-gran");
-    var want = String(ms);
-    // 文案随语言变，所以每次重建；自定义（不在档位表里的）额外追加一条
-    sel.innerHTML = GRANS.map(function(g){
-      return '<option value="'+g[0]+'">'+esc(granLabel(g[0]) + " · " + fmtSpan(g[0] * g[1] / 1000))+'</option>';
-    }).join("");
-    if (!granOf(ms)){
-      sel.innerHTML += '<option value="'+want+'">'+esc(granShort(ms) + " · " + granWindow(ms))+'</option>';
-    }
-    sel.value = want;
-  }
-
   function updateTotpQr(secret, alg){
     var wrap = $("totp-qr-wrap"), img = $("totp-qr");
     if (!secret){ wrap.style.display = "none"; $("f-totp-uri").value=""; return; }
@@ -1880,9 +1921,8 @@
     $("f-sh-keep").value=c.storage.config_history_keep; $("f-sh-bytes").value=c.storage.config_history_max_bytes;
     $("f-sh-days").value=c.storage.config_history_keep_days; $("f-au-keep").value=c.storage.audit_keep;
     $("f-au-bytes").value=c.storage.audit_max_bytes; $("f-au-enabled").value=String(!!c.storage.audit_enabled);
-    $("f-top-n").value=c.metrics.top_n; $("f-hist").value=c.metrics.history_secs;
+    $("f-top-n").value=c.metrics.top_n; $("f-hist").value=c.metrics.history_points;
     $("f-sample-ms").value=c.metrics.sample_interval_ms||15000;
-    syncGranSelect(c.metrics.sample_interval_ms||15000);
     var p = c.paths || {};
     $("f-data-dir").value=p.data_dir||""; $("f-hist-dir").value=p.config_history_dir||"";
     $("f-audit-file").value=p.audit_file||""; $("f-tls-dir").value=p.tls_dir||"";
@@ -1950,7 +1990,7 @@
     cfg.storage.audit_max_bytes=Number($("f-au-bytes").value)||0;
     cfg.storage.audit_enabled=$("f-au-enabled").value==="true";
     cfg.metrics.top_n=Number($("f-top-n").value)||8;
-    cfg.metrics.history_secs=Number($("f-hist").value)||300;
+    cfg.metrics.history_points=Number($("f-hist").value)||2880;
     cfg.metrics.sample_interval_ms=Number($("f-sample-ms").value)||15000;
     cfg.paths = cfg.paths || {};
     cfg.paths.data_dir=$("f-data-dir").value.trim();
@@ -1998,21 +2038,49 @@
     updateTotpQr(this.value.trim(), $("f-totp-alg").value);
   });
 
-  $("chart-gran").addEventListener("change", function(){
-    var ms = Number(this.value);
-    if (!ms || ms < 15000 || ms > 2592000000){ toast(t("ov.gran.need"), "err"); return; }
-    var cfg = clone();
-    cfg.metrics.sample_interval_ms = ms;
-    save(cfg, t("ov.gran.saved"), null);
-  });
+  // 粒度/范围只改查询参数和 localStorage，一个字节都不写服务端配置，
+  // 所以不存在"两个人互相覆盖"或 409 冲突这种破事。
+  function fillViewSelects(){
+    var g = $("gran-sel"), r = $("range-sel");
+    var sampleSecs = Math.round(((state.status && state.status.sample_interval_ms) || 15000) / 1000);
+    // 每秒都会被快照调一次，配置和语言没变就不要重建（重建会打断正在操作的下拉）
+    if (state.viewKey === sampleSecs + "|" + lang && g.options.length) return;
+    state.viewKey = sampleSecs + "|" + lang;
+    g.innerHTML = GRAINS.map(function(v){
+      return '<option value="'+v+'">'+esc(spanText(v))+'</option>';
+    }).join("");
+    r.innerHTML = RANGES.map(function(v){
+      return '<option value="'+v+'">'+esc(spanText(v))+'</option>';
+    }).join("");
+    // 后端采样间隔比选中的粒度还粗时，粒度选择没有意义，标出来
+    g.querySelectorAll("option").forEach(function(o){
+      o.disabled = Number(o.value) < sampleSecs;
+      o.textContent = spanText(Number(o.value)) + (Number(o.value) < sampleSecs ? " (" + t("ov.gran.toofine") + ")" : "");
+    });
+    if (view.gran < sampleSecs) view.gran = sampleSecs;
+    g.value = String(view.gran);
+    r.value = String(view.range);
+  }
+
+  function onViewChange(){
+    view.gran = Number($("gran-sel").value) || 60;
+    view.range = Number($("range-sel").value) || 3600;
+    localStorage.setItem("optical.gran", view.gran);
+    localStorage.setItem("optical.range", view.range);
+    loadHistory();
+  }
+  $("gran-sel").addEventListener("change", onViewChange);
+  $("range-sel").addEventListener("change", onViewChange);
 
   $("btn-reset-data").addEventListener("click", function(){
     if (!confirm(t("cf.clear.confirm"))) return;
     var cfg = clone();
+    // 示例数据 = 路由 / 后端 / 分组 / 头改写 / 错误页模板。留一半像是"清过又没清"。
     cfg.routes = [];
     cfg.backends = [];
     cfg.backend_groups = [];
     cfg.header_rules = [];
+    if (cfg.error_pages) cfg.error_pages.bodies = {};
     save(cfg, t("cf.clear.done"), this);
   });
 
@@ -2137,9 +2205,31 @@
     return api("/api/audit").then(function(d){ state.audit = d.entries||[]; renderHistory(); }).catch(function(){});
   }
 
+  // 历史曲线：粒度/范围都走查询参数，服务端按需求临时分桶。
+  // 失败时保留上一帧，不要把图清空——网络抖一下不该看起来像"网关挂了"。
+  function loadHistory(){
+    var q = "/api/history?gran=" + view.gran + "&range=" + view.range;
+    return api(q).then(function(d){
+      state.history = d;
+      // 服务端存的分辨率比请求粗时，如实提示，别假装时间对得上
+      state.histNote = (d.exact === false && d.bucket_ms > view.gran * 1000)
+        ? (t("ov.down") + spanText(Math.round(d.bucket_ms / 1000)))
+        : "";
+      drawChart();
+    }).catch(function(){});
+  }
+
+  function startHistoryTimer(){
+    if (state.histTimer) return;
+    state.histTimer = setInterval(function(){ if (state.authed) loadHistory(); }, 5000);
+  }
+  function stopHistoryTimer(){
+    if (state.histTimer){ clearInterval(state.histTimer); state.histTimer = null; }
+  }
+
   function refresh(){
     return Promise.all([
-      api("/api/status").then(function(s){ state.status = s; $("dot").className="on"; $("conn").textContent = t("status.live") + " · " + s.listen; renderOverview(); renderKpis(); })
+      api("/api/status").then(function(s){ state.status = s; fillViewSelects(); $("dot").className="on"; $("conn").textContent = t("status.live") + " · " + s.listen; renderOverview(); renderKpis(); })
         .catch(function(e){
           $("dot").className="off";
           // 把原因带出来：只显示"离线"等于让人猜
@@ -2153,7 +2243,7 @@
         updateBackendLive();
         renderOverview(); renderKpis();
       }).catch(function(){}),
-      api("/api/history").then(function(h){ state.history = h.history; drawChart(); }).catch(function(){})
+      loadHistory()
     ]);
   }
 
@@ -2170,7 +2260,7 @@
     state.metrics.top = s.top || {ua:[],ip:[],rules:[]};
     state.metrics.backends = s.backend_list || [];
     state.metrics.backend_groups = s.backend_groups || [];
-    if (s.history) state.history = s.history;
+    fillViewSelects();
     $("dot").className = "on";
     $("conn").textContent = t("status.live") + " · " + s.listen;
     renderOverview();
@@ -2212,6 +2302,7 @@
 
   function stopLive(){
     stopPolling();
+    stopHistoryTimer();
     if (state.ws){
       var w = state.ws;
       state.ws = null;
@@ -2261,11 +2352,14 @@
 
   // ---------- 启动 ----------
   function boot(){
+    bindCopy();
+    fillViewSelects();
     return checkAuth().then(function(ok){
       if (!ok) return;
       return refreshAll().then(function(){
         // 先起轮询兜底，WS 连上后立即停掉；断线会自动回退并重连
         startPolling();
+        startHistoryTimer();
         connectWs();
       });
     });

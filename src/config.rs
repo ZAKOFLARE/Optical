@@ -241,46 +241,17 @@ pub struct ErrorPagesConfig {
 pub struct MetricsConfig {
     /// Top UA / IP 列表长度
     pub top_n: usize,
-    /// 自定义采样间隔时的兜底窗口（秒）；命中 GRANULARITIES 档位时由档位决定
-    pub history_secs: usize,
-    /// 采样间隔（毫秒）。命中档位时同时决定保留点数（窗口 = 间隔 × 点数）
+    /// 采集间隔（毫秒）：服务端按这个节奏记录增量。默认 15 秒。
+    /// 注意"看图的粒度"不在这里——那是查询参数，见 AppState::history_query。
     pub sample_interval_ms: u64,
+    /// 历史点数上限。写满后自动合并相邻点、分辨率翻倍，窗口自然变长，内存不涨。
+    pub history_points: usize,
 }
 
-/// 采样颗粒度档位：`(间隔毫秒, 保留点数)`。窗口 = 两者乘积。
-///
-/// 盯 1 秒的线只能看瞬时抖动；真正排查问题靠的是"拉长到几小时/几天"的粒度。
-/// 每档都按「窗口覆盖一个有意义的时间跨度」定，而不是拍脑袋堆点数。
-pub const GRANULARITIES: &[(u64, usize)] = &[
-    (15_000, 240),         // 15 秒 × 240  = 1 小时
-    (300_000, 288),        // 5 分   × 288  = 1 天
-    (1_800_000, 240),      // 30 分  × 240  = 5 天
-    (3_600_000, 168),      // 1 小时 × 168  = 7 天
-    (21_600_000, 120),     // 6 小时 × 120  = 30 天
-    (43_200_000, 120),     // 12 小时 × 120 = 60 天
-    (86_400_000, 90),      // 1 天   × 90   = 90 天
-    (604_800_000, 48),     // 7 天   × 48   = 336 天
-    (1_209_600_000, 26),   // 14 天  × 26   = 364 天
-    (2_592_000_000, 24),   // 1 个月 × 24   = 2 年
-];
-
-/// 最小采样间隔：15 秒
-pub const MIN_SAMPLE_MS: u64 = 15_000;
-/// 最大采样间隔：1 个月（按 30 天计）
-pub const MAX_SAMPLE_MS: u64 = 2_592_000_000;
-
-/// 间隔 → (间隔, 保留点数)。
-///
-/// 命中档位就用档位点数；填了档位之外的自定义值，按 `history_secs` 折算并夹在 10~480 点，
-/// 免得 1 毫秒的间隔把内存吃穿、或者一个月间隔只剩两个点看不出趋势。
-pub fn granularity_of(interval_ms: u64, history_secs: usize) -> (u64, usize) {
-    let interval = interval_ms.clamp(MIN_SAMPLE_MS, MAX_SAMPLE_MS);
-    if let Some((ms, points)) = GRANULARITIES.iter().find(|(ms, _)| *ms == interval) {
-        return (*ms, *points);
-    }
-    let cap = ((history_secs.max(30) as u64) * 1000 / interval).clamp(10, 480) as usize;
-    (interval, cap)
-}
+/// 采集间隔下限：5 秒。再细就是拿 CPU 换噪点。
+pub const MIN_SAMPLE_MS: u64 = 5_000;
+/// 采集间隔上限：10 分钟。再粗就只剩"有没有流量"这种信息了。
+pub const MAX_SAMPLE_MS: u64 = 600_000;
 
 /// WAF 总开关与各规则族。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -731,8 +702,8 @@ impl Default for MetricsConfig {
     fn default() -> Self {
         Self {
             top_n: 8,
-            history_secs: 300,
             sample_interval_ms: MIN_SAMPLE_MS,
+            history_points: 2880,
         }
     }
 }
@@ -1110,8 +1081,8 @@ impl Config {
         if self.metrics.top_n == 0 {
             errs.push("metrics.top_n 必须大于 0".to_string());
         }
-        if self.metrics.history_secs == 0 {
-            errs.push("metrics.history_secs 必须大于 0".to_string());
+        if !(240..=20_000).contains(&self.metrics.history_points) {
+            errs.push("metrics.history_points 必须在 240~20000 之间".to_string());
         }
 
         let mut group_names = std::collections::HashSet::new();
@@ -1246,11 +1217,9 @@ impl Config {
                 Err(e) => errs.push(format!("{field} 非法: {e}")),
             }
         }
-        if self.metrics.sample_interval_ms < MIN_SAMPLE_MS
-            || self.metrics.sample_interval_ms > MAX_SAMPLE_MS
-        {
+        if !(MIN_SAMPLE_MS..=MAX_SAMPLE_MS).contains(&self.metrics.sample_interval_ms) {
             errs.push(format!(
-                "metrics.sample_interval_ms 必须在 {MIN_SAMPLE_MS}~{MAX_SAMPLE_MS} 之间（15 秒 ~ 1 个月）"
+                "metrics.sample_interval_ms 必须在 {MIN_SAMPLE_MS}~{MAX_SAMPLE_MS} 之间（5 秒 ~ 10 分钟）"
             ));
         }
 
@@ -1555,34 +1524,23 @@ mod tests {
     }
 
     #[test]
-    fn granularity_tiers_cover_a_growing_window() {
-        // 切到更粗的档位，窗口必须更长；否则用户切档会看到"时间范围反而变短"
-        let mut last = 0u64;
-        for (ms, points) in GRANULARITIES {
-            let window = ms * (*points as u64) / 1000;
-            assert!(
-                window > last,
-                "{ms}ms 档位窗口 {window}s 没有比上一档 {last}s 更长"
-            );
-            last = window;
-            assert_eq!(granularity_of(*ms, 300), (*ms, *points), "命中档位应直接用档位点数");
-        }
-        // 15s × 240 = 1 小时，这是最短档；1 个月档要覆盖到 2 年
-        assert_eq!(*GRANULARITIES.first().unwrap(), (15_000, 240));
-        assert_eq!(15_000 * 240 / 1000, 3600);
-        assert_eq!(last, 2_592_000_000u64 * 24 / 1000);
-    }
+    fn metrics_bounds_reject_junk_intervals() {
+        let mut cfg = Config::default();
+        cfg.metrics.sample_interval_ms = 1;
+        assert!(
+            cfg.validate().iter().any(|e| e.contains("sample_interval_ms")),
+            "1ms 的采集间隔必须被拒"
+        );
 
-    #[test]
-    fn custom_interval_is_clamped_to_a_sane_point_count() {
-        // 档位外的自定义值：点数夹在 10~480，既不爆内存也不至于两个点画不出线
-        let (_, cap) = granularity_of(20_000, 300);
-        assert!((10..=480).contains(&cap), "cap={cap}");
-        let (ms, cap) = granularity_of(1, 300);
-        assert_eq!(ms, MIN_SAMPLE_MS, "低于下限应被夹到 15 秒");
-        assert!((10..=480).contains(&cap));
-        let (ms, _) = granularity_of(u64::MAX / 2, 300);
-        assert_eq!(ms, MAX_SAMPLE_MS, "超过上限应被夹到 1 个月");
+        cfg.metrics.sample_interval_ms = MIN_SAMPLE_MS;
+        cfg.metrics.history_points = 10;
+        assert!(
+            cfg.validate().iter().any(|e| e.contains("history_points")),
+            "点数上限太小的配置必须被拒"
+        );
+
+        cfg.metrics.history_points = 2880;
+        assert!(cfg.validate().is_empty(), "默认值必须是合法配置");
     }
 
     #[test]

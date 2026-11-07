@@ -12,10 +12,10 @@
 use crate::auth::AuthState;
 use crate::backends::BackendRegistry;
 use crate::cache::{CacheStats, ResponseCache};
-use crate::config::{Config, Overrides, ResolvedPaths};
+use crate::config::{Config, Overrides, ResolvedPaths, MAX_SAMPLE_MS, MIN_SAMPLE_MS};
 use crate::storage::{AuditEntry, AuditLog, ConfigHistory, SnapshotMeta};
 use crate::waf::BolaTracker;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -105,11 +105,19 @@ pub struct Sample {
     pub upstream_ms: u64,
 }
 
-#[derive(Debug, Clone, Default, serde::Serialize)]
-pub struct HistorySnapshot {
-    pub samples: Vec<Sample>,
-    pub interval_ms: u64,
-    pub capacity: usize,
+impl Sample {
+    /// 合并两个桶：这些都是"桶内增量"，相加即可。
+    /// upstream_ms 是累计耗时，合并后除以 requests 仍是正确的平均延迟。
+    pub fn merge(&mut self, o: &Sample) {
+        self.requests = self.requests.saturating_add(o.requests);
+        self.errors = self.errors.saturating_add(o.errors);
+        self.bytes_in = self.bytes_in.saturating_add(o.bytes_in);
+        self.bytes_out = self.bytes_out.saturating_add(o.bytes_out);
+        self.cache_hit = self.cache_hit.saturating_add(o.cache_hit);
+        self.cache_miss = self.cache_miss.saturating_add(o.cache_miss);
+        self.waf_blocks = self.waf_blocks.saturating_add(o.waf_blocks);
+        self.upstream_ms = self.upstream_ms.saturating_add(o.upstream_ms);
+    }
 }
 
 /// 每个 IP 的连接记账（连接池限流用）。
@@ -129,7 +137,7 @@ pub struct AppState {
     overrides: RwLock<Overrides>,
     pub started_at: Instant,
     pub metrics: Metrics,
-    history: Mutex<VecDeque<Sample>>,
+    history: Mutex<crate::history::History>,
     last_sample: Mutex<LastSample>,
     pub cache: ResponseCache,
     pub backends: Arc<BackendRegistry>,
@@ -174,6 +182,10 @@ impl AppState {
     pub fn new(config: Config, config_path: PathBuf, overrides: Overrides) -> Self {
         // 所有落盘位置统一由 resolve_paths 算，绝不在各处拼 "conf-history" / ".audit.jsonl"
         let paths = config.resolve_paths(&config_path);
+        let (sample_ms, history_points) = (
+            config.metrics.sample_interval_ms,
+            config.metrics.history_points,
+        );
         Self {
             conf_history: ConfigHistory::with_dir(paths.config_history.clone()),
             audit: AuditLog::with_file(paths.audit_file.clone()),
@@ -184,7 +196,7 @@ impl AppState {
             overrides: RwLock::new(overrides),
             started_at: Instant::now(),
             metrics: Metrics::default(),
-            history: Mutex::new(VecDeque::new()),
+            history: Mutex::new(crate::history::History::new(sample_ms, history_points)),
             last_sample: Mutex::new(LastSample::default()),
             cache: ResponseCache::default(),
             backends: Arc::new(BackendRegistry::default()),
@@ -429,47 +441,46 @@ impl AppState {
         };
         drop(last);
 
-        let (_, capacity) = self.sampling();
         let mut h = self.history.lock().unwrap_or_else(|e| e.into_inner());
-        while h.len() >= capacity {
-            h.pop_front();
-        }
-        h.push_back(sample.clone());
+        h.record(now_ms(), sample.clone());
         sample
     }
 
-    /// 采样设置：间隔与容量都由当前配置的档位算出，热重载后立刻按新值裁剪。
-    /// 读不到配置（正在换配置）时用安全默认值，绝不 panic。
+    /// 采样设置：采集间隔 + 点数上限。读不到配置时用默认值，绝不 panic。
     pub fn sampling(&self) -> (u64, usize) {
         match self.try_config() {
-            Some(c) => crate::config::granularity_of(
-                c.metrics.sample_interval_ms,
-                c.metrics.history_secs,
+            Some(c) => (
+                c.metrics.sample_interval_ms.clamp(MIN_SAMPLE_MS, MAX_SAMPLE_MS),
+                c.metrics.history_points.clamp(32, 20_000),
             ),
             None => {
                 let d = crate::config::MetricsConfig::default();
-                crate::config::granularity_of(d.sample_interval_ms, d.history_secs)
+                (d.sample_interval_ms, d.history_points)
             }
         }
     }
 
-    /// 清空采样历史。换档位后必须清：每个采样点代表的是"一个间隔内的增量"，
-    /// 15 秒的点和 1 天的点混在同一条轴上，读数全是假的。
-    pub fn reset_history(&self) {
+    /// 把当前配置套到历史序列上（间隔变了清空、点数变少了裁剪）。
+    /// 采样循环和查询前都调一次，配置热重载后立刻生效。
+    pub fn sync_history(&self) {
+        let (interval, cap) = self.sampling();
         self.history
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .clear();
+            .reconfigure(interval, cap);
     }
 
-    pub fn history_snapshot(&self) -> HistorySnapshot {
-        let (interval_ms, capacity) = self.sampling();
+    /// 按请求的粒度/范围取历史。粒度只是查询参数，不碰配置。
+    pub fn history_query(&self, gran_ms: u64, range_secs: u64) -> crate::history::Bucketed {
+        self.sync_history();
         let h = self.history.lock().unwrap_or_else(|e| e.into_inner());
-        HistorySnapshot {
-            samples: h.iter().cloned().collect(),
-            interval_ms,
-            capacity,
-        }
+        h.query(gran_ms, range_secs, now_ms())
+    }
+
+    /// 历史序列当前的分辨率与规模，供状态接口展示"已经降采样到多粗"。
+    pub fn history_meta(&self) -> (u64, usize) {
+        let h = self.history.lock().unwrap_or_else(|e| e.into_inner());
+        (h.bucket_ms(), h.len())
     }
 
     // ---------- 连接池 ----------
@@ -522,24 +533,33 @@ impl AppState {
     }
 }
 
-/// 按当前档位采样，供 WebUI 画折线图。
+/// Unix 毫秒时间戳：采样点的时间轴用它，换档位/重启都不影响已存点的真实时间。
+pub fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// 按配置的采集间隔采样，供 WebUI 画折线图。
 ///
-/// 注意不能直接 `sleep(interval)`：档位最粗到 1 个月，用户从"1 天"切回"15 秒"时
-/// 得等满一个旧周期才出下一个点。这里按不超过 1 秒的粒度醒来检查间隔，
-/// 档位一改就重新起算，并且立刻补一个点，免得切到粗粒度后图表长时间空白。
+/// 不能直接 `sleep(interval)` 了事：配置随时可能被热重载改掉（比如把 15 秒调成 60 秒），
+/// 死等一个旧周期会让"改完没反应"变成一次真实的 bug 报告。这里按 ≤1 秒醒来检查，
+/// 间隔一变立刻重算并补点。
 pub fn spawn_sampler(state: Arc<AppState>) {
     tokio::spawn(async move {
         let mut due = std::time::Instant::now();
         let mut active: u64 = 0;
         loop {
+            state.sync_history();
             let (interval_ms, _) = state.sampling();
             if interval_ms != active {
-                // 档位变了：旧点的间隔宽度不一样，直接作废重来
-                if active != 0 {
-                    state.reset_history();
-                }
+                // 采集间隔变了：旧点的时间宽度不一样，sync_history 已经清空。
+                // 立刻补一个点，否则图会空一整个周期——最粗的档位要空 10 分钟。
                 active = interval_ms;
-                due = std::time::Instant::now();
+                state.sample_once();
+                due = std::time::Instant::now() + Duration::from_millis(active);
+                continue;
             }
             tokio::time::sleep(Duration::from_millis(interval_ms.min(1000))).await;
             if std::time::Instant::now() >= due {
