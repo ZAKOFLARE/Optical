@@ -40,6 +40,8 @@ pub struct Metrics {
     pub waf_blocks: AtomicU64,
     pub waf_skipped: AtomicU64,
     pub ws_upgrades: AtomicU64,
+    /// 当前管理面 WebSocket 连接数（0 = 前端已回退到轮询）
+    pub ws_clients: AtomicU64,
     pub tls_handshakes: AtomicU64,
     /// UA 计数
     pub ua: Mutex<HashMap<String, u64>>,
@@ -120,13 +122,14 @@ struct ConnStat {
 pub struct AppState {
     config: RwLock<Config>,
     pub config_path: PathBuf,
+    /// 配置版本号：每次成功写盘/重载自增，用于管理面乐观锁，防止旧页面覆盖新配置
+    config_rev: AtomicU64,
     /// 启动时解析出的落盘路径；配置文件里改了目录，下次启动生效（错误页除外，按请求重算）
     pub paths: ResolvedPaths,
     overrides: RwLock<Overrides>,
     pub started_at: Instant,
     pub metrics: Metrics,
     history: Mutex<VecDeque<Sample>>,
-    history_capacity: usize,
     last_sample: Mutex<LastSample>,
     pub cache: ResponseCache,
     pub backends: Arc<BackendRegistry>,
@@ -169,20 +172,19 @@ impl Drop for ConnGuard {
 
 impl AppState {
     pub fn new(config: Config, config_path: PathBuf, overrides: Overrides) -> Self {
-        let capacity = config.metrics.history_secs.max(30);
         // 所有落盘位置统一由 resolve_paths 算，绝不在各处拼 "conf-history" / ".audit.jsonl"
         let paths = config.resolve_paths(&config_path);
         Self {
             conf_history: ConfigHistory::with_dir(paths.config_history.clone()),
             audit: AuditLog::with_file(paths.audit_file.clone()),
             config: RwLock::new(config),
+            config_rev: AtomicU64::new(1),
             config_path,
             paths,
             overrides: RwLock::new(overrides),
             started_at: Instant::now(),
             metrics: Metrics::default(),
-            history: Mutex::new(VecDeque::with_capacity(capacity)),
-            history_capacity: capacity,
+            history: Mutex::new(VecDeque::new()),
             last_sample: Mutex::new(LastSample::default()),
             cache: ResponseCache::default(),
             backends: Arc::new(BackendRegistry::default()),
@@ -203,6 +205,10 @@ impl AppState {
     /// 错误页目录按**当前配置**重算，这样 WebUI 改完 error_pages.dir 立刻生效。
     pub fn error_pages_dir(&self, cfg: &Config) -> std::path::PathBuf {
         cfg.resolve_paths(&self.config_path).error_pages_dir
+    }
+
+    pub fn config_rev(&self) -> u64 {
+        self.config_rev.load(Ordering::Relaxed)
     }
 
     pub async fn snapshot(&self) -> Config {
@@ -257,6 +263,7 @@ impl AppState {
         cfg.validate_ok_in(self.base_dir())?;
         self.overrides.read().await.apply(&mut cfg);
         *self.config.write().await = cfg;
+        self.config_rev.fetch_add(1, Ordering::Relaxed);
         self.metrics.reloads.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
@@ -277,6 +284,7 @@ impl AppState {
         cfg.save(&self.config_path)?;
         self.overrides.read().await.apply(&mut cfg);
         *self.config.write().await = cfg;
+        self.config_rev.fetch_add(1, Ordering::Relaxed);
         self.metrics.reloads.fetch_add(1, Ordering::Relaxed);
         self.audit.push(
             &storage,
@@ -421,20 +429,46 @@ impl AppState {
         };
         drop(last);
 
+        let (_, capacity) = self.sampling();
         let mut h = self.history.lock().unwrap_or_else(|e| e.into_inner());
-        if h.len() >= self.history_capacity {
+        while h.len() >= capacity {
             h.pop_front();
         }
         h.push_back(sample.clone());
         sample
     }
 
+    /// 采样设置：间隔与容量都由当前配置的档位算出，热重载后立刻按新值裁剪。
+    /// 读不到配置（正在换配置）时用安全默认值，绝不 panic。
+    pub fn sampling(&self) -> (u64, usize) {
+        match self.try_config() {
+            Some(c) => crate::config::granularity_of(
+                c.metrics.sample_interval_ms,
+                c.metrics.history_secs,
+            ),
+            None => {
+                let d = crate::config::MetricsConfig::default();
+                crate::config::granularity_of(d.sample_interval_ms, d.history_secs)
+            }
+        }
+    }
+
+    /// 清空采样历史。换档位后必须清：每个采样点代表的是"一个间隔内的增量"，
+    /// 15 秒的点和 1 天的点混在同一条轴上，读数全是假的。
+    pub fn reset_history(&self) {
+        self.history
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+    }
+
     pub fn history_snapshot(&self) -> HistorySnapshot {
+        let (interval_ms, capacity) = self.sampling();
         let h = self.history.lock().unwrap_or_else(|e| e.into_inner());
         HistorySnapshot {
             samples: h.iter().cloned().collect(),
-            interval_ms: 1000,
-            capacity: self.history_capacity,
+            interval_ms,
+            capacity,
         }
     }
 
@@ -488,12 +522,30 @@ impl AppState {
     }
 }
 
-/// 每秒采样一次，供 WebUI 画折线图。
+/// 按当前档位采样，供 WebUI 画折线图。
+///
+/// 注意不能直接 `sleep(interval)`：档位最粗到 1 个月，用户从"1 天"切回"15 秒"时
+/// 得等满一个旧周期才出下一个点。这里按不超过 1 秒的粒度醒来检查间隔，
+/// 档位一改就重新起算，并且立刻补一个点，免得切到粗粒度后图表长时间空白。
 pub fn spawn_sampler(state: Arc<AppState>) {
     tokio::spawn(async move {
+        let mut due = std::time::Instant::now();
+        let mut active: u64 = 0;
         loop {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            state.sample_once();
+            let (interval_ms, _) = state.sampling();
+            if interval_ms != active {
+                // 档位变了：旧点的间隔宽度不一样，直接作废重来
+                if active != 0 {
+                    state.reset_history();
+                }
+                active = interval_ms;
+                due = std::time::Instant::now();
+            }
+            tokio::time::sleep(Duration::from_millis(interval_ms.min(1000))).await;
+            if std::time::Instant::now() >= due {
+                state.sample_once();
+                due = std::time::Instant::now() + Duration::from_millis(active);
+            }
         }
     });
 }
@@ -517,6 +569,7 @@ pub fn spawn_watcher(state: Arc<AppState>) {
                         let routes = cfg.routes.len();
                         let listen = cfg.server.listen.clone();
                         *state.config.write().await = cfg;
+                        state.config_rev.fetch_add(1, Ordering::Relaxed);
                         state.metrics.reloads.fetch_add(1, Ordering::Relaxed);
                         tracing::info!(routes, listen = %listen, "配置已热重载");
                     }

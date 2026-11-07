@@ -31,9 +31,14 @@ TLS 1.2/1.3、WebSocket 隧道、gRPC 透传，配 CLI + WebUI 双操作面（�
 | 18 | TLS 1.2/1.3 | rustls 终止，可强制 1.3，无证书时自动生成自签 | ✅ |
 | 19 | 后端服务管理 | 命名后端 + **分组 + 备注 + 负载均衡（wrr / rr / iphash / random）**、主动探活、路由可引用 | ✅ |
 | 20 | 中英双语 + 明暗切换 | 无 CDN 依赖（全部内嵌/自托管），localStorage 记忆 | ✅ |
+| 20a | WebUI 实时通道 | `/api/ws` 每秒推送快照，断线自动回退轮询并重连 | ✅ |
+| 20b | TOTP 二维码 | 服务端渲染 SVG（`/api/totp/qr`），不引前端库/CDN | ✅ |
 | 21 | 自定义错误页 | 目录 `<status>.html` → 内联模板 → 内置模板；占位符替换；`no-store` 防 CDN 缓存 5xx | ✅ |
 | 22 | 非固化路径 | `[paths]` 统一解析 data/history/audit/tls/error-pages；相对路径按 data_dir，`~/` 展开 | ✅ |
+| 22a | 配置乐观锁 | `GET /api/config` 返回 `rev`，写入需带 `x-optical-config-rev`；旧页面覆盖会被 409 拒绝 | ✅ |
 | 23 | 响应 Server 头 | `server.server_header`：非空统一覆盖（含转发响应），空串删除该头，不泄露上游版本 | ✅ |
+| 24 | IPv6 监听 | `listen_v6` / `admin_listen_v6` / `tls.listen_v6`，留空即关闭 | ✅ |
+| 25 | 采样粒度可调 | 10 档：15秒 / 5分 / 30分 / 1小时 / 6小时 / 12小时 / 1天 / 7天 / 14天 / 1个月；每档自带保留点数（窗口 = 间隔 × 点数），概览右上角直接切，横轴时间格式随粒度自适应 | ✅ |
 
 > **关于 QUIC**：它不是"加个监听器"就完事的。HTTP/3 需要 h3 帧层 + QUIC 传输 + TLS 会话票据一整套，
 > 而且必须先把 TLS 栈跑稳。本轮把 TLS/WS/gRPC 三层落地了，QUIC 留作独立里程碑——
@@ -46,8 +51,8 @@ TLS 1.2/1.3、WebSocket 隧道、gRPC 透传，配 CLI + WebUI 双操作面（�
 ```
 optical/
 ├── Cargo.toml
-├── config.example.toml          全量配置样例（每项都带注释）
-├── scripts/smoke.sh             60 项端到端断言
+├── config.example.toml          全量配置样例（每项带注释；默认不含演示路由/后端）
+├── scripts/smoke.sh             68 项端到端断言
 └── src/
     ├── main.rs                  入口
     ├── cli.rs / commands.rs     clap 命令与实现（run / config / route / passwd / status / upstream-echo）
@@ -194,7 +199,7 @@ chunked 或超限请求直接跳过并计入 `waf_skipped`。
 
 | 页 | 内容 |
 | --- | --- |
-| 概览 | 8 格 KPI（请求/带宽入出/缓存命中率/规则命中率/时长/TLS/路由后端/上游）+ 4 组图表（请求、带宽、缓存、拦截，**带 Y 轴刻度、时间轴、十字准线与悬浮读数**）+ Top UA / Top IP / Top 规则 |
+| 概览 | 采样粒度下拉（500ms/1s/2s/5s）+ 8 格 KPI（请求/带宽入出/缓存命中率/规则命中率/时长/TLS/路由后端/上游）+ 4 组图表（请求、带宽、缓存、拦截，**带 Y 轴刻度、时间轴、十字准线与悬浮读数**）+ Top UA / Top IP / Top 规则 |
 | 路由 | 行内编辑（输入框平时无边框）、backend 下拉引用、筛选、整表保存 |
 | WAF | 总开关 + 模式 + 阈值 + 检查上限；10 个规则族卡片（每族独立开关与参数）；头改写表 |
 | 后端 | 分组（备注 + 策略 + 实时成员健康）、后端 CRUD、状态徽标；轮询只更新徽标，不打断编辑与选区 |
@@ -213,7 +218,7 @@ chunked 或超限请求直接跳过并计入 `waf_skipped`。
 cargo build --release && ./scripts/smoke.sh
 ```
 
-覆盖 60 项断言：认证（401/错误口令/登录/会话）、转发与路由、后端探活、
+覆盖 68 项断言：认证（401/错误口令/登录/会话）、转发与路由、后端探活、
 **分组内双后端轮询且不跨组、单后端路由不串成员**、自定义 502 错误页（占位符 + footer + no-store）、
 **data_dir 迁移后 status 反映实际路径**、缓存命中、九个 WAF 族各一发、413 体积闸门、
 帧限制头、自定义头改写、**转发与错误页都带统一 Server 头**、WS 101、TLS 握手与版本、

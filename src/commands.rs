@@ -83,11 +83,36 @@ pub async fn run_gateway(config_opt: Option<PathBuf>, args: crate::cli::RunArgs)
     let gw_listener = bind(&cfg.server.listen, "网关").await?;
     let admin_listener = bind(&cfg.server.admin_listen, "管理面").await?;
 
+    // 可选 IPv6：留空即关闭，不猜系统有没有 v6
+    let gw_v6 = if cfg.server.listen_v6.trim().is_empty() {
+        None
+    } else {
+        Some(bind(&cfg.server.listen_v6, "网关 IPv6").await?)
+    };
+    let admin_v6 = if cfg.server.admin_listen_v6.trim().is_empty() {
+        None
+    } else {
+        Some(bind(&cfg.server.admin_listen_v6, "管理面 IPv6").await?)
+    };
+
     let tls_setup = if cfg.tls.enabled {
         match bind(&cfg.tls.listen, "HTTPS").await {
             Ok(l) => {
                 match crate::tls::build_acceptor(&cfg.tls, &state.paths.tls_dir, state.base_dir()) {
-                    Ok(m) => Some((l, m)),
+                    Ok(m) => {
+                        let l6 = if cfg.tls.listen_v6.trim().is_empty() {
+                            None
+                        } else {
+                            match bind(&cfg.tls.listen_v6, "HTTPS IPv6").await {
+                                Ok(x) => Some(x),
+                                Err(e) => {
+                                    tracing::error!(error = %e, "HTTPS IPv6 监听失败");
+                                    None
+                                }
+                            }
+                        };
+                        Some((l, l6, m))
+                    }
                     Err(e) => {
                         tracing::error!(error = %e, "TLS 初始化失败，HTTPS 端口不启动");
                         None
@@ -103,14 +128,45 @@ pub async fn run_gateway(config_opt: Option<PathBuf>, args: crate::cli::RunArgs)
         None
     };
 
-    banner(&cfg, &abs_path, generated_pw.as_deref(), tls_setup.as_ref().map(|(_, m)| m));
+    banner(
+        &cfg,
+        &abs_path,
+        generated_pw.as_deref(),
+        tls_setup.as_ref().map(|(_, _, m)| m),
+    );
 
-    if let Some((listener, material)) = tls_setup {
+    if let Some((listener, listener_v6, material)) = tls_setup {
+        let acceptor = material.acceptor.clone();
         let st = state.clone();
-        let acceptor = material.acceptor;
         tokio::spawn(async move {
             if let Err(e) = crate::tls::serve(st, listener, acceptor).await {
                 tracing::error!(error = %e, "HTTPS 监听退出");
+            }
+        });
+        if let Some(l6) = listener_v6 {
+            let st = state.clone();
+            let acceptor = material.acceptor;
+            tokio::spawn(async move {
+                if let Err(e) = crate::tls::serve(st, l6, acceptor).await {
+                    tracing::error!(error = %e, "HTTPS IPv6 监听退出");
+                }
+            });
+        }
+    }
+
+    if let Some(l6) = gw_v6 {
+        let st = state.clone();
+        tokio::spawn(async move {
+            if let Err(e) = crate::proxy::serve(st, l6).await {
+                tracing::error!(error = %e, "网关 IPv6 监听退出");
+            }
+        });
+    }
+    if let Some(l6) = admin_v6 {
+        let st = state.clone();
+        tokio::spawn(async move {
+            if let Err(e) = crate::admin::serve(st, l6).await {
+                tracing::error!(error = %e, "管理面 IPv6 监听退出");
             }
         });
     }
@@ -182,7 +238,16 @@ fn banner(cfg: &Config, path: &Path, generated_pw: Option<&str>, tls: Option<&cr
             println!("  cert      {}", p.display());
         }
     }
+    if !cfg.server.listen_v6.trim().is_empty() {
+        println!("  gateway6  http://{}", cfg.server.listen_v6);
+    }
     println!("  webui     http://{}", cfg.server.admin_listen);
+    if !cfg.server.admin_listen_v6.trim().is_empty() {
+        println!("  webui6    http://{}", cfg.server.admin_listen_v6);
+    }
+    if !cfg.tls.listen_v6.trim().is_empty() {
+        println!("  https6    https://{}", cfg.tls.listen_v6);
+    }
     println!("  upstream  {}", cfg.server.default_upstream);
     println!(
         "  routes    {}    backends {}    groups {}",
@@ -262,7 +327,10 @@ pub async fn config_cmd(config_opt: Option<PathBuf>, cmd: ConfigCmd) -> Result<(
             }
             let cfg = crate::config::demo_config();
             cfg.save(&path)?;
-            println!("已写入示例配置: {}", absolutize(&path).display());
+            println!(
+                "已写入干净配置（无示例路由/后端/分组）: {}",
+                absolutize(&path).display()
+            );
         }
         ConfigCmd::Validate => {
             let cfg = Config::load(&path)

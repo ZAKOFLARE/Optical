@@ -287,6 +287,32 @@ check "HTTPS 握手并转发" '"service":"optical-echo"' "$(curl -sk -m 6 "https
 check "TLS1.2 客户端可握手（min=1.2）" '200' "$(code -k --tls-max 1.2 "https://$TLS/hello")"
 check "TLS 握手计数已统计" '"tls_handshakes"' "$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/metrics")"
 
+echo "-- WebSocket / TOTP 二维码 / 采样间隔 --"
+WS_CODE="$(curl -s -o /dev/null -w '%{http_code}' -m 2   -H 'Connection: Upgrade' -H 'Upgrade: websocket'   -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw=='   -b "$COOKIE" "http://$ADM/api/ws" 2>/dev/null || true)"
+check "管理面 WebSocket 升级返回 101" '101' "$WS_CODE"
+check "TOTP 二维码返回 SVG" '<svg' "$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/totp/qr?secret=JBSWY3DPEHPK3PXP&user=admin")"
+check "二维码响应不缓存" 'no-store' "$(curl -si -m 6 "${AUTH[@]}" "http://$ADM/api/totp/qr?secret=JBSWY3DPEHPK3PXP" | tr -d '\r' | grep -i '^cache-control:')"
+
+patch_sample() {
+  curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config" \
+    | python3 -c "import sys,json; c=json.load(sys.stdin)['config']; c['metrics']['sample_interval_ms']=$1; print(json.dumps(c))" 2>/dev/null
+}
+SAMPLE_BODY="$(patch_sample 3600000)"
+check "PUT 采样间隔 1 小时档" '"applied":true' "$(curl -s -m 6 -X PUT "${AUTH[@]}" -H 'content-type: application/json' -d "$SAMPLE_BODY" "http://$ADM/api/config")"
+sleep 1.2
+check "历史接口回显采样间隔" '"interval_ms":3600000' "$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/history")"
+check "1 小时档保留 168 点（窗口 7 天）" '"capacity":168' "$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/history")"
+check "低于 15 秒的间隔被拒" '400' "$(code -X PUT "${AUTH[@]}" -H 'content-type: application/json' -d "$(patch_sample 1000)" "http://$ADM/api/config")"
+check "超过 1 个月的间隔被拒" '400' "$(code -X PUT "${AUTH[@]}" -H 'content-type: application/json' -d "$(patch_sample 9999999999)" "http://$ADM/api/config")"
+
+echo "-- 配置乐观锁 --"
+CUR="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config")"
+REV="$(printf '%s' "$CUR" | python3 -c 'import sys,json;print(json.load(sys.stdin)["rev"])' 2>/dev/null)"
+BODY="$(printf '%s' "$CUR" | python3 -c 'import sys,json;print(json.dumps(json.load(sys.stdin)["config"]))' 2>/dev/null)"
+check "配置接口返回版本号" '^[0-9][0-9]*$' "$REV"
+check "过期版本号写入被拒（409）" '409' "$(code -X PUT "${AUTH[@]}" -H 'content-type: application/json' -H 'x-optical-config-rev: 1' -d "$BODY" "http://$ADM/api/config")"
+check "当前版本号写入成功" '"applied":true' "$(curl -s -m 6 -X PUT "${AUTH[@]}" -H 'content-type: application/json' -H "x-optical-config-rev: $REV" -d "$BODY" "http://$ADM/api/config")"
+
 echo "-- 配置回溯 / 审计 --"
 patch_timeout() {
   curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config" \

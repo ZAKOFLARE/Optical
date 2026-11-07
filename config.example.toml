@@ -4,6 +4,9 @@
 [server]
 listen = "0.0.0.0:8080"
 admin_listen = "127.0.0.1:9100"
+# 可选 IPv6 监听：留空 = 不监听。公网 v6 请务必配合防火墙限制来源
+listen_v6 = ""
+admin_listen_v6 = ""
 default_upstream = "http://127.0.0.1:8081"
 request_timeout_ms = 30000
 log_level = "info"
@@ -19,6 +22,7 @@ server_header = "optical"
 [tls]
 enabled = false
 listen = "0.0.0.0:8443"
+listen_v6 = ""
 # 留空 = 启动时自动生成自签开发证书（落在配置文件同目录）
 cert = ""
 key = ""
@@ -58,7 +62,13 @@ audit_max_bytes = 4194304
 
 [metrics]
 top_n = 8
+# 自定义采样间隔时的兜底窗口（秒）；命中下面档位时窗口由档位决定
 history_secs = 300
+# 采样间隔（毫秒），档位：
+#   15000=15秒  300000=5分  1800000=30分  3600000=1小时  21600000=6小时
+#   43200000=12小时  86400000=1天  604800000=7天  1209600000=14天  2592000000=1个月
+# 每档固定保留点数，窗口 = 间隔 × 点数：15秒档覆盖 1 小时，1 个月档覆盖 2 年。
+sample_interval_ms = 15000
 
 # ---------- 非固化路径 ----------
 # 空值 = 跟随上一级默认：data_dir 跟配置文件目录，其余跟 <data_dir>/<子目录>。
@@ -79,7 +89,8 @@ content_type = "text/html; charset=utf-8"
 footer = "Optical"
 # TOML 里键必须带引号。占位符：{{status}} {{reason}} {{message}} {{footer}}
 [error_pages.bodies]
-"502" = "<h1>{{status}} {{reason}}</h1><p>{{message}}</p><hr><small>{{footer}}</small>"
+# 示例：
+# "502" = "<h1>{{status}} {{reason}}</h1><p>{{message}}</p><hr><small>{{footer}}</small>"
 
 # ---------- WAF ----------
 [waf]
@@ -152,58 +163,59 @@ mode = "deny"                # deny | sameorigin | allow-from
 allow_from = []
 
 # ---------- 头改写 ----------
-[[header_rules]]
-enabled = true
-phase = "response"
-action = "set"
-name = "X-Content-Type-Options"
-value = "nosniff"
-match_path = ""
-match_host = ""
-when_status = 0
-note = "示例：禁止 MIME 嗅探"
+# 示例（默认不启用）：复制下面几行并去掉注释即可
+# [[header_rules]]
+# enabled = true
+# phase = "response"
+# action = "set"
+# name = "X-Content-Type-Options"
+# value = "nosniff"
+# match_path = ""
+# match_host = ""
+# when_status = 0
+# note = "示例：禁止 MIME 嗅探"
 
 # ---------- 后端分组 ----------
 # 声明分组只为了写备注、单独指定负载均衡策略；不声明也能用（成员 group 字段即隐式分组）
-[[backend_groups]]
-name = "app"
-note = "主应用集群"
-strategy = "wrr"             # 覆盖全局 lb
+# [[backend_groups]]
+# name = "app"
+# note = "主应用集群"
+# strategy = "wrr"             # 覆盖全局 lb
 
 # ---------- 后端服务（命名上游池） ----------
-[[backends]]
-name = "app-1"
-url = "http://127.0.0.1:8081"
-group = "app"
-note = "主节点"
-weight = 2
-enabled = true
-health_path = "/health"
-health_interval_secs = 10
-timeout_ms = 30000
+# [[backends]]
+# name = "app-1"
+# url = "http://127.0.0.1:8081"
+# group = "app"
+# note = "主节点"
+# weight = 2
+# enabled = true
+# health_path = "/health"
+# health_interval_secs = 10
+# timeout_ms = 30000
 
-[[backends]]
-name = "app-2"
-url = "http://127.0.0.1:8082"
-group = "app"
-note = "备节点"
-weight = 1
-enabled = true
-health_path = "/health"
-health_interval_secs = 10
-timeout_ms = 30000
+# [[backends]]
+# name = "app-2"
+# url = "http://127.0.0.1:8082"
+# group = "app"
+# note = "备节点"
+# weight = 1
+# enabled = true
+# health_path = "/health"
+# health_interval_secs = 10
+# timeout_ms = 30000
 
 # ---------- 路由 ----------
-[[routes]]
-name = "api"
-host = "*"
-path_prefix = "/api"
-upstream = ""
-backend_group = "app"        # 引用分组：组内按策略负载均衡
-# backend = "app-1"          # 或引用单个后端；与 backend_group 二选一
-# lb = "iphash"              # 覆盖分组/全局策略
-strip_prefix = true
-rewrite_host = true
+# [[routes]]
+# name = "api"
+# host = "*"
+# path_prefix = "/api"
+# upstream = ""
+# backend_group = "app"        # 引用分组：组内按策略负载均衡
+# # backend = "app-1"          # 或引用单个后端；与 backend_group 二选一
+# # lb = "iphash"              # 覆盖分组/全局策略
+# strip_prefix = true
+# rewrite_host = true
 
 [extensions]
 filters = []
