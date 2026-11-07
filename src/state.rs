@@ -140,6 +140,10 @@ pub struct AppState {
     history: Mutex<crate::history::History>,
     /// 排行榜聚合（按维度 × 时间窗）
     stats: Mutex<crate::stats::StatsStore>,
+    /// 采样序列版本号：每采一个点 +1，WS 据此决定要不要重算历史
+    pub sample_rev: AtomicU64,
+    /// 统计版本号：每记一次请求 +1，没流量时 WS 不必反复算排行榜
+    pub stats_rev: AtomicU64,
     last_sample: Mutex<LastSample>,
     pub cache: ResponseCache,
     pub backends: Arc<BackendRegistry>,
@@ -200,6 +204,8 @@ impl AppState {
             metrics: Metrics::default(),
             history: Mutex::new(crate::history::History::new(sample_ms, history_points)),
             stats: Mutex::new(crate::stats::StatsStore::default()),
+            sample_rev: AtomicU64::new(0),
+            stats_rev: AtomicU64::new(0),
             last_sample: Mutex::new(LastSample::default()),
             cache: ResponseCache::default(),
             backends: Arc::new(BackendRegistry::default()),
@@ -411,6 +417,7 @@ impl AppState {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .record_request(minute, dims, status, &counters, ua, ip);
+        self.stats_rev.fetch_add(1, Ordering::Relaxed);
     }
 
     /// 排行榜查询：维度 + 范围 + 筛选。粒度只是图表的展示方式，不影响这里。
@@ -439,6 +446,7 @@ impl AppState {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .record_rules(now_ms() / 60_000, &[rule.to_string()]);
+        self.stats_rev.fetch_add(1, Ordering::Relaxed);
     }
 
     /// 记录 WAF 命中：既按具体规则（sql-union-select）计数，也按族（family:sql）汇总，
@@ -459,6 +467,7 @@ impl AppState {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .record_rules(now_ms() / 60_000, &names);
+        self.stats_rev.fetch_add(1, Ordering::Relaxed);
     }
 
     /// 每秒采样：从累计计数算差值，推进环形缓冲。
@@ -498,6 +507,8 @@ impl AppState {
 
         let mut h = self.history.lock().unwrap_or_else(|e| e.into_inner());
         h.record(now_ms(), sample.clone());
+        drop(h);
+        self.sample_rev.fetch_add(1, Ordering::Relaxed);
         sample
     }
 

@@ -369,6 +369,50 @@ async fn api_ws(ws: WebSocketUpgrade, State(st): State<Arc<AppState>>) -> Respon
     ws.on_upgrade(move |socket| ws_loop(socket, st))
 }
 
+#[derive(Deserialize)]
+struct WsFilter {
+    field: String,
+    op: String,
+    value: String,
+}
+
+/// 客户端在 WS 上告诉服务端"我现在在看什么"。
+/// 有了它，历史曲线和排行榜就不用再开一条 HTTP 轮询——WS 本来就通着。
+#[derive(Deserialize)]
+struct WsView {
+    #[serde(default)]
+    gran: u64,
+    #[serde(default)]
+    range: u64,
+    #[serde(default)]
+    by: String,
+    #[serde(default)]
+    limit: usize,
+    #[serde(default)]
+    filters: Vec<WsFilter>,
+}
+
+impl WsView {
+    fn stats_query(&self) -> StatsQuery {
+        StatsQuery {
+            by: crate::stats::Dim::parse(&self.by).unwrap_or(crate::stats::Dim::Route),
+            range_secs: self.range.clamp(60, 7 * 86_400),
+            limit: self.limit.clamp(1, 50),
+            filters: self
+                .filters
+                .iter()
+                .filter_map(|f| {
+                    Some(crate::stats::Filter {
+                        field: crate::stats::Dim::parse(&f.field)?,
+                        op: crate::stats::Op::parse(&f.op)?,
+                        value: f.value.clone(),
+                    })
+                })
+                .collect(),
+        }
+    }
+}
+
 async fn ws_loop(mut socket: WebSocket, st: Arc<AppState>) {
     st.metrics
         .ws_clients
@@ -384,37 +428,76 @@ async fn ws_loop(mut socket: WebSocket, st: Arc<AppState>) {
     }
     let _guard = Guard(st.clone());
 
+    // 客户端声明的视角。None = 还没发过，只推 KPI 那部分，不猜它想看什么。
+    let mut view: Option<WsView> = None;
+    // 上次推送时的数据版本号：没变就不重算、不重发
+    let mut sent_sample_rev = u64::MAX;
+    let mut sent_stats_rev = u64::MAX;
+
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(1));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {
             _ = ticker.tick() => {
-                let cfg = st.snapshot().await;
-                let mut payload = status_payload(&st).await;
-                payload["type"] = json!("snapshot");
-                payload["top"] = json!({
-                    "ua": st.top_ua(cfg.metrics.top_n.max(1)),
-                    "ip": st.top_ip(cfg.metrics.top_n.max(1)),
-                    "rules": st.top_rules(cfg.metrics.top_n.max(1)),
-                });
-                payload["backend_list"] = json!(st.backends.snapshot(&cfg));
-                payload["backend_groups"] = json!(st.backends.groups(&cfg));
-                if socket
-                    .send(Message::Text(payload.to_string().into()))
-                    .await
-                    .is_err()
-                {
-                    break;
-                }
             }
             msg = socket.recv() => {
                 match msg {
                     Some(Ok(Message::Close(_))) | None => break,
                     Some(Err(_)) => break,
-                    // 客户端不需要发消息；忽略 ping/pong 之外的输入
-                    _ => {}
+                    Some(Ok(Message::Text(txt))) => {
+                        // 只有一种入站消息：改视角。解析失败就当没收到，绝不因此断开连接。
+                        #[derive(Deserialize)]
+                        struct Envelope {
+                            #[serde(rename = "type")]
+                            kind: String,
+                            #[serde(flatten)]
+                            rest: WsView,
+                        }
+                        if let Ok(env) = serde_json::from_str::<Envelope>(&txt) {
+                            if env.kind == "view" {
+                                view = Some(env.rest);
+                                // 换视角立刻回一帧，别让人等下一个 tick
+                                sent_sample_rev = u64::MAX;
+                                sent_stats_rev = u64::MAX;
+                                continue;
+                            }
+                        }
+                        continue;
+                    }
+                    _ => continue,
                 }
             }
+        }
+        let cfg = st.snapshot().await;
+        let mut payload = status_payload(&st).await;
+        payload["type"] = json!("snapshot");
+        payload["top"] = json!({
+            "ua": st.top_ua(cfg.metrics.top_n.max(1)),
+            "ip": st.top_ip(cfg.metrics.top_n.max(1)),
+            "rules": st.top_rules(cfg.metrics.top_n.max(1)),
+        });
+        payload["backend_list"] = json!(st.backends.snapshot(&cfg));
+        payload["backend_groups"] = json!(st.backends.groups(&cfg));
+
+        // 历史/排行榜按客户端视角算，并且只在数据真的变了才带上
+        if let Some(v) = &view {
+            let sr = st.sample_rev.load(std::sync::atomic::Ordering::Relaxed);
+            if sr != sent_sample_rev {
+                payload["history"] = history_json(&st, v.gran, v.range);
+                sent_sample_rev = sr;
+            }
+            let tr = st.stats_rev.load(std::sync::atomic::Ordering::Relaxed);
+            if tr != sent_stats_rev {
+                payload["stats"] = stats_json(&st, &v.stats_query());
+                sent_stats_rev = tr;
+            }
+        }
+        if socket
+            .send(Message::Text(payload.to_string().into()))
+            .await
+            .is_err()
+        {
+            break;
         }
     }
 }
@@ -541,7 +624,70 @@ async fn api_stats(
         }
     }
 
-    let (rows, dropped) = st.stats_query(range_secs, by, &filters, limit);
+    Json(stats_json(
+        &st,
+        &StatsQuery {
+            by,
+            range_secs,
+            limit,
+            filters,
+        },
+    ))
+}
+
+#[derive(Deserialize)]
+struct HistoryQuery {
+    /// 桶宽度（秒），默认 60
+    gran: Option<u64>,
+    /// 回看范围（秒），默认 3600
+    range: Option<u64>,
+}
+
+/// 历史曲线的 JSON 形状：HTTP `/api/history` 与 WS 推送共用一份，
+/// 免得两条路径慢慢长歪（前端也只写一份解析）。
+fn history_json(st: &AppState, gran_secs: u64, range_secs: u64) -> Value {
+    let (sample_ms, points_cap) = st.sampling();
+    let gran = gran_secs.clamp((sample_ms / 1000).max(1), 86_400);
+    let range = range_secs.clamp(60, 90 * 86_400);
+    let b = st.history_query(gran * 1000, range);
+    let (stored_bucket_ms, stored_points) = st.history_meta();
+    json!({
+        "gran_secs": gran,
+        "range_secs": range,
+        "bucket_ms": b.bucket_ms,
+        "exact": b.exact,
+        "sample_interval_ms": sample_ms,
+        "history_points": points_cap,
+        // 服务端真实存着的分辨率：前端据此说明"更早的数据已经降采样"
+        "stored_bucket_ms": stored_bucket_ms,
+        "stored_points": stored_points,
+        "points": b.points,
+    })
+}
+
+/// 一次排行榜查询的全部输入
+#[derive(Clone)]
+struct StatsQuery {
+    by: crate::stats::Dim,
+    range_secs: u64,
+    limit: usize,
+    filters: Vec<crate::stats::Filter>,
+}
+
+impl Default for StatsQuery {
+    fn default() -> Self {
+        Self {
+            by: crate::stats::Dim::Route,
+            range_secs: 3_600,
+            limit: 10,
+            filters: Vec::new(),
+        }
+    }
+}
+
+/// 排行榜的 JSON 形状，同上。
+fn stats_json(st: &AppState, q: &StatsQuery) -> Value {
+    let (rows, dropped) = st.stats_query(q.range_secs, q.by, &q.filters, q.limit);
     let total: u64 = rows.iter().map(|(_, c)| c.requests as u64).sum();
     let items: Vec<Value> = rows
         .iter()
@@ -558,26 +704,17 @@ async fn api_stats(
             })
         })
         .collect();
-
-    Json(json!({
+    json!({
         "ok": true,
-        "by": by.as_str(),
-        "range_secs": range_secs,
-        "limit": limit,
+        "by": q.by.as_str(),
+        "range_secs": q.range_secs,
+        "limit": q.limit,
         "total": total,
         "rows": items,
-        "filter_fields": by.filter_fields(),
+        "filter_fields": q.by.filter_fields(),
         // 当前维度用不上的筛选条件（比如 IP 表按路由筛），前端要如实提示而不是装作生效
         "dropped_filters": dropped,
-    }))
-}
-
-#[derive(Deserialize)]
-struct HistoryQuery {
-    /// 桶宽度（秒），默认 60
-    gran: Option<u64>,
-    /// 回看范围（秒），默认 3600
-    range: Option<u64>,
+    })
 }
 
 /// 历史曲线：`?gran=60&range=3600` 是查询参数，不落到配置里。
@@ -586,27 +723,12 @@ async fn api_history(
     State(st): State<Arc<AppState>>,
     Query(q): Query<HistoryQuery>,
 ) -> Json<Value> {
-    let (sample_ms, points_cap) = st.sampling();
-    let gran_secs = q
-        .gran
-        .unwrap_or(60)
-        .clamp((sample_ms / 1000).max(1), 86_400);
-    let range_secs = q.range.unwrap_or(3_600).clamp(gran_secs, 90 * 86_400);
-    let b = st.history_query(gran_secs * 1000, range_secs);
-    let (stored_bucket_ms, stored_points) = st.history_meta();
-    Json(json!({
-        "ok": true,
-        "gran_secs": gran_secs,
-        "range_secs": range_secs,
-        "bucket_ms": b.bucket_ms,
-        "exact": b.exact,
-        "sample_interval_ms": sample_ms,
-        "history_points": points_cap,
-        // 服务端真实存着的分辨率：前端据此说明"更早的数据已经降采样"
-        "stored_bucket_ms": stored_bucket_ms,
-        "stored_points": stored_points,
-        "points": b.points,
-    }))
+    let h = history_json(&st, q.gran.unwrap_or(60), q.range.unwrap_or(3_600));
+    let mut out = h;
+    if let Some(o) = out.as_object_mut() {
+        o.insert("ok".into(), json!(true));
+    }
+    Json(out)
 }
 
 async fn api_backends(State(st): State<Arc<AppState>>) -> Json<Value> {
