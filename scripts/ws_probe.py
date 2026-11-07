@@ -148,9 +148,31 @@ def main():
             got_stats = (
                 st.get("by") == "backend"
                 and st.get("range_secs") == 3600
+                and st.get("limit") == 5
                 and st.get("filter_fields") == ["route", "backend", "host", "status"]
             )
         if got_history and got_stats and got_config:
+            send_text(
+                sock,
+                json.dumps({"type": "view", "gran": 60, "range": 3600, "by": "ua", "limit": 0}),
+            )
+            sock.settimeout(2.0)
+            for _ in range(20):
+                try:
+                    opcode, data = read_frame(sock)
+                except socket.timeout:
+                    continue
+                if opcode != 0x1:
+                    continue
+                m2 = json.loads(data)
+                st2 = m2.get("stats")
+                if not st2:
+                    continue
+                if st2.get("limit") != 0:
+                    print(f"limit=0 被改写成 {st2.get('limit')}，查看全部没生效")
+                    return 1
+                print("ALL_OK")
+                break
             print("VIEW_OK")
             print(f"  history bucket_ms={msg['history']['bucket_ms']} points={len(msg['history']['points'])}")
             print(f"  stats rows={len(msg['stats']['rows'])} total={msg['stats']['total']}")

@@ -453,7 +453,7 @@ impl AppState {
         by: crate::stats::Dim,
         filters: &[crate::stats::Filter],
         limit: usize,
-    ) -> (Vec<(String, crate::stats::Counters)>, Vec<&'static str>) {
+    ) -> crate::stats::Ranking {
         self.stats
             .lock()
             .unwrap_or_else(|e| e.into_inner())
