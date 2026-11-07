@@ -181,6 +181,9 @@ struct Bucket {
     ips: HashMap<String, Counters>,
     uas: HashMap<String, Counters>,
     rules: HashMap<String, u32>,
+    /// 这个桶是否因为超容量丢掉过键。查询时汇总出去，
+    /// 免得「全部」看起来是全量、其实早被挤掉一批长尾。
+    trimmed: bool,
 }
 
 impl Bucket {
@@ -237,6 +240,18 @@ impl Ring {
 
 }
 
+/// 单次排行榜最多返回多少行（防呆，不是产品上限：正常窗口远到不了）。
+pub const MAX_RANK_ROWS: usize = 5000;
+
+/// 一次查询的结果。总量与被裁标记单独给出，
+/// 前端才能说清「占比 100% 里还有多少没列出来」。
+pub struct Ranking {
+    pub rows: Vec<(String, Counters)>,
+    pub dropped: Vec<&'static str>,
+    pub total: u64,
+    pub trimmed: bool,
+}
+
 pub struct StatsStore {
     /// 1 分钟 × 120：近 2 小时的高分辨率
     minute: Ring,
@@ -273,15 +288,15 @@ impl StatsStore {
                 status,
             );
             b.combos.entry(key).or_default().add(c);
-            trim(&mut b.combos, CAP_COMBOS, |v| v.requests as u64);
+            b.trimmed |= trim(&mut b.combos, CAP_COMBOS, |v| v.requests as u64);
 
             if !ip.is_empty() {
                 b.ips.entry(ip.to_string()).or_default().add(c);
-                trim(&mut b.ips, CAP_TEXT, |v| v.requests as u64);
+                b.trimmed |= trim(&mut b.ips, CAP_TEXT, |v| v.requests as u64);
             }
             if !ua.is_empty() {
                 b.uas.entry(ua.to_string()).or_default().add(c);
-                trim(&mut b.uas, CAP_TEXT, |v| v.requests as u64);
+                b.trimmed |= trim(&mut b.uas, CAP_TEXT, |v| v.requests as u64);
             }
         }
     }
@@ -299,18 +314,21 @@ impl StatsStore {
                     *b.rules.entry(r.clone()).or_insert(0) += 1;
                 }
             }
-            trim(&mut b.rules, CAP_RULES, |v| *v as u64);
+            b.trimmed |= trim(&mut b.rules, CAP_RULES, |v| *v as u64);
         }
     }
 
     /// 按维度 + 时间范围 + 筛选条件出排行榜。
+    ///
+    /// `limit == 0` 表示不截断（「查看全部」）。截断时刻意**不是**先截再算占比：
+    /// `total` 是整窗真实总量，否则 TOP200 的百分比会按 200 条自己当分母，越看越离谱。
     pub fn query(
         &self,
         range_secs: u64,
         by: Dim,
         filters: &[Filter],
         limit: usize,
-    ) -> (Vec<(String, Counters)>, Vec<&'static str>) {
+    ) -> Ranking {
         let now_min = crate::state::now_ms() / 60_000;
         let range_min = ((range_secs / 60) as i64).max(1);
 
@@ -382,14 +400,29 @@ impl StatsStore {
             }
         }
 
+        let total: u64 = acc.values().map(|c| c.requests as u64).sum();
+        let trimmed = ring
+            .buckets
+            .iter()
+            .filter(|b| b.start + ring.span > from)
+            .any(|b| b.trimmed);
+
         let mut rows: Vec<(String, Counters)> = acc.into_iter().collect();
         rows.sort_by(|a, b| {
             b.1.requests
                 .cmp(&a.1.requests)
                 .then_with(|| a.0.cmp(&b.0))
         });
-        rows.truncate(limit.clamp(1, 200));
-        (rows, dropped)
+        // 0 = 全部。上限给一个防呆值，避免一次把几万行塞进一帧 JSON。
+        if limit > 0 {
+            rows.truncate(limit.min(MAX_RANK_ROWS));
+        }
+        Ranking {
+            rows,
+            dropped,
+            total,
+            trimmed,
+        }
     }
 }
 
@@ -413,15 +446,20 @@ fn norm(s: &str) -> String {
 }
 
 /// 超容量时砍掉最小的那些，保证内存不随长尾增长
-fn trim<K: std::hash::Hash + Eq + Clone, V>(map: &mut HashMap<K, V>, cap: usize, score: impl Fn(&V) -> u64) {
+fn trim<K: std::hash::Hash + Eq + Clone, V>(
+    map: &mut HashMap<K, V>,
+    cap: usize,
+    score: impl Fn(&V) -> u64,
+) -> bool {
     if map.len() <= cap {
-        return;
+        return false;
     }
     let mut keys: Vec<(K, u64)> = map.iter().map(|(k, v)| (k.clone(), score(v))).collect();
     keys.sort_by_key(|b| std::cmp::Reverse(b.1));
     keys.truncate(cap);
     let keep: std::collections::HashSet<K> = keys.into_iter().map(|(k, _)| k).collect();
     map.retain(|k, _| keep.contains(k));
+    true
 }
 
 #[cfg(test)]
@@ -452,7 +490,7 @@ mod tests {
         s.record_request(now, dims("api", "b1", "a.com"), 200, &c(3, 0), "curl", "1.1.1.1");
         s.record_request(now, dims("api", "b1", "a.com"), 200, &c(2, 0), "curl", "1.1.1.1");
         s.record_request(now, dims("web", "b2", "a.com"), 502, &c(1, 1), "curl", "2.2.2.2");
-        let (rows, dropped) = s.query(3600, Dim::Route, &[], 10);
+        let Ranking { rows, dropped, .. } = s.query(3600, Dim::Route, &[], 10);
         assert!(dropped.is_empty());
         assert_eq!(rows[0].0, "api");
         assert_eq!(rows[0].1.requests, 5);
@@ -474,7 +512,7 @@ mod tests {
             op: Op::Eq,
             value: "2xx".into(),
         };
-        let (rows, _) = s.query(3600, Dim::Route, &[f], 10);
+        let Ranking { rows, .. } = s.query(3600, Dim::Route, &[f], 10);
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].0, "web");
         assert_eq!(rows[0].1.requests, 7);
@@ -493,7 +531,7 @@ mod tests {
             value: "api".into(),
         };
         // IP 表里没有路由信息，这种筛选只能如实报告"用不上"
-        let (rows, dropped) = s.query(3600, Dim::Ip, &[f], 10);
+        let Ranking { rows, dropped, .. } = s.query(3600, Dim::Ip, &[f], 10);
         assert_eq!(dropped, vec!["route"]);
         assert_eq!(rows.len(), 1);
     }
@@ -505,13 +543,13 @@ mod tests {
         s.record_request(now - 30, dims("old", "b", "h"), 200, &c(9, 0), "", "");
         s.record_request(now, dims("new", "b", "h"), 200, &c(1, 0), "", "");
         // 近 10 分钟：30 分钟前的桶必须落在窗口外
-        let (rows, _) = s.query(600, Dim::Route, &[], 10);
+        let Ranking { rows, .. } = s.query(600, Dim::Route, &[], 10);
         assert!(
             rows.iter().all(|(k, _)| k != "old"),
             "10 分钟窗口不该统计到 30 分钟前的数据: {rows:?}"
         );
         // 近 1 小时：同一个桶又该回来了
-        let (rows2, _) = s.query(3600, Dim::Route, &[], 10);
+        let Ranking { rows: rows2, .. } = s.query(3600, Dim::Route, &[], 10);
         assert!(rows2.iter().any(|(k, _)| k == "old"));
     }
 
@@ -520,8 +558,30 @@ mod tests {
         let mut s = StatsStore::default();
         let now = crate::state::now_ms() / 60_000;
         s.record_request(now, dims("", "", ""), 200, &c(2, 0), "", "");
-        let (rows, _) = s.query(3600, Dim::Route, &[], 10);
+        let Ranking { rows, .. } = s.query(3600, Dim::Route, &[], 10);
         assert_eq!(rows[0].0, "—");
+    }
+
+    #[test]
+    fn limit_zero_returns_everything_and_total_is_the_whole_window() {
+        let mut s = StatsStore::default();
+        let now = crate::state::now_ms() / 60_000;
+        // 300 个不同路由：老实现 truncate(200) 会悄悄砍到 200 条，
+        // 而且 pct 分母按 200 条自己算，占比加起来能超过 100%。
+        for i in 0..300 {
+            let route = format!("r{i:03}");
+            s.record_request(now, dims(&route, "b", "h"), 200, &c(1, 0), "ua", "1.1.1.1");
+        }
+        let Ranking {
+            rows, total, ..
+        } = s.query(3600, Dim::Route, &[], 0);
+        assert_eq!(rows.len(), 300, "limit=0 必须返回全部，不是 200");
+        assert_eq!(total, 300, "total 是整窗请求数，不能等于返回行之和");
+
+        // 显式 limit 仍然截断，但 total 保持整窗值
+        let Ranking { rows, total, .. } = s.query(3600, Dim::Route, &[], 10);
+        assert_eq!(rows.len(), 10);
+        assert_eq!(total, 300);
     }
 
     #[test]

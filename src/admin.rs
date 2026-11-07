@@ -401,7 +401,8 @@ impl WsView {
         StatsQuery {
             by: crate::stats::Dim::parse(&self.by).unwrap_or(crate::stats::Dim::Route),
             range_secs: self.range.clamp(60, 7 * 86_400),
-            limit: self.limit.clamp(1, 200),
+            // 0 = 全部（和不截断语义一致）：这里绝不能 clamp 到 ≥1
+            limit: self.limit.min(crate::stats::MAX_RANK_ROWS),
             filters: self
                 .filters
                 .iter()
@@ -503,18 +504,23 @@ async fn ws_loop(mut socket: WebSocket, st: Arc<AppState>) {
             if tr != sent_stats_rev {
                 payload["stats"] = stats_json(&st, &v.stats_query());
                 if !v.cards.is_empty() {
-                    let mut cards = serde_json::Map::new();
-                    for (i, name) in v.cards.iter().take(3).enumerate() {
+                    let base = v.stats_query();
+                    // 卡片用**同一套**范围与筛选：否则表格筛了 2xx、卡片还是全量，
+                    // 一眼看上去就是两套数（之前正是这样）。
+                    // 返回数组而不是按下标建的 map：每个元素自带 by，
+                    // 前端照着 by 渲染标题和跳转，不可能再和下拉框对不上。
+                    let mut cards = Vec::new();
+                    for name in v.cards.iter().take(3) {
                         let dim = crate::stats::Dim::parse(name).unwrap_or(crate::stats::Dim::Ip);
                         let q = StatsQuery {
                             by: dim,
-                            range_secs: v.range.clamp(60, 7 * 86_400),
+                            range_secs: base.range_secs,
                             limit: 5,
-                            filters: Vec::new(),
+                            filters: base.filters.clone(),
                         };
-                        cards.insert(format!("{i}"), stats_json(&st, &q));
+                        cards.push(stats_json(&st, &q));
                     }
-                    payload["cards"] = Value::Object(cards);
+                    payload["cards"] = json!(cards);
                 }
                 sent_stats_rev = tr;
             }
@@ -624,7 +630,8 @@ async fn api_stats(
                 }
             }
             "range" => range_secs = v.parse().unwrap_or(3_600).clamp(60, 7 * 86_400),
-            "limit" => limit = v.parse().unwrap_or(10).clamp(1, 200),
+            // 0 = 全部；其余按行数，给个防呆上限
+            "limit" => limit = v.parse::<usize>().unwrap_or(10).min(crate::stats::MAX_RANK_ROWS),
             "f" => {
                 // 值里可能自带冒号（UA 全文），所以只切前两段
                 let mut parts = v.splitn(3, ':');
@@ -714,9 +721,11 @@ impl Default for StatsQuery {
 
 /// 排行榜的 JSON 形状，同上。
 fn stats_json(st: &AppState, q: &StatsQuery) -> Value {
-    let (rows, dropped) = st.stats_query(q.range_secs, q.by, &q.filters, q.limit);
-    let total: u64 = rows.iter().map(|(_, c)| c.requests as u64).sum();
-    let items: Vec<Value> = rows
+    let r = st.stats_query(q.range_secs, q.by, &q.filters, q.limit);
+    // total 是整窗真实请求数，不是「返回行之和」：截断后按前者算占比才对得上。
+    let total = r.total;
+    let items: Vec<Value> = r
+        .rows
         .iter()
         .map(|(k, c)| {
             json!({
@@ -735,12 +744,16 @@ fn stats_json(st: &AppState, q: &StatsQuery) -> Value {
         "ok": true,
         "by": q.by.as_str(),
         "range_secs": q.range_secs,
+        // 0 表示不截断（查看全部）
         "limit": q.limit,
+        "returned": items.len(),
         "total": total,
+        // 采集时桶容量到顶、有长尾键被挤掉：说明「全部」也只是全部**留存**的值
+        "trimmed": r.trimmed,
         "rows": items,
         "filter_fields": q.by.filter_fields(),
         // 当前维度用不上的筛选条件（比如 IP 表按路由筛），前端要如实提示而不是装作生效
-        "dropped_filters": dropped,
+        "dropped_filters": r.dropped,
     })
 }
 

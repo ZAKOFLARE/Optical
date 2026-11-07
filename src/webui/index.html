@@ -157,6 +157,11 @@
   .rank-tbl .pct i{display:block;height:100%;background:var(--blue);border-radius:3px}
   .rank-tbl .pct-n{margin-left:8px;font-size:11.5px;color:var(--ink-2)}
   .rank-tbl .muted{color:var(--ink-3)}
+  /* 全部 = 真的全部，所以表格得自己滚。表头 sticky，滚的时候还知道哪列是哪列 */
+  .rank-scroll{max-height:min(52vh,380px);overflow:auto}
+  .rank-tbl thead th{position:sticky;top:0;z-index:2;background:var(--panel)}
+  .rank-scroll::-webkit-scrollbar{width:8px;height:8px}
+  .rank-scroll::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:4px}
   /* 概览：两个饼 + 系统占用 */
   .ov-row{display:grid;grid-template-columns:1.1fr 1.1fr 1fr;gap:12px;margin-top:12px}
   @media (max-width:820px){ .ov-row{grid-template-columns:1fr} }
@@ -178,11 +183,22 @@
   .an-layout{display:grid;grid-template-columns:236px 1fr;gap:12px;align-items:start}
   @media (max-width:900px){ .an-layout{grid-template-columns:1fr} }
   .an-side{display:flex;flex-direction:column;gap:10px}
+  /* 换视角时给主区盖一层：数据在飞过来之前，先明说"在取"，而不是看着旧数字发呆 */
+  .an-main{position:relative;min-width:0}
+  .an-mask{position:absolute;inset:0;z-index:6;display:none;flex-direction:column;
+    align-items:center;justify-content:center;gap:10px;border-radius:var(--r);
+    background:color-mix(in srgb, var(--bg) 72%, transparent);backdrop-filter:blur(1.5px)}
+  .an-mask.on{display:flex}
+  .an-mask-t{font-size:11.5px;color:var(--ink-2)}
+  .spin{width:22px;height:22px;border-radius:50%;border:2px solid var(--line-2);
+    border-top-color:var(--blue);animation:spin .7s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
   .an-tile{border:1px solid var(--line);border-radius:var(--r);background:var(--panel);padding:10px 12px;cursor:pointer}
   .an-tile:hover{border-color:var(--blue)}
   .an-tile.on{border-color:var(--blue);box-shadow:inset 0 0 0 1px var(--blue-soft)}
   .an-tile .t{display:flex;justify-content:space-between;font-size:11.5px;color:var(--ink-2)}
   .an-tile .v{font-size:19px;font-weight:600;margin:2px 0 4px;font-variant-numeric:tabular-nums}
+  .an-tile .spark{display:block;height:34px;overflow:hidden}
   .an-tile .sp{display:block;width:100%;height:34px}
   .an-tile .sp path{fill:none;stroke-width:1.4;stroke-linejoin:round}
   .rank-cards{margin-top:12px}
@@ -459,6 +475,7 @@
         <div class="an-layout">
           <aside class="an-side" id="an-tiles"></aside>
           <div class="an-main">
+            <div class="an-mask" id="an-mask"><span class="spin"></span><span class="an-mask-t" data-i18n="an.loading">正在取这段数据…</span></div>
         <div class="card">
           <div class="chart-head">
             <div class="tabs" id="chart-tabs">
@@ -505,6 +522,7 @@
             </div>
           </div>
           <div class="filter-bar" id="rank-filters"></div>
+          <div class="rank-scroll">
           <table class="tbl rank-tbl">
             <colgroup><col style="width:34px"><col><col style="width:88px"><col style="width:76px"><col style="width:150px"><col style="width:88px"></colgroup>
             <thead><tr>
@@ -517,6 +535,7 @@
             </tr></thead>
             <tbody id="rank-body"></tbody>
           </table>
+          </div>
         </div>
 
         <div class="grid3 rank-cards" id="an-cards"></div>
@@ -901,6 +920,8 @@
       "an.title":"流量分析","an.hint":"粒度/范围/筛选都是查询参数，不写配置；数据经 WebSocket 实时推送。",
       "ov.toanalytics":"流量曲线、排行榜与筛选已经挪到左侧「分析」页。","ov.goto":"去看看 →",
       "ov.rank":"排行榜","ov.rank.all":"全部",
+      "ov.rank.shown":"列出 {n} 条","ov.rank.allshown":"全部 {n} 条",
+      "ov.rank.trimmed":" · 长尾已按容量裁剪","an.loading":"正在取这段数据…",
       "cf.remote.changed":"其他会话刚改了配置，你这边先不覆盖（保存后自动同步）",
       "ov.pie.status":"状态码分布","ov.pie.nodata":"暂无数据（该范围内没有对应请求）","ov.pie.status.hint":"按响应状态码归类",
       "ov.pie.cache":"缓存命中","ov.sys":"系统占用","ov.sys.hint":"本进程",
@@ -1074,6 +1095,8 @@
       "an.title":"Traffic analytics","an.hint":"Bucket/range/filters are query params, never written to config; data streams over WebSocket.",
       "ov.toanalytics":"Traffic chart, leaderboard and filters moved to the Analytics page.","ov.goto":"Open →",
       "ov.rank":"Leaderboard","ov.rank.all":"All",
+      "ov.rank.shown":"showing {n}","ov.rank.allshown":"all {n}",
+      "ov.rank.trimmed":" · long tail trimmed to fit memory","an.loading":"Loading this range…",
       "cf.remote.changed":"Another session changed the config; kept your edits — saves will sync",
       "ov.pie.status":"Status codes","ov.pie.nodata":"No data in this range","ov.pie.status.hint":"grouped by class",
       "ov.pie.cache":"Cache","ov.sys":"Process","ov.sys.hint":"this process",
@@ -1256,9 +1279,12 @@
     cfg:null, status:null, metrics:null, history:null, snapshots:[], audit:[],
     chart:"requests", rows:[], headerRules:[], backends:[], groups:[], errorBodies:[],
     filter:"", authed:false, paths:null, ws:null, pollTimer:null, wsRetry:0, rev:0,
-    rankBy:"route", rankLimit:Number(localStorage.getItem("optical.rankLimit")) || 10,
+    rankBy:"route",
+    // 0 = 全部。不能写成 `Number(...) || 10`——"全部"存的就是 0，会被 || 吃掉变回 10
+    rankLimit:(function(){ var v = localStorage.getItem("optical.rankLimit"); return v === null ? 10 : Number(v); })(),
     filters:[], rank:null, rules:null, cards:null,
-    editing:false, editTimer:null, pendingRev:null, remoteToastShown:false
+    editing:false, editTimer:null, pendingRev:null, remoteToastShown:false,
+    maskTimer:null, maskShown:false, maskGuard:null
   };
 
   function t(k, vars){
@@ -1742,32 +1768,54 @@
     }
   }
 
+  // 指标条每秒都会跟着快照刷新。**不能**每次 reconstruct innerHTML：
+  // 节点在 mousedown 和 click 之间被换掉，click 就永远不会派发到它身上——
+  // 表现就是"有时候点一下没反应，得点第二下"。结构建一次，之后只改文字和曲线。
   function renderAnTiles(){
     var box = $("an-tiles");
     if (!box) return;
     var pts = pointsOf();
     var m = state.metrics || {};
-    box.innerHTML = AN_TILES.map(function(tile){
-      var vals = pts.map(tile.pick);
+    if (box.children.length !== AN_TILES.length){
+      box.innerHTML = AN_TILES.map(function(tile){
+        return '<div class="an-tile" data-tile="'+tile.k+'">'+
+          '<div class="t"><span class="lab"></span></div>'+
+          '<div class="v"></div>'+
+          '<span class="spark"></span>'+
+        '</div>';
+      }).join("");
+    }
+    AN_TILES.forEach(function(tile, i){
+      var el = box.children[i];
+      if (!el) return;
+      var cls = "an-tile" + (state.chart === tile.k ? " on" : "");
+      if (el.className !== cls) el.className = cls;
+      var lab = el.querySelector(".lab");
+      if (lab && lab.textContent !== t(tile.label)) lab.textContent = t(tile.label);
       var raw = tile.val(m);
       var shown = tile.bytes ? fmtBytes(raw) : (tile.pct ? (raw || 0).toFixed(1) + "%" : compact(raw || 0));
-      return '<div class="an-tile'+(state.chart === tile.k ? ' on' : '')+'" data-tile="'+tile.k+'">'+
-        '<div class="t"><span>'+esc(t(tile.label))+'</span></div>'+
-        '<div class="v">'+esc(shown)+'</div>'+
-        sparkline(vals, tile.color)+
-      '</div>';
-    }).join("");
+      var v = el.querySelector(".v");
+      if (v && v.textContent !== shown) v.textContent = shown;
+      var sp = el.querySelector(".spark");
+      if (sp) sp.innerHTML = sparkline(pts.map(tile.pick), tile.color);
+    });
   }
 
+  // 卡片标题和跳转维度都取服务端返回的 by——不再由前端另写一份 ["host","ip","route"]，
+  // 那份写死的清单正是"卡片和下拉框各说各话"的来源。
   function renderAnCards(){
     var box = $("an-cards");
-    if (!box || !state.cards) return;
-    var dims = ["host", "ip", "route"];
-    box.innerHTML = dims.map(function(d, i){
-      var d0 = state.cards[String(i)];
-      var rows = (d0 && d0.rows) || [];
-      var head = '<div class="card-head"><h3>'+esc(dimLabel(d))+'</h3>'+
-        '<button class="btn btn-sm" data-rank-jump="'+d+'">'+esc(t("an.more"))+'</button></div>';
+    if (!box || !state.cards || !state.cards.length) return;
+    var html = state.cards.map(function(d){
+      var d0 = d || {};
+      var dim = d0.by || "ip";
+      var rows = d0.rows || [];
+      var dropped = d0.dropped_filters || [];
+      var warn = dropped.length
+        ? '<i class="f-warn" title="'+esc(t("ov.rank.dropped", { f: dropped.map(dimLabel).join("、") }))+'">!</i>'
+        : "";
+      var head = '<div class="card-head"><h3>'+esc(dimLabel(dim))+warn+'</h3>'+
+        '<button class="btn btn-sm" data-rank-jump="'+dim+'">'+esc(t("an.more"))+'</button></div>';
       var body = rows.length
         ? '<div class="mini">'+rows.map(function(r){
             var pct = Math.max(0, Math.min(100, Number(r.pct) || 0));
@@ -1777,6 +1825,9 @@
         : '<div class="mini"><div class="mini-row"><span class="n">'+esc(t("ov.rank.empty"))+'</span></div></div>';
       return '<div class="card rank-card">'+head+body+'</div>';
     }).join("");
+    if (box.dataset.html === html) return;
+    box.dataset.html = html;
+    box.innerHTML = html;
   }
 
   // ---------- 排行榜：维度 / 时间范围 / 条件筛选 ----------
@@ -1794,7 +1845,7 @@
       }).join("");
     }
     sel.value = state.rankBy;
-    $("rank-limit").value = state.rankLimit >= 200 ? "all" : String(state.rankLimit);
+    $("rank-limit").value = state.rankLimit === 0 ? "all" : String(state.rankLimit);
   }
 
   function renderFilters(){
@@ -1834,10 +1885,14 @@
     if (!body || !d) return;
     var rows = d.rows || [];
     if (!rows.length){
-      body.innerHTML = '<tr class="empty-row"><td colspan="6">'+esc(t("ov.rank.empty"))+'</td></tr>';
+      var empty = '<tr class="empty-row"><td colspan="6">'+esc(t("ov.rank.empty"))+'</td></tr>';
+      if (body.dataset.html !== empty){
+        body.dataset.html = empty;
+        body.innerHTML = empty;
+      }
       return;
     }
-    body.innerHTML = rows.map(function(r, i){
+    var html = rows.map(function(r, i){
       var pct = Math.max(0, Math.min(100, Number(r.pct) || 0));
       var errStyle = r.errors ? ' style="text-align:right;color:var(--red)"' : ' style="text-align:right"';
       return '<tr>'+
@@ -1849,6 +1904,10 @@
         '<td class="num" style="text-align:right">'+(r.avg_ms ? r.avg_ms + ' ms' : '—')+'</td>'+
       '</tr>';
     }).join("");
+    // 每秒重建会把正在拖的选区、正在点的那一行一起抹掉（和 Top 表同一个坑）
+    if (body.dataset.html === html) return;
+    body.dataset.html = html;
+    body.innerHTML = html;
   }
 
   // 排行榜跟随时间范围：range 变了就重查；gran 只管图表分桶，不参与这里
@@ -1896,11 +1955,22 @@
   function applyStats(d){
     if (!d) return;
     state.rank = d;
+    // 服务端会回显 by：点"查看更多"或别的会话改了维度后，下拉框必须跟着走，
+    // 否则就是"表格按路由、下拉写着 IP"这种对不上的状态。
+    if (d.by && d.by !== state.rankBy){
+      state.rankBy = d.by;
+    }
+    renderRankTools();
     renderFilters();
     renderRank();
     renderAnTiles();
-    $("rank-window").textContent = spanText(view.range) + " · " +
-      t("ov.rank.total") + " " + d.total;
+    // 请求总数和"列了几行"是两个量纲，别放在一起比大小
+    var shown = (d.rows || []).length;
+    var txt = spanText(d.range_secs || view.range) + " · " + t("ov.rank.total") + " " + d.total +
+      " · " + (d.limit === 0 ? t("ov.rank.allshown", { n: shown }) : t("ov.rank.shown", { n: shown }));
+    if (d.trimmed) txt += t("ov.rank.trimmed");
+    $("rank-window").textContent = txt;
+    maskOff();
   }
 
   // WS 通着就走 WS：把"我现在在看什么"发过去，服务端按这个视角推
@@ -1910,7 +1980,9 @@
         state.ws.send(JSON.stringify({
           type: "view", gran: view.gran, range: view.range,
           by: state.rankBy, limit: state.rankLimit,
-          cards: ["host", "ip", "route"],
+          // 第一张卡片就是当前选中的维度，再补两张常用维度（去重）
+          cards: [state.rankBy].concat(["host", "ip", "route", "status", "backend"]
+            .filter(function(d){ return d !== state.rankBy; })).slice(0, 3),
           filters: state.filters.filter(function(f){ return f.value; })
             .map(function(f){ return {field: f.field, op: f.op, value: f.value}; })
         }));
@@ -1920,11 +1992,34 @@
     return false;
   }
 
+  // 取数遮罩：只等 150ms 才真正显示，避免本地秒回时闪一下；
+  // 8 秒兜底隐藏——宁可露出旧数据，也不能让页面永远卡在"正在取"。
+  function maskOn(){
+    if (state.maskTimer || state.maskShown) return;
+    state.maskTimer = setTimeout(function(){
+      state.maskTimer = null;
+      state.maskShown = true;
+      var m = $("an-mask");
+      if (m) m.classList.add("on");
+      state.maskGuard = setTimeout(maskOff, 8000);
+    }, 150);
+  }
+
+  function maskOff(){
+    if (state.maskTimer){ clearTimeout(state.maskTimer); state.maskTimer = null; }
+    if (state.maskGuard){ clearTimeout(state.maskGuard); state.maskGuard = null; }
+    state.maskShown = false;
+    var m = $("an-mask");
+    if (m) m.classList.remove("on");
+  }
+
   // 换视角/换筛选统一走这里：WS 在就推，不在才回落到 HTTP
   function refreshAnalytics(){
+    maskOn();
     if (!sendView()){
+      // 没有 WS 时两条兜底请求都可能失败，失败也要把遮罩收掉
       loadHistory();
-      loadStats();
+      loadStats().finally(maskOff);
     }
   }
 
@@ -1936,7 +2031,8 @@
       refreshAnalytics();
     });
     $("rank-limit").addEventListener("change", function(){
-      state.rankLimit = this.value === "all" ? 200 : (Number(this.value) || 10);
+      // 0 交给服务端表示"不截断"，不是拿 200 假装全部
+      state.rankLimit = this.value === "all" ? 0 : (Number(this.value) || 10);
       localStorage.setItem("optical.rankLimit", state.rankLimit);
       refreshAnalytics();
     });
@@ -3043,6 +3139,7 @@
     drawChart();
     // 左侧指标条的 sparkline 也吃这份历史，必须先有数据再画
     renderAnTiles();
+    maskOff();
   }
 
   function loadHistory(){
