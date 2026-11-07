@@ -117,7 +117,7 @@ def main():
         ),
     )
 
-    got_history = got_stats = False
+    got_history = got_stats = got_config = False
     deadline = 12
     sock.settimeout(1.0)
     for _ in range(deadline * 3):
@@ -139,6 +139,8 @@ def main():
             continue
         if msg.get("type") != "snapshot":
             continue
+        if "config" in msg and isinstance(msg.get("rev"), int):
+            got_config = True
         if "history" in msg:
             got_history = msg["history"].get("gran_secs") == 60
         if "stats" in msg:
@@ -148,12 +150,13 @@ def main():
                 and st.get("range_secs") == 3600
                 and st.get("filter_fields") == ["route", "backend", "host", "status"]
             )
-        if got_history and got_stats:
+        if got_history and got_stats and got_config:
             print("VIEW_OK")
             print(f"  history bucket_ms={msg['history']['bucket_ms']} points={len(msg['history']['points'])}")
             print(f"  stats rows={len(msg['stats']['rows'])} total={msg['stats']['total']}")
+            print(f"  config rev={msg['rev']} keys={len(msg['config'])}")
             return 0
-    print(f"没等到完整快照 history={got_history} stats={got_stats}")
+    print(f"没等到完整快照 history={got_history} stats={got_stats} config={got_config}")
     return 1
 
 
