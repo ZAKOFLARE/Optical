@@ -1,0 +1,6 @@
+/target
+optical.toml
+*.toml.tmp
+.secrets/
+ssh.txt
+.workbuddy/
