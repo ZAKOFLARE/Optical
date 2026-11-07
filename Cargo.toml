@@ -66,6 +66,7 @@ rand = "0.8"
 
 # WAF：cookie 压缩比判定需要真的解压（带解压上限，防 zip bomb）
 flate2 = "1"
+x509-parser = { version = "0.18", default-features = false }
 
 [profile.release]
 opt-level = "s"

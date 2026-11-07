@@ -9,6 +9,11 @@ use crate::config::TlsConfig;
 use crate::proxy::{self, Clients};
 use crate::state::AppState;
 use anyhow::{anyhow, Context, Result};
+use sha2::{Digest, Sha256};
+// 只挑需要的：`x509_parser::prelude::*` 会把它的 `time` 模块带进来，
+// 把外部 `time` crate 遮掉（OffsetDateTime 会变成私有类型，报一堆莫名的错）。
+use x509_parser::extensions::GeneralName;
+use x509_parser::parse_x509_certificate;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
 use std::convert::Infallible;
@@ -203,6 +208,12 @@ fn generate_self_signed(
     let key_pem = key_pair.serialize_pem();
     std::fs::write(dir.join("dev-cert.pem"), &cert_pem).ok();
     std::fs::write(dir.join("dev-key.pem"), &key_pem).ok();
+    #[cfg(unix)]
+    {
+        // 默认 umask 会给 0644：自签私钥也是私钥，别的账户能读等于没有保护
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir.join("dev-key.pem"), std::fs::Permissions::from_mode(0o600)).ok();
+    }
     let meta = serde_json::json!({
         "names": names,
         "not_before": not_before,
@@ -239,6 +250,178 @@ pub fn reset_self_signed(cfg: &TlsConfig, tls_dir: &Path, names: &[String]) -> R
     Ok(all)
 }
 
+/// 一张证书里我们真正需要展示的东西。
+///
+/// 不做信任链验证：网关没有 CA 库，也不该替运维判断"这张证书可不可信"——
+/// 那是签发方和 ACME 客户端的事。这里只回答"它说自己是谁、什么时候过期、
+/// 能不能真的拿它握上手"。
+#[derive(Debug)]
+pub struct CertFacts {
+    /// SAN 里的域名与 IP（没写 SAN 时退回 CN）
+    pub names: Vec<String>,
+    pub subject: String,
+    pub issuer: String,
+    pub not_before: i64,
+    pub not_after: i64,
+    /// 叶子证书的 SHA-256 指纹，跟 ACME 客户端打印的那串对得上
+    pub fingerprint: String,
+    /// 链上证书数量（叶子 + 中间）
+    pub chain_len: usize,
+}
+
+/// 解析证书链（叶子在前）。
+pub fn parse_chain(cert_pem: &str) -> Result<CertFacts> {
+    let ders: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_pem.as_bytes())
+        .collect::<Result<_, _>>()
+        .context("证书 PEM 解析失败")?;
+    let leaf = ders
+        .first()
+        .ok_or_else(|| anyhow!("PEM 里没有 CERTIFICATE 块（是不是把私钥贴到证书框了？）"))?;
+
+    let (_, cert) = parse_x509_certificate(leaf.as_ref())
+        .map_err(|e| anyhow!("X.509 解析失败: {e}"))?;
+
+    let mut names: Vec<String> = Vec::new();
+    if let Ok(Some(san)) = cert.subject_alternative_name() {
+        for gn in &san.value.general_names {
+            match gn {
+                GeneralName::DNSName(d) => names.push((*d).to_string()),
+                GeneralName::IPAddress(raw) => {
+                    if let Some(ip) = ip_from_bytes(raw) {
+                        names.push(ip);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    if names.is_empty() {
+        if let Some(cn) = cert.subject().iter_common_name().next().and_then(|c| c.as_str().ok()) {
+            names.push(cn.to_string());
+        }
+    }
+    names.sort();
+    names.dedup();
+
+    let digest = Sha256::digest(leaf.as_ref());
+    let fingerprint = digest.iter().map(|b| format!("{b:02x}")).collect::<String>();
+
+    Ok(CertFacts {
+        names,
+        subject: cert.subject().to_string(),
+        issuer: cert.issuer().to_string(),
+        not_before: cert.validity().not_before.timestamp(),
+        not_after: cert.validity().not_after.timestamp(),
+        fingerprint,
+        chain_len: ders.len(),
+    })
+}
+
+/// SAN 里的 IP 是 4 或 16 字节裸地址，转成人能看的写法。
+fn ip_from_bytes(raw: &[u8]) -> Option<String> {
+    match raw.len() {
+        4 => Some(std::net::Ipv4Addr::new(raw[0], raw[1], raw[2], raw[3]).to_string()),
+        16 => {
+            let mut b = [0u8; 16];
+            b.copy_from_slice(raw);
+            Some(std::net::Ipv6Addr::from(b).to_string())
+        }
+        _ => None,
+    }
+}
+
+/// 校验"这对证书和私钥能不能真的用起来"。
+///
+/// 最硬的检查就是把它装进 rustls：算法不支持、链和私钥不匹配，都会在这一步现原形，
+/// 而不是等重启后浏览器报 ERR_SSL_*，再回来猜是哪一步错了。
+pub fn check_pair(cert_pem: &str, key_pem: &str) -> Result<CertFacts> {
+    let facts = parse_chain(cert_pem)?;
+    let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_pem.as_bytes())
+        .collect::<Result<_, _>>()
+        .context("证书 PEM 解析失败")?;
+    let key = rustls_pemfile::private_key(&mut key_pem.as_bytes())
+        .context("私钥 PEM 解析失败")?
+        .ok_or_else(|| anyhow!("私钥里没有 PKCS#8 / PKCS#1 / SEC1 内容"))?;
+
+    install_crypto_provider();
+    RustlsConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .context("证书与私钥对不上，或密钥算法不受支持")?;
+
+    Ok(facts)
+}
+
+/// 备份后落盘：证书 0644、私钥 0600。
+/// 权限错一次就等于把私钥公开，这里不交给 umask 决定。
+pub fn write_material(
+    cert_path: &Path,
+    key_path: &Path,
+    cert_pem: &str,
+    key_pem: &str,
+) -> Result<Vec<PathBuf>> {
+    for p in [cert_path, key_path] {
+        if let Some(dir) = p.parent() {
+            std::fs::create_dir_all(dir)
+                .with_context(|| format!("创建证书目录失败: {}", dir.display()))?;
+        }
+    }
+
+    let stamp = time::OffsetDateTime::now_utc().unix_timestamp();
+    let mut backups = Vec::new();
+    for p in [cert_path, key_path] {
+        if !p.exists() {
+            continue;
+        }
+        let name = p
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "cert".into());
+        let bak = p.with_file_name(format!("{name}.bak.{stamp}"));
+        if std::fs::copy(p, &bak).is_ok() {
+            backups.push(bak);
+        }
+    }
+
+    std::fs::write(cert_path, cert_pem)
+        .with_context(|| format!("写入证书失败: {}", cert_path.display()))?;
+    std::fs::write(key_path, key_pem)
+        .with_context(|| format!("写入私钥失败: {}", key_path.display()))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(key_path, std::fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("设置私钥权限失败: {}", key_path.display()))?;
+        std::fs::set_permissions(cert_path, std::fs::Permissions::from_mode(0o644)).ok();
+    }
+
+    // 备份只留最近三份：证书轮换很频繁，不清理会把目录塞满
+    prune_backups(cert_path, 3);
+    prune_backups(key_path, 3);
+    Ok(backups)
+}
+
+fn prune_backups(path: &Path, keep: usize) {
+    let Some(dir) = path.parent() else { return };
+    let Some(name) = path.file_name().map(|s| s.to_string_lossy().to_string()) else {
+        return;
+    };
+    let prefix = format!("{name}.bak.");
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let mut found: Vec<PathBuf> = rd
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with(&prefix))
+        .map(|e| e.path())
+        .collect();
+    // 文件名里的时间戳是定长的，字典序即时间序
+    found.sort();
+    while found.len() > keep {
+        let old = found.remove(0);
+        let _ = std::fs::remove_file(old);
+    }
+}
+
 /// 管理面用的证书概况
 pub fn describe(cfg: &TlsConfig, tls_dir: &Path, base_dir: &Path) -> serde_json::Value {
     let external = !cfg.cert.is_empty() && !cfg.key.is_empty();
@@ -254,7 +437,27 @@ pub fn describe(cfg: &TlsConfig, tls_dir: &Path, base_dir: &Path) -> serde_json:
     let mut names: Vec<String> = Vec::new();
     let mut not_after = 0i64;
     let mut not_before = 0i64;
-    if !external {
+    let mut issuer = String::new();
+    let mut fingerprint = String::new();
+    let mut chain_len = 0usize;
+
+    // 先解析真实证书：外部证书没有 sidecar，以前这一栏永远是空的
+    // （"证书明明装了，页面上域名和到期时间却显示 —"），现在按文件说话。
+    if cert_path.exists() {
+        if let Ok(raw) = std::fs::read_to_string(&cert_path) {
+            if let Ok(f) = parse_chain(&raw) {
+                names = f.names;
+                not_before = f.not_before;
+                not_after = f.not_after;
+                issuer = f.issuer;
+                fingerprint = f.fingerprint;
+                chain_len = f.chain_len;
+            }
+        }
+    }
+
+    // 自签证书有 sidecar 元数据，解析失败时（比如文件被换掉了）退回它
+    if !external && names.is_empty() {
         if let Ok(raw) = std::fs::read_to_string(tls_dir.join("dev-cert.json")) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
                 names = v["names"]
@@ -287,6 +490,10 @@ pub fn describe(cfg: &TlsConfig, tls_dir: &Path, base_dir: &Path) -> serde_json:
         "exists": exists,
         "names": names,
         "configured_san": cfg.san,
+        "issuer": issuer,
+        "fingerprint": fingerprint,
+        "chain_len": chain_len,
+        "expired": not_after > 0 && not_after <= time::OffsetDateTime::now_utc().unix_timestamp(),
         "http_redirect": cfg.http_redirect,
         "not_before": not_before,
         "not_after": not_after,
@@ -298,6 +505,88 @@ pub fn describe(cfg: &TlsConfig, tls_dir: &Path, base_dir: &Path) -> serde_json:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 造一对测试用的自签材料，避免测试依赖外部证书文件
+    fn test_pair(names: &[&str]) -> (String, String) {
+        let kp = rcgen::KeyPair::generate().unwrap();
+        let list: Vec<String> = names.iter().map(|s| s.to_string()).collect();
+        let params = rcgen::CertificateParams::new(list).unwrap();
+        let cert = params.self_signed(&kp).unwrap();
+        (cert.pem(), kp.serialize_pem())
+    }
+
+    #[test]
+    fn parsed_cert_reports_names_and_validity() {
+        let (cert, _key) = test_pair(&["a.example.com", "*.example.com"]);
+        let f = parse_chain(&cert).unwrap();
+        assert!(f.names.contains(&"a.example.com".to_string()), "{:?}", f.names);
+        assert!(f.names.contains(&"*.example.com".to_string()), "{:?}", f.names);
+        assert!(f.not_after > f.not_before);
+        assert_eq!(f.chain_len, 1);
+        assert_eq!(f.fingerprint.len(), 64, "SHA-256 十六进制应该是 64 个字符");
+    }
+
+    #[test]
+    fn mismatched_key_is_rejected() {
+        // 拿 A 的证书配 B 的私钥：必须在保存前就拒绝，而不是等重启后浏览器报错
+        let (cert_a, _key_a) = test_pair(&["a.example.com"]);
+        let (_cert_b, key_b) = test_pair(&["b.example.com"]);
+        assert!(check_pair(&cert_a, &key_b).is_err());
+    }
+
+    #[test]
+    fn matching_pair_passes() {
+        let (cert, key) = test_pair(&["a.example.com"]);
+        assert!(check_pair(&cert, &key).is_ok());
+    }
+
+    #[test]
+    fn cert_box_with_private_key_says_so() {
+        // 把私钥贴进证书框是最常见的误操作，报错得直说
+        let (_cert, key) = test_pair(&["a.example.com"]);
+        let err = parse_chain(&key).unwrap_err().to_string();
+        assert!(err.contains("CERTIFICATE"), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_key_is_written_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("optical-tls-perm-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (cert, key) = test_pair(&["a.example.com"]);
+        let cp = dir.join("c.pem");
+        let kp = dir.join("k.pem");
+        write_material(&cp, &kp, &cert, &key).unwrap();
+        let mode = std::fs::metadata(&kp).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "私钥权限必须是 0600，实际 {mode:o}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn old_material_is_backed_up_and_pruned() {
+        let dir = std::env::temp_dir().join(format!("optical-tls-bak-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let cp = dir.join("c.pem");
+        let kp = dir.join("k.pem");
+        let (cert, key) = test_pair(&["a.example.com"]);
+
+        // 连写四次：备份应只保留最近三份，别把目录塞满
+        for _ in 0..4 {
+            write_material(&cp, &kp, &cert, &key).unwrap();
+            // 时间戳精度是秒，同一秒内会重名，手动错开
+            std::thread::sleep(std::time::Duration::from_millis(1100));
+        }
+        let backups: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with("c.pem.bak."))
+            .collect();
+        assert!(backups.len() <= 3, "备份数量 {}", backups.len());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn self_signed_material_is_created() {

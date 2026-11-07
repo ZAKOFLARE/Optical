@@ -58,6 +58,7 @@ pub async fn serve(state: Arc<AppState>, listener: TcpListener) -> anyhow::Resul
         .route("/api/firewall/apply", post(api_firewall_apply))
         .route("/api/tls", get(api_tls_info))
         .route("/api/tls/selfsigned", post(api_tls_selfsigned))
+        .route("/api/tls/upload", post(api_tls_upload))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     let app = public.merge(protected).fallback(not_found).with_state(state);
@@ -1045,6 +1046,185 @@ async fn api_tls_selfsigned(
         })),
         Err(e) => Json(json!({ "ok": false, "error": format!("{e:#}") })),
     }
+}
+
+#[derive(Deserialize)]
+struct UploadCertReq {
+    /// 证书链 PEM（叶子在前）
+    cert: String,
+    /// 私钥 PEM
+    key: String,
+}
+
+/// 上传已签发的证书。
+///
+/// 这个接口刻意只做"挂上去"：**不申请、不续期、不生成私钥**。
+/// 申请和轮换是 ACME 客户端或服务器运维面板的职责，网关是 TLS 终止点，
+/// 拿到的就该是一对现成的 fullchain + privkey。把它放在这里只解决一件事：
+/// 换证书不必 SSH 上去改文件。
+///
+/// 落盘前用 rustls 真正装一遍——能装成功才算可用，否则等重启后浏览器报
+/// ERR_SSL_* 再回头猜，成本高得多。
+async fn api_tls_upload(State(st): State<Arc<AppState>>, Json(req): Json<UploadCertReq>) -> Json<Value> {
+    if req.cert.trim().is_empty() || req.key.trim().is_empty() {
+        return Json(json!({ "ok": false, "error": "证书和私钥都要填：缺一个就装不起来" }));
+    }
+
+    let facts = match crate::tls::check_pair(&req.cert, &req.key) {
+        Ok(f) => f,
+        Err(e) => return Json(json!({ "ok": false, "error": format!("{e:#}") })),
+    };
+
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+    if facts.not_after <= now {
+        return Json(json!({
+            "ok": false,
+            "error": format!(
+                "这张证书已于 {} 过期，装上去浏览器会直接拒绝连接；请先让 ACME 客户端续期",
+                fmt_ts(facts.not_after)
+            ),
+        }));
+    }
+
+    let mut warnings: Vec<String> = Vec::new();
+    if facts.not_before > now {
+        warnings.push(format!(
+            "证书要到 {} 才生效，现在挂上去握手会失败",
+            fmt_ts(facts.not_before)
+        ));
+    }
+    if !facts.names.is_empty() && !cfg_lists_host(&facts.names, &st).await {
+        // 只是提醒，不拦：可能正要配新域名
+        warnings.push(format!(
+            "证书覆盖 {}，和当前站点/应用里配置的域名对不上，确认一下是不是传错了",
+            facts.names.join(", ")
+        ));
+    }
+
+    let mut cfg = st.snapshot().await;
+    let storage = cfg.storage.clone();
+    let base = st.base_dir().to_path_buf();
+    let external = !cfg.tls.cert.is_empty() && !cfg.tls.key.is_empty();
+
+    // 已经指向外部证书：就地更新那两个文件（运维已经把 ACME 产物放在固定位置）。
+    // 还是自签模式：写一对 uploaded-*.pem，并把配置指过去，语义上从此不再是自签。
+    let (cert_path, key_path, adopt) = if external {
+        (
+            crate::config::resolve_one(&cfg.tls.cert, &base),
+            crate::config::resolve_one(&cfg.tls.key, &base),
+            false,
+        )
+    } else {
+        (
+            st.paths.tls_dir.join("uploaded-cert.pem"),
+            st.paths.tls_dir.join("uploaded-key.pem"),
+            true,
+        )
+    };
+
+    let backups = match crate::tls::write_material(&cert_path, &key_path, &req.cert, &req.key) {
+        Ok(b) => b,
+        Err(e) => return Json(json!({ "ok": false, "error": format!("{e:#}") })),
+    };
+
+    let mut config_changed = false;
+    if adopt {
+        cfg.tls.cert = cert_path.display().to_string();
+        cfg.tls.key = key_path.display().to_string();
+        if let Err(e) = st.apply(cfg).await {
+            return Json(json!({
+                "ok": false,
+                "error": format!("证书已写入 {}，但把配置指过去时失败: {e:#}", cert_path.display()),
+            }));
+        }
+        config_changed = true;
+    }
+
+    st.audit.push(
+        &storage,
+        crate::storage::AuditEntry {
+            ts_ms: crate::storage::now_ms(),
+            kind: "tls.upload".into(),
+            detail: format!(
+                "上传证书 {}（{}，到期 {}）",
+                cert_path.display(),
+                facts.names.join(","),
+                fmt_ts(facts.not_after)
+            ),
+            identity: "admin".into(),
+            path: cert_path.display().to_string(),
+            rule: String::new(),
+        },
+    );
+
+    Json(json!({
+        "ok": true,
+        "cert_path": cert_path.display().to_string(),
+        "key_path": key_path.display().to_string(),
+        "names": facts.names,
+        "issuer": facts.issuer,
+        "not_before": facts.not_before,
+        "not_after": facts.not_after,
+        "fingerprint": facts.fingerprint,
+        "chain_len": facts.chain_len,
+        "backups": backups.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+        "config_changed": config_changed,
+        "restart_required": true,
+        "warnings": warnings,
+        "note": "证书已落盘；TLS 监听在进程启动时装载，重启后生效",
+    }))
+}
+
+/// 证书域名和当前配置里的站点/应用域名有没有交集。只用于提示，不用来拦截。
+async fn cfg_lists_host(names: &[String], st: &Arc<AppState>) -> bool {
+    let cfg = st.snapshot().await;
+    let hosts = |list: &[String]| list.iter().map(|h| h.to_lowercase()).collect::<Vec<_>>();
+    let mut configured: Vec<String> = Vec::new();
+    for s in &cfg.sites {
+        configured.extend(hosts(&s.hosts));
+    }
+    for a in &cfg.apps {
+        configured.extend(hosts(&a.hosts));
+    }
+    for r in &cfg.routes {
+        if !r.host.is_empty() {
+            configured.push(r.host.to_lowercase());
+        }
+    }
+    if configured.is_empty() {
+        return true;
+    }
+    names.iter().any(|n| {
+        let n = n.to_lowercase();
+        configured.iter().any(|c| {
+            if c == "*" || n == "*" {
+                return true;
+            }
+            if let Some(tail) = n.strip_prefix("*.") {
+                // 通配证书：只要配置里有同后缀的子域就算覆盖到
+                return c.ends_with(tail);
+            }
+            if let Some(tail) = c.strip_prefix("*.") {
+                return n.ends_with(tail);
+            }
+            &n == c
+        })
+    })
+}
+
+fn fmt_ts(secs: i64) -> String {
+    time::OffsetDateTime::from_unix_timestamp(secs)
+        .map(|t| {
+            format!(
+                "{:04}-{:02}-{:02} {:02}:{:02} UTC",
+                t.year(),
+                u8::from(t.month()),
+                t.day(),
+                t.hour(),
+                t.minute()
+            )
+        })
+        .unwrap_or_else(|_| secs.to_string())
 }
 
 async fn api_backends(State(st): State<Arc<AppState>>) -> Json<Value> {
