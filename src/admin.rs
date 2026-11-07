@@ -37,6 +37,7 @@ pub async fn serve(state: Arc<AppState>, listener: TcpListener) -> anyhow::Resul
         .route("/api/status", get(api_status))
         .route("/api/metrics", get(api_metrics))
         .route("/api/history", get(api_history))
+        .route("/api/stats", get(api_stats))
         .route("/api/config", get(api_get_config).put(api_put_config))
         .route("/api/reload", post(api_reload))
         .route("/api/snapshots", get(api_snapshots))
@@ -488,6 +489,86 @@ async fn api_metrics(State(st): State<Arc<AppState>>) -> Json<Value> {
         "backends": st.backends.snapshot(&cfg),
         "backend_groups": st.backends.groups(&cfg),
         "uptime_secs": st.uptime_secs().await,
+    }))
+}
+
+/// 排行榜查询参数：`?by=route&range=3600&limit=10&f=status:2xx&f=backend:eq:b1`
+///
+/// `f` 可以重复出现，格式 `字段:运算:值`（运算可省，默认 eq）。
+/// 范围和图表共享同一个 `range`，所以切时间范围时排行榜跟着变——
+/// 但粒度（gran）只影响图表分桶，不影响这里。
+async fn api_stats(
+    State(st): State<Arc<AppState>>,
+    Query(q): Query<Vec<(String, String)>>,
+) -> Json<Value> {
+    let mut by = crate::stats::Dim::Route;
+    let mut range_secs: u64 = 3_600;
+    let mut limit: usize = 10;
+    let mut filters: Vec<crate::stats::Filter> = Vec::new();
+
+    for (k, v) in q.iter() {
+        match k.as_str() {
+            "by" => {
+                if let Some(d) = crate::stats::Dim::parse(v) {
+                    by = d;
+                }
+            }
+            "range" => range_secs = v.parse().unwrap_or(3_600).clamp(60, 7 * 86_400),
+            "limit" => limit = v.parse().unwrap_or(10).clamp(1, 50),
+            "f" => {
+                // 值里可能自带冒号（UA 全文），所以只切前两段
+                let mut parts = v.splitn(3, ':');
+                let field = parts.next().unwrap_or("");
+                let second = parts.next().unwrap_or("");
+                let third = parts.next();
+                let (op, val) = match third {
+                    Some(val) => (second, val),
+                    None => ("eq", second),
+                };
+                if let (Some(field), Some(op)) =
+                    (crate::stats::Dim::parse(field), crate::stats::Op::parse(op))
+                {
+                    if !val.is_empty() {
+                        filters.push(crate::stats::Filter {
+                            field,
+                            op,
+                            value: val.to_string(),
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let (rows, dropped) = st.stats_query(range_secs, by, &filters, limit);
+    let total: u64 = rows.iter().map(|(_, c)| c.requests as u64).sum();
+    let items: Vec<Value> = rows
+        .iter()
+        .map(|(k, c)| {
+            json!({
+                "key": k,
+                "requests": c.requests,
+                "errors": c.errors,
+                // 微秒 → 毫秒，保留 1 位小数：echo 上游 0.3ms 也能看出来
+                "avg_ms": (c.avg_us() as f64 / 100.0).round() / 10.0,
+                "pct": if total == 0 { 0.0 } else {
+                    (c.requests as f64 * 1000.0 / total as f64).round() / 10.0
+                },
+            })
+        })
+        .collect();
+
+    Json(json!({
+        "ok": true,
+        "by": by.as_str(),
+        "range_secs": range_secs,
+        "limit": limit,
+        "total": total,
+        "rows": items,
+        "filter_fields": by.filter_fields(),
+        // 当前维度用不上的筛选条件（比如 IP 表按路由筛），前端要如实提示而不是装作生效
+        "dropped_filters": dropped,
     }))
 }
 

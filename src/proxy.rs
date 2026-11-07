@@ -354,7 +354,17 @@ pub async fn handle(
             if let Ok(v) = HeaderValue::from_str(decision.route_name.as_deref().unwrap_or("default")) {
                 hm.insert(HeaderName::from_static("x-optical-route"), v);
             }
-            state.record_profile(&ua, &ip_str, status.as_u16());
+            state.record_hit(
+                &ua,
+                &ip_str,
+                status.as_u16(),
+                crate::stats::ReqDims {
+                    route: decision.route_name.as_deref().unwrap_or(""),
+                    backend: "",
+                    host: original_host.as_deref().unwrap_or(""),
+                },
+                0,
+            );
             return Response::builder()
                 .status(status)
                 .body(Full::new(body).map_err(|never| match never {}).boxed())
@@ -532,7 +542,18 @@ pub async fn handle(
         .boxed()
     };
 
-    state.record_profile(&ua, &ip_str, status.as_u16());
+    // 概览排行榜靠这份维度做"按路由/后端/域名"细分，缺失就没法拆
+    state.record_hit(
+        &ua,
+        &ip_str,
+        status.as_u16(),
+        crate::stats::ReqDims {
+            route: decision.route_name.as_deref().unwrap_or(""),
+            backend: backend_name.as_deref().unwrap_or(""),
+            host: original_host.as_deref().unwrap_or(""),
+        },
+        elapsed.as_micros() as u64,
+    );
 
     tracing::debug!(
         peer = %peer,

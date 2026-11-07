@@ -138,6 +138,25 @@
   .gran select:focus{border-color:var(--blue)}
   /* 概览小表：单元格可选中、可点击复制。别让"看得到复制不了"再发生 */
   .tbl td.mono{user-select:text;cursor:copy}
+  /* 排行榜：维度和筛选条 */
+  .rank-tools{display:flex;align-items:center;gap:8px}
+  .rank-tools select{height:26px;border:1px solid var(--line-2);background:var(--panel);
+    color:var(--ink-2);border-radius:var(--r);font-family:inherit;font-size:11.5px;padding:0 6px}
+  .filter-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;
+    padding:10px 18px;border-bottom:1px solid var(--line);background:var(--panel)}
+  .f-chip{display:inline-flex;align-items:center;gap:6px;padding:3px 4px 3px 6px;
+    border:1px solid var(--line-2);border-radius:var(--r);background:var(--bg)}
+  .f-chip select,.f-chip input{height:24px;border:1px solid var(--line-2);background:var(--panel);
+    color:var(--ink);border-radius:4px;font-family:inherit;font-size:11.5px;padding:0 5px}
+  .f-chip input{width:150px}
+  .f-del{border:none;background:none;color:var(--ink-3);cursor:pointer;font-size:14px;line-height:1;padding:0 2px}
+  .f-del:hover{color:var(--red)}
+  .f-warn{font-size:11.5px;color:var(--amber)}
+  .rank-tbl .pct{display:inline-block;width:88px;height:6px;border-radius:3px;
+    background:var(--line);overflow:hidden;vertical-align:middle}
+  .rank-tbl .pct i{display:block;height:100%;background:var(--blue);border-radius:3px}
+  .rank-tbl .pct-n{margin-left:8px;font-size:11.5px;color:var(--ink-2)}
+  .rank-tbl .muted{color:var(--ink-3)}
   .tbl td.copyable:hover{color:var(--blue);text-decoration:underline;text-underline-offset:2px}
   .totp-qr{display:flex;align-items:center;gap:14px}
   .totp-qr img{border:1px solid var(--line);background:#fff;padding:6px}
@@ -364,28 +383,34 @@
           <div class="legend" id="legend"></div>
         </div>
 
-        <div class="grid3">
-          <div class="card">
-            <div class="card-head"><h3 data-i18n="ov.top.ua">User-Agent Top</h3><span class="sec-hint" data-i18n="ov.top.ua.hint">按请求数排序</span></div>
-            <table class="tbl"><colgroup><col><col style="width:64px"></colgroup>
-              <thead><tr><th>UA</th><th style="text-align:right" data-i18n="th.count">次数</th></tr></thead>
-              <tbody id="top-ua"></tbody>
-            </table>
+        <!-- 排行榜：维度可切、跟随上方时间范围、支持条件筛选 -->
+        <div class="card" style="margin-top:12px">
+          <div class="card-head">
+            <h3 data-i18n="ov.rank">排行榜</h3>
+            <div class="rank-tools">
+              <select id="rank-by" title="分组维度"></select>
+              <select id="rank-limit" title="条数">
+                <option value="5">Top 5</option>
+                <option value="10" selected>Top 10</option>
+                <option value="20">Top 20</option>
+                <option value="50">Top 50</option>
+              </select>
+              <span class="sec-hint" id="rank-window">—</span>
+            </div>
           </div>
-          <div class="card">
-            <div class="card-head"><h3 data-i18n="ov.top.ip">客户端 IP Top</h3><span class="sec-hint" data-i18n="ov.top.ip.hint">按请求数排序</span></div>
-            <table class="tbl"><colgroup><col><col style="width:64px"></colgroup>
-              <thead><tr><th>IP</th><th style="text-align:right" data-i18n="th.count">次数</th></tr></thead>
-              <tbody id="top-ip"></tbody>
-            </table>
-          </div>
-          <div class="card">
-            <div class="card-head"><h3 data-i18n="ov.top.rule">规则命中 Top</h3><span class="sec-hint" data-i18n="ov.top.rule.hint">不含分族汇总</span></div>
-            <table class="tbl"><colgroup><col><col style="width:64px"></colgroup>
-              <thead><tr><th data-i18n="th.rule">规则</th><th style="text-align:right" data-i18n="th.count">次数</th></tr></thead>
-              <tbody id="top-rule"></tbody>
-            </table>
-          </div>
+          <div class="filter-bar" id="rank-filters"></div>
+          <table class="tbl rank-tbl">
+            <colgroup><col style="width:34px"><col><col style="width:88px"><col style="width:76px"><col style="width:150px"><col style="width:88px"></colgroup>
+            <thead><tr>
+              <th>#</th>
+              <th data-i18n="ov.rank.key">名称</th>
+              <th style="text-align:right" data-i18n="ov.rank.req">请求</th>
+              <th style="text-align:right" data-i18n="ov.rank.err">错误</th>
+              <th data-i18n="ov.rank.pct">占比</th>
+              <th style="text-align:right" data-i18n="ov.rank.avg">平均耗时</th>
+            </tr></thead>
+            <tbody id="rank-body"></tbody>
+          </table>
         </div>
       </section>
 
@@ -745,8 +770,14 @@
       "empty.generic":"暂无数据",
       "ov.title":"运行概览",
       "ov.tab.req":"请求 / 采样","ov.tab.bw":"带宽","ov.tab.cache":"缓存","ov.tab.block":"拦截",
-      "ov.top.ua":"User-Agent Top","ov.top.ip":"客户端 IP Top","ov.top.rule":"规则命中 Top",
-      "ov.top.ua.hint":"按请求数排序","ov.top.ip.hint":"按请求数排序","ov.top.rule.hint":"不含分族汇总",
+      "ov.rank":"排行榜","ov.rank.key":"名称","ov.rank.req":"请求","ov.rank.err":"错误",
+      "ov.rank.pct":"占比","ov.rank.avg":"平均耗时","ov.rank.add":"添加筛选","ov.rank.remove":"删除",
+      "ov.rank.value":"值，如 2xx / api","ov.rank.nofilter":"暂无筛选条件，统计全部流量",
+      "ov.rank.empty":"当前时间范围没有匹配的请求","ov.rank.total":"总计",
+      "ov.rank.dropped":"当前维度不支持按 {f} 筛选，已忽略",
+      "dim.route":"路由","dim.backend":"后端","dim.host":"域名 Host","dim.status":"状态码",
+      "dim.ip":"客户端 IP","dim.ua":"User-Agent","dim.rule":"命中规则",
+      "op.eq":"等于","op.ne":"不等于","op.contains":"包含","op.ncontains":"不包含",
       "ov.chart.window":"粒度 {gran} · 范围 {range} · {n} 点","ov.chart.peak":"峰值",
       "ov.gran":"粒度","ov.range":"范围","ov.gran.toofine":"比采集间隔细，无数据",
       "ov.copy":"点击复制","ov.copied":"已复制：","ov.copy.manual":"已选中，按 Ctrl+C 复制",
@@ -883,8 +914,14 @@
       "empty.generic":"No data",
       "ov.title":"Overview",
       "ov.tab.req":"Requests / sample","ov.tab.bw":"Bandwidth","ov.tab.cache":"Cache","ov.tab.block":"Blocks",
-      "ov.top.ua":"Top User-Agent","ov.top.ip":"Top Client IP","ov.top.rule":"Top Rule Hits",
-      "ov.top.ua.hint":"Sorted by requests","ov.top.ip.hint":"Sorted by requests","ov.top.rule.hint":"Family rollups excluded",
+      "ov.rank":"Leaderboard","ov.rank.key":"Name","ov.rank.req":"Requests","ov.rank.err":"Errors",
+      "ov.rank.pct":"Share","ov.rank.avg":"Avg latency","ov.rank.add":"Add filter","ov.rank.remove":"Remove",
+      "ov.rank.value":"value, e.g. 2xx / api","ov.rank.nofilter":"No filters — counting all traffic",
+      "ov.rank.empty":"No matching requests in this range","ov.rank.total":"total",
+      "ov.rank.dropped":"This dimension can't be filtered by {f}; ignored",
+      "dim.route":"Route","dim.backend":"Backend","dim.host":"Host","dim.status":"Status",
+      "dim.ip":"Client IP","dim.ua":"User-Agent","dim.rule":"Rule",
+      "op.eq":"equals","op.ne":"not equals","op.contains":"contains","op.ncontains":"not contains",
       "ov.chart.window":"Bucket {gran} · range {range} · {n} points","ov.chart.peak":"peak",
       "ov.gran":"Bucket","ov.range":"Range","ov.gran.toofine":"finer than sampling",
       "ov.copy":"Click to copy","ov.copied":"Copied: ","ov.copy.manual":"Selected — press Ctrl+C",
@@ -1033,7 +1070,8 @@
   var state = {
     cfg:null, status:null, metrics:null, history:null, snapshots:[], audit:[],
     chart:"requests", rows:[], headerRules:[], backends:[], groups:[], errorBodies:[],
-    filter:"", authed:false, paths:null, ws:null, pollTimer:null, wsRetry:0, rev:0
+    filter:"", authed:false, paths:null, ws:null, pollTimer:null, wsRetry:0, rev:0,
+    rankBy:"route", rankLimit:10, filters:[], rank:null
   };
 
   function t(k, vars){
@@ -1383,6 +1421,140 @@
     }
   }
 
+  // ---------- 排行榜：维度 / 时间范围 / 条件筛选 ----------
+  var RANK_DIMS = ["route", "backend", "host", "status", "ip", "ua", "rule"];
+  var FILTER_OPS = ["eq", "ne", "contains", "ncontains"];
+
+  function dimLabel(d){ return t("dim." + d); }
+  function opLabel(o){ return t("op." + o); }
+
+  function renderRankTools(){
+    var sel = $("rank-by");
+    if (!sel.options.length){
+      sel.innerHTML = RANK_DIMS.map(function(d){
+        return '<option value="'+d+'">'+esc(dimLabel(d))+'</option>';
+      }).join("");
+    }
+    sel.value = state.rankBy;
+    $("rank-limit").value = String(state.rankLimit);
+  }
+
+  function renderFilters(){
+    var box = $("rank-filters");
+    if (!box) return;
+    var fields = (state.rank && state.rank.filter_fields) || [];
+    var html = "";
+    if (!state.filters.length){
+      html = '<span class="sec-hint">'+esc(t("ov.rank.nofilter"))+'</span>';
+    } else {
+      html = state.filters.map(function(f, i){
+        var opts = fields.length ? fields : [f.field];
+        return '<span class="f-chip">'+
+          '<select data-i="'+i+'" data-k="field">'+opts.map(function(x){
+            return '<option value="'+x+'"'+(x===f.field?' selected':'')+'>'+esc(dimLabel(x))+'</option>';
+          }).join("")+'</select>'+
+          '<select data-i="'+i+'" data-k="op">'+FILTER_OPS.map(function(o){
+            return '<option value="'+o+'"'+(o===f.op?' selected':'')+'>'+esc(opLabel(o))+'</option>';
+          }).join("")+'</select>'+
+          '<input data-i="'+i+'" data-k="value" value="'+esc(f.value)+'" placeholder="'+esc(t("ov.rank.value"))+'">'+
+          '<button class="f-del" data-del="'+i+'" title="'+esc(t("ov.rank.remove"))+'">×</button>'+
+        '</span>';
+      }).join("");
+    }
+    // 当前维度用不上的筛选，如实提示，别装作生效
+    var dropped = (state.rank && state.rank.dropped_filters) || [];
+    if (dropped.length){
+      html += '<span class="f-warn">'+esc(t("ov.rank.dropped", { f: dropped.map(dimLabel).join("、") }))+'</span>';
+    }
+    html += '<button class="btn btn-sm" id="btn-add-filter">+ '+esc(t("ov.rank.add"))+'</button>';
+    box.innerHTML = html;
+  }
+
+  function renderRank(){
+    var d = state.rank;
+    var body = $("rank-body");
+    if (!body || !d) return;
+    var rows = d.rows || [];
+    if (!rows.length){
+      body.innerHTML = '<tr class="empty-row"><td colspan="6">'+esc(t("ov.rank.empty"))+'</td></tr>';
+      return;
+    }
+    body.innerHTML = rows.map(function(r, i){
+      var pct = Math.max(0, Math.min(100, Number(r.pct) || 0));
+      var errStyle = r.errors ? ' style="text-align:right;color:var(--red)"' : ' style="text-align:right"';
+      return '<tr>'+
+        '<td class="muted">'+(i + 1)+'</td>'+
+        '<td class="mono copyable" data-copy="'+esc(r.key)+'" title="'+esc(t("ov.copy"))+'">'+esc(r.key)+'</td>'+
+        '<td class="num" style="text-align:right">'+r.requests+'</td>'+
+        '<td class="num"'+errStyle+'>'+r.errors+'</td>'+
+        '<td><span class="pct"><i style="width:'+pct+'%"></i></span><b class="pct-n">'+pct.toFixed(1)+'%</b></td>'+
+        '<td class="num" style="text-align:right">'+(r.avg_ms ? r.avg_ms + ' ms' : '—')+'</td>'+
+      '</tr>';
+    }).join("");
+  }
+
+  // 排行榜跟随时间范围：range 变了就重查；gran 只管图表分桶，不参与这里
+  function loadStats(){
+    renderRankTools();
+    var q = "/api/stats?by=" + encodeURIComponent(state.rankBy) +
+            "&range=" + view.range + "&limit=" + state.rankLimit;
+    state.filters.forEach(function(f){
+      if (f.value) q += "&f=" + encodeURIComponent(f.field + ":" + f.op + ":" + f.value);
+    });
+    return api(q).then(function(d){
+      state.rank = d;
+      renderFilters();
+      renderRank();
+      $("rank-window").textContent = spanText(view.range) + " · " +
+        t("ov.rank.total") + " " + d.total;
+    }).catch(function(){});
+  }
+
+  function bindRank(){
+    $("rank-by").addEventListener("change", function(){
+      state.rankBy = this.value;
+      // 换维度后原来的筛选字段可能不适用了，清掉更诚实
+      state.filters = [];
+      loadStats();
+    });
+    $("rank-limit").addEventListener("change", function(){
+      state.rankLimit = Number(this.value) || 10;
+      loadStats();
+    });
+    var box = $("rank-filters");
+    box.addEventListener("click", function(ev){
+      var del = ev.target.closest("[data-del]");
+      if (del){
+        state.filters.splice(Number(del.getAttribute("data-del")), 1);
+        loadStats();
+        return;
+      }
+      if (ev.target.closest("#btn-add-filter")){
+        var fields = (state.rank && state.rank.filter_fields) || ["route"];
+        state.filters.push({ field: fields[0], op: "eq", value: "" });
+        renderFilters();
+        var inputs = box.querySelectorAll(".f-chip input");
+        if (inputs.length) inputs[inputs.length - 1].focus();
+      }
+    });
+    box.addEventListener("change", function(ev){
+      var el = ev.target.closest("[data-i]");
+      if (!el) return;
+      var i = Number(el.getAttribute("data-i"));
+      if (!state.filters[i]) return;
+      state.filters[i][el.getAttribute("data-k")] = el.value;
+      loadStats();
+    });
+    box.addEventListener("keydown", function(ev){
+      if (ev.key === "Enter" && ev.target.closest("[data-k=value]")){
+        var el = ev.target.closest("[data-i]");
+        var i = Number(el.getAttribute("data-i"));
+        if (state.filters[i]) state.filters[i].value = el.value;
+        loadStats();
+      }
+    });
+  }
+
   // 概览的小表：单元格可点即复制。
   // 另外——每次快照都重建 tbody 会把用户正在拖的选区抹掉（就是"连 IP 都复制不了"的根因），
   // 所以内容没变就一个字节都不动。
@@ -1443,10 +1615,7 @@
   function renderOverview(){
     renderKpis();
     drawChart();
-    var top = (state.metrics && state.metrics.top) || {};
-    tableSimple($("top-ua"), top.ua, "—");
-    tableSimple($("top-ip"), top.ip, "—");
-    tableSimple($("top-rule"), (top.rules||[]).filter(function(r){ return r[0].indexOf("family:")!==0; }), "—");
+    renderRank();
   }
 
   // ---------- 路由 ----------
@@ -2118,6 +2287,7 @@
     localStorage.setItem("optical.gran", view.gran);
     localStorage.setItem("optical.range", view.range);
     loadHistory();
+    loadStats();
   }
   $("gran-sel").addEventListener("change", onViewChange);
   $("range-sel").addEventListener("change", onViewChange);
@@ -2271,7 +2441,11 @@
 
   function startHistoryTimer(){
     if (state.histTimer) return;
-    state.histTimer = setInterval(function(){ if (state.authed) loadHistory(); }, 5000);
+    state.histTimer = setInterval(function(){
+      if (!state.authed) return;
+      loadHistory();
+      loadStats();
+    }, 5000);
   }
   function stopHistoryTimer(){
     if (state.histTimer){ clearInterval(state.histTimer); state.histTimer = null; }
@@ -2404,12 +2578,14 @@
   function boot(){
     bindCopy();
     fillViewSelects();
+    bindRank();
     return checkAuth().then(function(ok){
       if (!ok) return;
       return refreshAll().then(function(){
         // 先起轮询兜底，WS 连上后立即停掉；断线会自动回退并重连
         startPolling();
         startHistoryTimer();
+        loadStats();
         connectWs();
       });
     });
