@@ -373,6 +373,22 @@ check "Top IP 有数据" '"ip":\[\[' "$M"
 check "规则命中按族统计" 'family:' "$M"
 check "状态码分布有数据" '"status":\[' "$M"
 
+echo "-- 排行榜（维度 / 范围 / 筛选） --"
+STATS="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/stats?by=route&range=3600")"
+check "按路由出排行榜" '"by":"route"' "$STATS"
+check "排行榜带请求数" '"requests":' "$STATS"
+check "能按后端分组" '"by":"backend"' "$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/stats?by=backend&range=3600")"
+check "组合维度可互相筛选" '"filter_fields":\["route","backend","host","status"\]' "$STATS"
+# 跨维度筛选：按路由看，只要 2xx —— 结果里不能出现非 2xx 的错误
+check "状态码 2xx 筛选生效" '"key":"api"' "$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/stats?by=route&range=3600&f=status:eq:2xx")"
+# IP 表没有路由信息，这种筛选必须如实报告"用不上"，不能悄悄当成没写
+check "不适用的筛选被如实报告" '"dropped_filters":\["route"\]' "$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/stats?by=ip&range=3600&f=route:eq:api")"
+# 排行榜不能改配置（和时间范围/粒度一样，都是纯查询）
+REV_S1="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config" | python3 -c 'import sys,json;print(json.load(sys.stdin)["rev"])' 2>/dev/null)"
+curl -s -o /dev/null -m 6 "${AUTH[@]}" "http://$ADM/api/stats?by=status&range=86400&f=route:contains:a"
+REV_S2="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config" | python3 -c 'import sys,json;print(json.load(sys.stdin)["rev"])' 2>/dev/null)"
+check "查排行榜不写配置（版本号不变）" "$REV_S1" "$REV_S2"
+
 echo "-- CLI status（本地令牌） --"
 ST="$("$BIN" --config "$CFG" status)"
 check "status 通过本地令牌认证" '运行中' "$ST"

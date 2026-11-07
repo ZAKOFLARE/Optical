@@ -138,6 +138,8 @@ pub struct AppState {
     pub started_at: Instant,
     pub metrics: Metrics,
     history: Mutex<crate::history::History>,
+    /// 排行榜聚合（按维度 × 时间窗）
+    stats: Mutex<crate::stats::StatsStore>,
     last_sample: Mutex<LastSample>,
     pub cache: ResponseCache,
     pub backends: Arc<BackendRegistry>,
@@ -197,6 +199,7 @@ impl AppState {
             started_at: Instant::now(),
             metrics: Metrics::default(),
             history: Mutex::new(crate::history::History::new(sample_ms, history_points)),
+            stats: Mutex::new(crate::stats::StatsStore::default()),
             last_sample: Mutex::new(LastSample::default()),
             cache: ResponseCache::default(),
             backends: Arc::new(BackendRegistry::default()),
@@ -376,12 +379,52 @@ impl AppState {
             .fetch_add(elapsed.as_millis() as u64, Ordering::Relaxed);
     }
 
-    /// 单请求的画像记录（UA / IP / 状态码）。
+    /// 单请求的画像记录（UA / IP / 状态码）+ 排行榜聚合。
+    /// 不知道路由/后端的调用点（体积闸门、WAF 早拦）传 ReqDims::default()，排行榜里显示为「—」。
     pub fn record_profile(&self, ua: &str, ip: &str, status: u16) {
+        self.record_hit(ua, ip, status, crate::stats::ReqDims::default(), 0);
+    }
+
+    /// 带维度与耗时的记录：概览排行榜按它做按路由/后端的细分。
+    pub fn record_hit(
+        &self,
+        ua: &str,
+        ip: &str,
+        status: u16,
+        dims: crate::stats::ReqDims<'_>,
+        upstream_us: u64,
+    ) {
         bump(&self.metrics.ua, ua);
         bump(&self.metrics.ip, ip);
         let mut g = self.metrics.status.lock().unwrap_or_else(|e| e.into_inner());
         *g.entry(status).or_insert(0) += 1;
+        drop(g);
+
+        let counters = crate::stats::Counters {
+            requests: 1,
+            errors: u32::from(status >= 400),
+            upstream_us,
+            ..Default::default()
+        };
+        let minute = now_ms() / 60_000;
+        self.stats
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .record_request(minute, dims, status, &counters, ua, ip);
+    }
+
+    /// 排行榜查询：维度 + 范围 + 筛选。粒度只是图表的展示方式，不影响这里。
+    pub fn stats_query(
+        &self,
+        range_secs: u64,
+        by: crate::stats::Dim,
+        filters: &[crate::stats::Filter],
+        limit: usize,
+    ) -> (Vec<(String, crate::stats::Counters)>, Vec<&'static str>) {
+        self.stats
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .query(range_secs, by, filters, limit)
     }
 
     /// 单条规则计数（体积闸门、帧策略这类不走 Finding 的路径用它）。
@@ -391,6 +434,11 @@ impl AppState {
         }
         let mut g = self.metrics.rules.lock().unwrap_or_else(|e| e.into_inner());
         *g.entry(rule.to_string()).or_insert(0) += 1;
+        drop(g);
+        self.stats
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .record_rules(now_ms() / 60_000, &[rule.to_string()]);
     }
 
     /// 记录 WAF 命中：既按具体规则（sql-union-select）计数，也按族（family:sql）汇总，
@@ -400,10 +448,17 @@ impl AppState {
             return;
         }
         let mut g = self.metrics.rules.lock().unwrap_or_else(|e| e.into_inner());
+        let mut names = Vec::with_capacity(findings.len() * 2);
         for f in findings {
             *g.entry(f.rule.to_string()).or_insert(0) += 1;
             *g.entry(format!("family:{}", f.family)).or_insert(0) += 1;
+            names.push(f.rule.to_string());
         }
+        drop(g);
+        self.stats
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .record_rules(now_ms() / 60_000, &names);
     }
 
     /// 每秒采样：从累计计数算差值，推进环形缓冲。
