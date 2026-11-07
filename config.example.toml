@@ -99,7 +99,6 @@ max_url_len = 2048
 max_body_bytes = 2097152
 conn_per_ip = 64                # 单 IP 并发连接
 conn_burst_per_sec = 40         # 单 IP 每秒新建连接
-slow_request_ms = 15000
 
 [waf.xml]
 enabled = true
@@ -208,4 +207,3 @@ rewrite_host = true
 
 [extensions]
 filters = []
-enable_firewall = false

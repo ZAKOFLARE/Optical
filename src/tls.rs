@@ -57,6 +57,10 @@ pub fn build_acceptor(cfg: &TlsConfig, tls_dir: &Path, base_dir: &Path) -> Resul
             ];
             let key_pair = rcgen::KeyPair::generate().context("生成自签私钥失败")?;
             let mut params = rcgen::CertificateParams::new(names).context("构造证书参数失败")?;
+            // 证书有效期必须真的吃 self_signed_days，否则这个配置项就是摆设
+            let days = cfg.self_signed_days.clamp(1, 3650) as i64;
+            params.not_before = time::OffsetDateTime::now_utc() - time::Duration::hours(1);
+            params.not_after = params.not_before + time::Duration::days(days);
             params
                 .distinguished_name
                 .push(rcgen::DnType::CommonName, "Optical Dev Gateway");

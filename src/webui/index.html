@@ -78,6 +78,13 @@
   .sec-head h2{margin:0;font-size:15px;font-weight:600}
   .sec-hint{font-size:12px;color:var(--ink-3)}
   .sec-hint code{font-family:var(--mono);font-size:11.5px;color:var(--ink-2)}
+  .q{display:inline-flex;align-items:center;justify-content:center;width:12px;height:12px;margin-left:4px;
+    border:1px solid var(--line-2);border-radius:50%;font:600 9px/1 var(--sans);font-style:normal;
+    color:var(--ink-3);cursor:help;vertical-align:1px}
+  .q:hover{border-color:var(--blue);color:var(--blue);background:var(--blue-soft)}
+  #qtip{position:fixed;z-index:120;display:none;max-width:300px;background:var(--panel);border:1px solid var(--line-2);
+    box-shadow:0 8px 24px rgba(16,24,40,.16);padding:8px 10px;font-size:12px;line-height:1.65;color:var(--ink-2)}
+  .fam-desc{font-size:11.5px;color:var(--ink-3);line-height:1.6;margin:-3px 0 9px;padding-left:1px}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);margin-bottom:14px}
   .card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border-bottom:1px solid var(--line)}
   .card-head h3{margin:0;font-size:13px;font-weight:600}
@@ -295,7 +302,6 @@
       <section class="page active" id="p-overview">
         <div class="sec-head">
           <h2 data-i18n="ov.title">运行概览</h2>
-          <span class="sec-hint"><code id="hint-path">—</code></span>
         </div>
         <div class="kpi-strip" id="kpis"></div>
 
@@ -382,11 +388,11 @@
         <div class="card">
           <div class="card-body" style="display:flex;gap:18px;align-items:center;flex-wrap:wrap">
             <label class="switch"><input type="checkbox" id="waf-enabled"><span></span></label>
-            <div><div class="field" style="width:120px"><label>mode</label>
+            <div><div class="field" style="width:120px"><label>mode<i class="q" data-i18n-tip="waf.tip.mode">?</i></label>
               <select id="waf-mode"><option value="block">block</option><option value="monitor">monitor</option></select></div></div>
-            <div><div class="field" style="width:120px"><label>score_threshold</label>
+            <div><div class="field" style="width:120px"><label>score_threshold<i class="q" data-i18n-tip="waf.tip.threshold">?</i></label>
               <input type="number" id="waf-threshold" min="1" max="100"></div></div>
-            <div><div class="field" style="width:140px"><label>max_inspect_bytes</label>
+            <div><div class="field" style="width:140px"><label>max_inspect_bytes<i class="q" data-i18n-tip="waf.tip.inspect">?</i></label>
               <input type="number" id="waf-inspect" min="0" step="1024"></div></div>
             <span class="sec-hint" style="max-width:420px" data-i18n="waf.note">请求体只在 Content-Length ≤ 检查上限时缓冲检查；超出则跳过并计数。</span>
             <span style="flex:1"></span>
@@ -664,6 +670,7 @@
 </div>
 
 <div id="toast"></div>
+<div id="qtip"></div>
 
 <script>
 (function(){
@@ -733,6 +740,53 @@
       "f.dos":"DoS / 应用层","f.xml":"XML (XXE)","f.jwt":"JWT","f.sql":"SQL 注入","f.ssrf":"SSRF",
       "f.bola":"BOLA 越权遍历","f.traversal":"路径穿越 / 开放重定向","f.cache_deception":"缓存欺骗",
       "f.params":"参数污染 (HPP)","f.frame":"帧限制（点击劫持）",
+      "waf.tip.mode":"block：命中即拒绝；monitor：只记录不拦，适合上线前观测误杀。",
+      "waf.tip.threshold":"单请求累计 severity ≥ 该值即处置。4 表示单条高置信规则即可拦，1~3 的弱信号需要叠加。",
+      "waf.tip.inspect":"仅当 Content-Length 已知且不超过该值时才缓冲 body 检查；chunked 或超限直接跳过并计入 waf_skipped。",
+      "waf.fam.dos.desc":"按 header / cookie / URL / body 体积与单 IP 连接行为拦截放大与慢速攻击。",
+      "waf.fam.xml.desc":"检查 DOCTYPE、外部实体、XInclude 与嵌套深度，拦截 XXE 与实体炸弹。",
+      "waf.fam.jwt.desc":"解析 token 的 header/claims，检查 alg、kid、exp；不做签名验签（网关没有签发方密钥）。",
+      "waf.fam.sql.desc":"对 query 与 body 做 SQL 特征评分：关键字、注释、联合查询、盲注、文件读写。",
+      "waf.fam.ssrf.desc":"命中指定参数名且目标是内网/回环/云元数据地址时拦截。",
+      "waf.fam.bola.desc":"同一身份在时间窗内遍历过多不同对象 ID，判定为越权枚举。",
+      "waf.fam.traversal.desc":"检测 ../ 与二次编码、敏感文件访问、开放重定向参数。",
+      "waf.fam.cache_deception.desc":"动态路径伪装成静态资源、路径段堆叠，防缓存投毒与欺骗。",
+      "waf.fam.params.desc":"检测同名参数多值与参数总量异常，防 HPP 覆盖。",
+      "waf.fam.frame.desc":"给响应注入 X-Frame-Options 与 CSP frame-ancestors，防点击劫持。",
+      "waf.tip.dos.max_header_count":"请求头个数上限，超过视为异常客户端。",
+      "waf.tip.dos.max_header_bytes":"请求头总字节上限。",
+      "waf.tip.dos.max_cookie_count":"Cookie 键值对个数上限。",
+      "waf.tip.dos.max_cookie_bytes":"Cookie 请求头总字节上限。",
+      "waf.tip.dos.cookie_compression_ratio":"解压后/原始的最小比值；低于它判为压缩炸弹。会真解压，上限 64 KiB。",
+      "waf.tip.dos.max_cookie_value_bytes":"单个 Cookie 值的字节上限。",
+      "waf.tip.dos.max_url_len":"请求行 URL（含 query）长度上限。",
+      "waf.tip.dos.max_body_bytes":"Content-Length 上限；超限直接 413，不读 body。",
+      "waf.tip.dos.conn_per_ip":"单 IP 并发连接上限，在 accept 阶段执行。",
+      "waf.tip.dos.conn_burst_per_sec":"单 IP 每秒新建连接上限，超出直接关连接。",
+      "waf.tip.xml.block_dtd":"出现 DOCTYPE 即拒绝。",
+      "waf.tip.xml.block_external_entity":"引用外部实体即拒绝，这是 XXE 的核心入口。",
+      "waf.tip.xml.block_xinclude":"出现 XInclude 即拒绝。",
+      "waf.tip.xml.max_depth":"允许的最大元素嵌套深度。",
+      "waf.tip.xml.max_entity_refs":"实体引用次数上限，防 billion laughs。",
+      "waf.tip.jwt.reject_alg_none":"拒绝 alg=none 的未签名 token。",
+      "waf.tip.jwt.reject_kid_injection":"拒绝 kid 含路径或注入字符的 token。",
+      "waf.tip.jwt.allowed_algs":"允许的算法白名单；空列表 = 不限制。",
+      "waf.tip.jwt.max_token_bytes":"token 最大字节数，超长直接判可疑。",
+      "waf.tip.jwt.clock_skew_secs":"校验 exp 时允许的时钟偏移秒数。",
+      "waf.tip.sql.threshold":"该族内部评分阈值；关键字/注释/联合查询累加达到即命中。",
+      "waf.tip.ssrf.allow_private":"允许访问内网/回环地址（默认 false，仅调试时开）。",
+      "waf.tip.ssrf.param_names":"参与 SSRF 检查的参数名，逗号分隔。",
+      "waf.tip.bola.window_secs":"统计窗口长度（秒）。",
+      "waf.tip.bola.max_distinct_ids":"窗口内同一身份允许访问的不同对象 ID 数。",
+      "waf.tip.traversal.block_encoded":"拦截二次编码的 ../（如 %252e%252e）。",
+      "waf.tip.traversal.block_open_redirect":"拦截 next/redirect 等参数指向外部域。",
+      "waf.tip.traversal.redirect_params":"视为跳转参数的名单。",
+      "waf.tip.cache_deception.static_exts":"被视为静态资源的扩展名，用于识别伪装。",
+      "waf.tip.cache_deception.max_path_segments":"路径段数量上限，防 /a/b/../x.css 堆叠。",
+      "waf.tip.params.max_duplicates":"同名参数允许的最大个数（1 = 不允许重复）。",
+      "waf.tip.params.max_params":"单请求参数总数上限。",
+      "waf.tip.frame.mode":"deny 全禁；sameorigin 仅同源；allow-from 仅指定来源。",
+      "waf.tip.frame.allow_from":"allow-from 模式下允许的父页面来源列表。",
       "k.requests":"请求总量","k.bandwidth":"带宽（入/出）","k.cache":"缓存命中率","k.rules":"规则命中率",
       "k.errors":"错误数","k.uptime":"运行时长","k.conns":"在线连接","k.wafblock":"WAF 拦截",
       "k.sub.cache":"缓存命中","k.sub.err":"错误","k.sub.inout":"入 / 出","k.sub.conns":"连接",
@@ -811,6 +865,53 @@
       "f.dos":"DoS / App Layer","f.xml":"XML (XXE)","f.jwt":"JWT","f.sql":"SQL Injection","f.ssrf":"SSRF",
       "f.bola":"BOLA Enumeration","f.traversal":"Path Traversal / Open Redirect","f.cache_deception":"Cache Deception",
       "f.params":"Parameter Pollution","f.frame":"Frame Restriction",
+      "waf.tip.mode":"block rejects on hit; monitor only records (good for pre-rollout tuning).",
+      "waf.tip.threshold":"Act once accumulated severity reaches this value. 4 = one high-confidence rule is enough; 1-3 need stacking.",
+      "waf.tip.inspect":"Body is buffered only when Content-Length is known and within this limit; chunked or oversized bodies are skipped and counted.",
+      "waf.fam.dos.desc":"Header / cookie / URL / body size gates plus per-IP connection behavior.",
+      "waf.fam.xml.desc":"DOCTYPES, external entities, XInclude and nesting depth: blocks XXE and entity bombs.",
+      "waf.fam.jwt.desc":"Parses header/claims (alg, kid, exp); it does NOT verify signatures — the gateway has no issuer key.",
+      "waf.fam.sql.desc":"Scores SQL patterns in query and body: keywords, comments, UNION, blind and file access.",
+      "waf.fam.ssrf.desc":"Blocks listed parameters that point at private, loopback or cloud metadata addresses.",
+      "waf.fam.bola.desc":"Flags one identity enumerating too many distinct object IDs inside a window.",
+      "waf.fam.traversal.desc":"Detects ../ and double encoding, sensitive files, and open-redirect parameters.",
+      "waf.fam.cache_deception.desc":"Dynamic paths disguised as static assets and stacked path segments.",
+      "waf.fam.params.desc":"Duplicate parameter names and excessive parameter counts (HPP).",
+      "waf.fam.frame.desc":"Injects X-Frame-Options and CSP frame-ancestors to stop clickjacking.",
+      "waf.tip.dos.max_header_count":"Maximum number of request headers.",
+      "waf.tip.dos.max_header_bytes":"Maximum total request-header bytes.",
+      "waf.tip.dos.max_cookie_count":"Maximum number of cookie pairs.",
+      "waf.tip.dos.max_cookie_bytes":"Maximum total Cookie header bytes.",
+      "waf.tip.dos.cookie_compression_ratio":"Minimum inflated/raw ratio; below it is treated as a compression bomb. Decompression is capped at 64 KiB.",
+      "waf.tip.dos.max_cookie_value_bytes":"Maximum size of a single cookie value.",
+      "waf.tip.dos.max_url_len":"Maximum request-line URL length (including query).",
+      "waf.tip.dos.max_body_bytes":"Content-Length limit; above it returns 413 without reading the body.",
+      "waf.tip.dos.conn_per_ip":"Maximum concurrent connections per IP, enforced at accept.",
+      "waf.tip.dos.conn_burst_per_sec":"Maximum new connections per IP per second; excess is dropped.",
+      "waf.tip.xml.block_dtd":"Reject any DOCTYPE.",
+      "waf.tip.xml.block_external_entity":"Reject external entity references — the core XXE vector.",
+      "waf.tip.xml.block_xinclude":"Reject XInclude.",
+      "waf.tip.xml.max_depth":"Maximum element nesting depth.",
+      "waf.tip.xml.max_entity_refs":"Maximum entity references, prevents billion laughs.",
+      "waf.tip.jwt.reject_alg_none":"Reject unsigned tokens with alg=none.",
+      "waf.tip.jwt.reject_kid_injection":"Reject tokens whose kid contains paths or injection characters.",
+      "waf.tip.jwt.allowed_algs":"Algorithm allow-list; empty means unrestricted.",
+      "waf.tip.jwt.max_token_bytes":"Maximum token size; longer tokens are suspicious.",
+      "waf.tip.jwt.clock_skew_secs":"Clock skew allowed when checking exp.",
+      "waf.tip.sql.threshold":"Score threshold inside this family; keywords/comments/UNION accumulate.",
+      "waf.tip.ssrf.allow_private":"Allow private/loopback targets (default false; debug only).",
+      "waf.tip.ssrf.param_names":"Parameter names inspected for SSRF, comma separated.",
+      "waf.tip.bola.window_secs":"Observation window in seconds.",
+      "waf.tip.bola.max_distinct_ids":"Distinct object IDs one identity may touch inside the window.",
+      "waf.tip.traversal.block_encoded":"Block double-encoded ../ (e.g. %252e%252e).",
+      "waf.tip.traversal.block_open_redirect":"Block next/redirect parameters pointing to external hosts.",
+      "waf.tip.traversal.redirect_params":"Parameter names treated as redirects.",
+      "waf.tip.cache_deception.static_exts":"Extensions treated as static assets when detecting disguise.",
+      "waf.tip.cache_deception.max_path_segments":"Maximum path segments, stops /a/b/../x.css stacking.",
+      "waf.tip.params.max_duplicates":"Maximum occurrences of the same parameter (1 = no duplicates).",
+      "waf.tip.params.max_params":"Maximum total parameters per request.",
+      "waf.tip.frame.mode":"deny blocks all; sameorigin allows same origin; allow-from allows listed origins.",
+      "waf.tip.frame.allow_from":"Origins allowed as parents in allow-from mode.",
       "k.requests":"Requests","k.bandwidth":"Bandwidth (in/out)","k.cache":"Cache hit rate","k.rules":"Rule hit rate",
       "k.errors":"Errors","k.uptime":"Uptime","k.conns":"Live conns","k.wafblock":"WAF blocks",
       "k.sub.cache":"cache hit","k.sub.err":"err","k.sub.inout":"in / out","k.sub.conns":"conns",
@@ -846,6 +947,30 @@
     return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;")
       .replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
   }
+  function bindQtip(){
+    var tip = $("qtip");
+    document.addEventListener("mouseover", function(ev){
+      var q = ev.target.closest ? ev.target.closest(".q") : null;
+      if (!q) return;
+      var txt = q.getAttribute("data-tip");
+      if (!txt) return;
+      tip.textContent = txt;
+      tip.style.display = "block";
+      var r = q.getBoundingClientRect();
+      var left = Math.min(r.left, window.innerWidth - tip.offsetWidth - 12);
+      var top = r.bottom + 6;
+      if (top + tip.offsetHeight > window.innerHeight - 8) top = r.top - tip.offsetHeight - 6;
+      tip.style.left = Math.max(8, left) + "px";
+      tip.style.top = Math.max(8, top) + "px";
+    });
+    document.addEventListener("mouseout", function(ev){
+      if (ev.target.closest && ev.target.closest(".q")) tip.style.display = "none";
+    });
+    // 滚动时立刻收起，避免提示悬在原地
+    window.addEventListener("scroll", function(){ tip.style.display = "none"; }, true);
+    document.querySelector(".content").addEventListener("scroll", function(){ tip.style.display = "none"; }, { passive: true });
+  }
+
   function emptyRow(colspan, key){
     return '<tr class="empty-row"><td colspan="'+colspan+'">'+esc(t(key||"empty.generic"))+'</td></tr>';
   }
@@ -858,6 +983,7 @@
     document.documentElement.lang = lang==="zh" ? "zh-CN" : "en";
     document.querySelectorAll("[data-i18n]").forEach(function(el){ el.textContent = t(el.getAttribute("data-i18n")); });
     document.querySelectorAll("[data-i18n-ph]").forEach(function(el){ el.placeholder = t(el.getAttribute("data-i18n-ph")); });
+    document.querySelectorAll("[data-i18n-tip]").forEach(function(el){ el.setAttribute("data-tip", t(el.getAttribute("data-i18n-tip"))); });
     $("btn-lang").textContent = lang==="zh" ? "EN" : "中";
     document.title = t("app.title");
     var active = document.querySelector(".rail-item.active span");
@@ -1117,7 +1243,6 @@
     tableSimple($("top-ua"), top.ua, "—");
     tableSimple($("top-ip"), top.ip, "—");
     tableSimple($("top-rule"), (top.rules||[]).filter(function(r){ return r[0].indexOf("family:")!==0; }), "—");
-    if (state.status) $("hint-path").textContent = state.status.config_path;
   }
 
   // ---------- 路由 ----------
@@ -1230,7 +1355,7 @@
       ["max_header_count","number"],["max_header_bytes","number"],["max_cookie_count","number"],
       ["max_cookie_bytes","number"],["cookie_compression_ratio","number"],["max_cookie_value_bytes","number"],
       ["max_url_len","number"],["max_body_bytes","number"],["conn_per_ip","number"],
-      ["conn_burst_per_sec","number"],["slow_request_ms","number"]]},
+      ["conn_burst_per_sec","number"]]},
     {k:"xml", tag:"[waf.xml]", fields:[
       ["max_depth","number"],["max_entity_refs","number"]],
      checks:["block_dtd","block_external_entity","block_xinclude"]},
@@ -1252,27 +1377,36 @@
     $("waf-threshold").value = w.score_threshold;
     $("waf-inspect").value = state.cfg.server.max_inspect_bytes;
 
+    function labelWithTip(name, tipKey){
+      return '<label>'+esc(name)+'<i class="q" data-tip="'+esc(t(tipKey))+'">?</i></label>';
+    }
+
     $("waf-families").innerHTML = WAF_SPEC.map(function(spec){
       var f = w[spec.k] || {};
       var fields = (spec.fields||[]).map(function(fd){
-        return '<div class="field"><label>'+esc(fd[0])+'</label><input type="'+fd[1]+'" data-k="'+esc(spec.k)+'" data-f="'+esc(fd[0])+'" value="'+esc(f[fd[0]])+'"></div>';
+        return '<div class="field">'+labelWithTip(fd[0], "waf.tip."+spec.k+"."+fd[0])+
+          '<input type="'+fd[1]+'" data-k="'+esc(spec.k)+'" data-f="'+esc(fd[0])+'" value="'+esc(f[fd[0]])+'"></div>';
       }).join("");
       (spec.selects||[]).forEach(function(sl){
-        fields += '<div class="field"><label>'+esc(sl[0])+'</label><select data-k="'+esc(spec.k)+'" data-f="'+esc(sl[0])+'">'+
+        fields += '<div class="field">'+labelWithTip(sl[0], "waf.tip."+spec.k+"."+sl[0])+
+          '<select data-k="'+esc(spec.k)+'" data-f="'+esc(sl[0])+'">'+
           sl[1].map(function(o){ return '<option value="'+o+'"'+(f[sl[0]]===o?" selected":"")+'>'+o+'</option>'; }).join("")+'</select></div>';
       });
       (spec.checks||[]).forEach(function(c){
-        fields += '<div class="field"><label>'+esc(c)+'</label><select data-k="'+esc(spec.k)+'" data-f="'+esc(c)+'" data-bool="1">'+
+        fields += '<div class="field">'+labelWithTip(c, "waf.tip."+spec.k+"."+c)+
+          '<select data-k="'+esc(spec.k)+'" data-f="'+esc(c)+'" data-bool="1">'+
           '<option value="true"'+(f[c]?" selected":"")+'>true</option>'+
           '<option value="false"'+(f[c]?"":" selected")+'>false</option></select></div>';
       });
       (spec.lists||[]).forEach(function(l){
         var v = Array.isArray(f[l]) ? f[l].join(", ") : "";
-        fields += '<div class="field wide"><label>'+esc(l)+' (comma)</label><input type="text" data-k="'+esc(spec.k)+'" data-f="'+esc(l)+'" data-list="1" value="'+esc(v)+'"></div>';
+        fields += '<div class="field wide">'+labelWithTip(l+" (comma)", "waf.tip."+spec.k+"."+l)+
+          '<input type="text" data-k="'+esc(spec.k)+'" data-f="'+esc(l)+'" data-list="1" value="'+esc(v)+'"></div>';
       });
       return '<div class="fam"><div class="fam-head">'+
         '<label class="switch"><input type="checkbox" data-k="'+esc(spec.k)+'" data-en="1"'+(f.enabled?" checked":"")+'><span></span></label>'+
         '<h4>'+esc(t("f."+spec.k))+'</h4><span class="tag">'+esc(spec.tag)+'</span></div>'+
+        '<div class="fam-desc">'+esc(t("waf.fam."+spec.k+".desc"))+'</div>'+
         '<div class="fields">'+fields+'</div></div>';
     }).join("");
 
@@ -1382,12 +1516,12 @@
         LB_OPTS.map(function(o){
           return '<option value="'+o+'"'+(g.strategy===o?" selected":"")+'>'+o+'</option>';
         }).join("");
-      return '<tr data-i="'+i+'">'+
+      return '<tr data-i="'+i+'" data-group="'+esc(g.name)+'">'+
         '<td><input type="text" data-f="name" value="'+esc(g.name)+'" placeholder="app"></td>'+
         '<td><input type="text" data-f="note" value="'+esc(g.note||"")+'"></td>'+
         '<td><select data-f="strategy">'+opts+'</select></td>'+
-        '<td class="num" style="color:var(--ink-2)">'+esc(t("be.members",{h:st.healthy||0,n:st.members||0}))+'</td>'+
-        '<td class="num" style="color:var(--ink-2)">'+(st.weight||0)+'</td>'+
+        '<td class="num grp-members" style="color:var(--ink-2)">'+esc(t("be.members",{h:st.healthy||0,n:st.members||0}))+'</td>'+
+        '<td class="num grp-weight" style="color:var(--ink-2)">'+(st.weight||0)+'</td>'+
         '<td><button class="link danger" data-del="'+i+'">×</button></td></tr>';
     }).join("");
   }
@@ -1433,6 +1567,13 @@
     save(cfg, t("be.grp.saved"));
   });
 
+  function backendBadge(st){
+    if (st.healthy) return '<span class="badge ok"><i class="dot-sm ok"></i>up</span>';
+    return st.last_check_ms
+      ? '<span class="badge err"><i class="dot-sm err"></i>down</span>'
+      : '<span class="badge">?</span>';
+  }
+
   function renderBackends(){
     var live = {};
     ((state.metrics && state.metrics.backends) || []).forEach(function(b){ live[b.name]=b; });
@@ -1443,9 +1584,7 @@
     }
     $("backends").innerHTML = state.backends.map(function(b,i){
       var st = live[b.name] || {};
-      var stateBadge = st.healthy ? '<span class="badge ok"><i class="dot-sm ok"></i>up</span>'
-        : (st.last_check_ms ? '<span class="badge err"><i class="dot-sm err"></i>down</span>' : '<span class="badge">?</span>');
-      return '<tr data-i="'+i+'">'+
+      return '<tr data-i="'+i+'" data-name="'+esc(b.name)+'">'+
         '<td class="c"><input type="checkbox" data-f="enabled"'+(b.enabled?" checked":"")+'></td>'+
         '<td><input type="text" data-f="name" value="'+esc(b.name)+'"></td>'+
         '<td><input type="text" data-f="group" value="'+esc(b.group||"")+'" placeholder="—"></td>'+
@@ -1454,9 +1593,38 @@
         '<td><input type="text" data-f="note" value="'+esc(b.note||"")+'"></td>'+
         '<td><input type="text" data-f="health_path" value="'+esc(b.health_path)+'"></td>'+
         '<td><input type="number" data-f="health_interval_secs" value="'+esc(b.health_interval_secs)+'"></td>'+
-        '<td class="c">'+stateBadge+'</td>'+
+        '<td class="c be-state">'+backendBadge(st)+'</td>'+
         '<td><button class="link danger" data-del="'+i+'">×</button></td></tr>';
     }).join("");
+  }
+
+  /// 轮询只刷新状态徽标与成员数，绝不重建行：
+  /// 以前每 2s 重绘整张表，用户正在编辑/选中文本时焦点和选区会被直接抹掉（看起来像"锁定"）。
+  function updateBackendLive(){
+    var live = {};
+    ((state.metrics && state.metrics.backends) || []).forEach(function(b){ live[b.name]=b; });
+
+    var rows = document.querySelectorAll("#backends tr[data-name]");
+    if (!rows.length && state.backends.length){
+      renderBackends();
+    } else {
+      rows.forEach(function(tr){
+        var cell = tr.querySelector(".be-state");
+        if (cell) cell.innerHTML = backendBadge(live[tr.getAttribute("data-name")] || {});
+      });
+    }
+
+    var gl = {};
+    ((state.metrics && state.metrics.backend_groups) || []).forEach(function(g){ gl[g.name]=g; });
+    document.querySelectorAll("#backend-groups tr[data-group]").forEach(function(tr){
+      var g = gl[tr.getAttribute("data-group")] || {};
+      var m = tr.querySelector(".grp-members");
+      if (m) m.textContent = t("be.members", {h:g.healthy||0, n:g.members||0});
+      var w = tr.querySelector(".grp-weight");
+      if (w) w.textContent = g.weight||0;
+    });
+
+    $("be-count").textContent = t("be.count", {n:state.backends.length, g:state.groups.length});
   }
   $("backends").addEventListener("input", function(ev){
     var el=ev.target, f=el.getAttribute("data-f");
@@ -1768,8 +1936,8 @@
         state.metrics.top = m.top;
         state.metrics.backends = m.backends;
         state.metrics.backend_groups = m.backend_groups;
-        renderGroups();
-        renderOverview(); renderKpis(); renderBackends();
+        updateBackendLive();
+        renderOverview(); renderKpis();
       }).catch(function(){}),
       api("/api/history").then(function(h){ state.history = h.history; drawChart(); }).catch(function(){})
     ]);
@@ -1828,6 +1996,7 @@
   applyTheme();
   applyLang();
   bindChartHover();
+  bindQtip();
   boot();
 })();
 </script>

@@ -290,8 +290,6 @@ pub struct DosConfig {
     pub conn_per_ip: usize,
     /// 单 IP 每秒新建连接上限
     pub conn_burst_per_sec: u32,
-    /// 毫秒内未发出完整请求视为慢速攻击
-    pub slow_request_ms: u64,
 }
 
 /// 常规 XML：DTD / 外部实体 / XInclude / 深度 / billion laughs。
@@ -587,7 +585,6 @@ impl<'a> TargetSpec<'a> {
 pub struct ExtensionsConfig {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub filters: Vec<String>,
-    pub enable_firewall: bool,
 }
 
 impl Default for ServerConfig {
@@ -726,7 +723,6 @@ impl Default for DosConfig {
             max_body_bytes: 2 * 1024 * 1024,
             conn_per_ip: 64,
             conn_burst_per_sec: 40,
-            slow_request_ms: 15_000,
         }
     }
 }

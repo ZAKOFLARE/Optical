@@ -46,6 +46,7 @@ rustls = { version = "0.23", default-features = false, features = ["std", "ring"
 tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "tls12", "ring"] }
 rustls-pemfile = "2"
 rcgen = "0.13"
+time = { version = "0.3", features = ["std"] }
 
 # 管理面认证：口令哈希(argon2id) + TOTP(HMAC，摘要可配) + 会话令牌(CSPRNG)
 # sha1 只用于 RFC 6455 的 WebSocket 握手校验与 TOTP 默认算法，不承担任何口令/令牌安全职责
