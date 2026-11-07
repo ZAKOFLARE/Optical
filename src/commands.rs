@@ -65,6 +65,7 @@ pub async fn run_gateway(config_opt: Option<PathBuf>, args: crate::cli::RunArgs)
     let state = Arc::new(AppState::new(cfg.clone(), abs_path.clone(), overrides));
     spawn_watcher(state.clone());
     spawn_sampler(state.clone());
+    crate::state::spawn_apps_supervisor(state.clone());
 
     // 后端健康检查：每秒扫一遍，各后端按自己的间隔执行
     {
@@ -217,6 +218,29 @@ fn load_token(config_path: &Path) -> Option<String> {
 }
 
 async fn bind(addr: &str, label: &str) -> Result<tokio::net::TcpListener> {
+    use std::net::SocketAddr;
+    let sa: SocketAddr = addr
+        .parse()
+        .with_context(|| format!("{label}监听地址非法（{addr}），需要 IP:PORT"))?;
+
+    // v6 通配默认是双栈：`[::]:80` 会把 v4 的 0.0.0.0:80 一起占了，
+    // 于是同样配了 0.0.0.0:80 的进程直接 Address in use。
+    // 显式 V6ONLY 之后两族各管各的，v4 客户端也不会被 v6 通配悄悄吃掉。
+    if sa.is_ipv6() {
+        use socket2::{Domain, Protocol, Socket, Type};
+        let sock = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP))?;
+        sock.set_only_v6(true)?;
+        sock.set_reuse_address(true)?;
+        sock.set_nonblocking(true)?;
+        sock.bind(&sa.into())
+            .with_context(|| format!("{label}监听失败（{addr}），端口可能已被占用"))?;
+        sock.listen(1024)
+            .with_context(|| format!("{label}开始监听失败（{addr}）"))?;
+        let std_listener: std::net::TcpListener = sock.into();
+        return tokio::net::TcpListener::from_std(std_listener)
+            .with_context(|| format!("{label}注册到事件循环失败（{addr}）"));
+    }
+
     tokio::net::TcpListener::bind(addr)
         .await
         .with_context(|| format!("{label}监听失败（{addr}），端口可能已被占用"))

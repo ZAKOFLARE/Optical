@@ -211,6 +211,11 @@
   .rank-card .mini-row b{font-variant-numeric:tabular-nums}
   /* 自定义规则编辑器 */
   .rule-card{padding:14px 16px;margin-bottom:12px}
+  .app-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ink-3);margin-right:5px}
+  .app-dot.on{background:var(--green);box-shadow:0 0 0 3px rgba(0,168,112,.14)}
+  .app-logs{margin:6px 0 0;padding:10px 12px;max-height:220px;overflow:auto;border-radius:var(--r);
+    background:var(--bg);border:1px solid var(--line);font:11.5px/1.55 ui-monospace,Menlo,monospace;
+    color:var(--ink-2);white-space:pre-wrap;word-break:break-all}
   .rule-card.off{opacity:.62}
   .rule-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
   .rule-head .rname{flex:0 0 220px;height:28px;border:1px solid var(--line-2);background:var(--panel);
@@ -390,6 +395,18 @@
         <svg viewBox="0 0 24 24"><path d="M6 5v11a3 3 0 0 0 3 3h9"/><circle cx="18" cy="19" r="2.2"/><circle cx="6" cy="4" r="2.2"/></svg>
         <span data-i18n="nav.routes">路由</span>
       </button>
+      <button class="rail-item" data-page="p-sites">
+        <svg viewBox="0 0 24 24"><path d="M3 7h18v12H3z"/><path d="M3 7l3-3h5l3 3"/></svg>
+        <span data-i18n="nav.sites">站点</span>
+      </button>
+      <button class="rail-item" data-page="p-apps">
+        <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>
+        <span data-i18n="nav.apps">应用</span>
+      </button>
+      <button class="rail-item" data-page="p-ports">
+        <svg viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="8" rx="2"/><path d="M7 8V5M12 8V5M17 8V5M7 16v3M12 16v3M17 16v3"/></svg>
+        <span data-i18n="nav.ports">端口</span>
+      </button>
       <button class="rail-item" data-page="p-waf">
         <svg viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4.4-3 8-7 9-4-1-7-4.6-7-9V6z"/></svg>
         <span data-i18n="nav.waf">WAF</span>
@@ -568,6 +585,99 @@
           <div class="toolbar" style="border-bottom:0;border-top:1px solid var(--line)">
             <span class="sec-hint" id="route-count">0</span>
             <span class="toolbar-right sec-hint"><code>optical route add --name api --prefix /api --backend-group app</code></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= 静态站点 ================= -->
+      <section class="page" id="p-sites">
+        <div class="sec-head">
+          <h2 data-i18n="st.title">静态站点</h2>
+          <span class="sec-hint" data-i18n="st.hint">绑定域名 → 指定目录 → 网关直接吐文件；没有命中站点的 Host 继续走路由转发</span>
+          <button class="btn btn-primary btn-sm" id="btn-site-add" data-i18n="st.add">+ 新增站点</button>
+          <button class="btn btn-sm" id="btn-site-save" data-i18n="st.save">保存站点</button>
+        </div>
+        <div class="card" style="margin-bottom:12px">
+          <div class="card-body note" style="padding:14px 18px">
+            <span data-i18n="st.order">优先级：WAF → 规则 → 静态站点（按 Host 精确匹配，`*` 兜底）→ 路由转发。站点命中但文件不存在时返回 404，不会悄悄转给上游。</span>
+            <br>
+            <span data-i18n="st.path">root 支持相对路径，按配置文件所在目录解析；目录越界与软链穿越都会被拒绝。</span>
+          </div>
+        </div>
+        <div id="site-list"></div>
+      </section>
+
+      <!-- ================= 动态项目 ================= -->
+      <section class="page" id="p-apps">
+        <div class="sec-head">
+          <h2 data-i18n="ap.title">动态项目</h2>
+          <span class="sec-hint" data-i18n="ap.hint">Go / PHP / Java / Python / .NET / Node：网关负责拉起进程、端口映射、CORS 与启停</span>
+          <button class="btn btn-primary btn-sm" id="btn-app-add" data-i18n="ap.add">+ 新增应用</button>
+          <button class="btn btn-sm" id="btn-app-save" data-i18n="ap.save">保存应用</button>
+        </div>
+        <div class="card" style="margin-bottom:12px">
+          <div class="card-body note" style="padding:14px 18px">
+            <span data-i18n="ap.order">映射方式：应用只监听 127.0.0.1:port，网关按 host + path_prefix 把它挂到域名上；启停只影响进程，路由始终存在（停了返回 503，不是 502）。</span>
+          </div>
+        </div>
+        <div id="app-list"></div>
+      </section>
+
+      <!-- ================= 端口 / TLS ================= -->
+      <section class="page" id="p-ports">
+        <div class="sec-head">
+          <h2 data-i18n="pt.title">端口放行</h2>
+          <span class="sec-hint" data-i18n="pt.hint">端口是"包能不能进内核栈"，和 URL/域名规则（请求进来之后怎么处理）分开管理</span>
+        </div>
+        <div class="grid2">
+          <div class="card">
+            <div class="card-head"><h3 data-i18n="pt.fw">系统防火墙联动</h3><span class="sec-hint" id="fw-backend">—</span></div>
+            <div class="card-body">
+              <div class="fields">
+                <div class="field"><label>firewall.enabled</label>
+                  <select id="f-fw-enabled"><option value="false">false</option><option value="true">true</option></select></div>
+                <div class="field"><label>firewall.backend</label>
+                  <select id="f-fw-backend">
+                    <option value="auto">auto</option><option value="nft">nft</option>
+                    <option value="iptables">iptables</option><option value="ufw">ufw</option><option value="none">none</option>
+                  </select></div>
+                <div class="field"><label>firewall.auto_sync</label>
+                  <select id="f-fw-auto"><option value="true">true</option><option value="false">false</option></select></div>
+                <div class="field wide"><label data-i18n="pt.extra">额外放行端口（逗号分隔）</label>
+                  <input type="text" id="f-fw-extra" placeholder="2222, 8080"></div>
+              </div>
+              <div class="formfoot">
+                <span class="note" data-i18n="pt.note">只做 ACCEPT、不做 DROP：最坏情况是"没生效"，不会把 SSH 关在门外。</span>
+                <span class="spacer"></span>
+                <button class="btn btn-sm" id="btn-fw-save" data-i18n="pt.savecfg">保存配置</button>
+                <button class="btn btn-primary btn-sm" id="btn-fw-apply" data-i18n="pt.apply">立即应用</button>
+              </div>
+              <div class="note" id="fw-result" style="margin-top:10px"></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h3 data-i18n="pt.list">将要放行的端口</h3><button class="btn btn-sm" id="btn-fw-refresh" data-i18n="pt.refresh">刷新</button></div>
+            <div class="card-body">
+              <div id="fw-ports" class="note">—</div>
+              <pre class="note" id="fw-detail" style="white-space:pre-wrap;margin-top:10px;max-height:220px;overflow:auto"></pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <div class="card-head"><h3 data-i18n="pt.tls">HTTPS 证书</h3><span class="sec-hint" id="tls-mode">—</span></div>
+          <div class="card-body">
+            <div id="tls-info" class="note">—</div>
+            <div class="fields" style="margin-top:10px">
+              <div class="field wide"><label data-i18n="pt.san">证书 SAN（逗号分隔；留空用配置里的 tls.san）</label>
+                <input type="text" id="f-tls-san" placeholder="optical.zakoflare.com"></div>
+            </div>
+            <div class="formfoot">
+              <span class="note" data-i18n="pt.tls.note">重签会覆盖 dev-cert.pem，重启进程后生效；外部托管的 cert/key 不会被覆盖。</span>
+              <span class="spacer"></span>
+              <button class="btn btn-sm" id="btn-tls-sign" data-i18n="pt.resign">重签自签证书</button>
+            </div>
           </div>
         </div>
       </section>
@@ -916,7 +1026,30 @@
       "empty.generic":"暂无数据",
       "ov.title":"运行概览",
       "ov.tab.req":"请求 / 采样","ov.tab.bw":"带宽","ov.tab.cache":"缓存","ov.tab.block":"拦截",
-      "nav.analytics":"分析","nav.rules":"自定义",
+      "nav.analytics":"分析","nav.rules":"自定义","nav.sites":"站点","nav.ports":"端口","nav.apps":"应用",
+      "st.title":"静态站点","st.hint":"绑定域名 → 指定目录 → 网关直接吐文件；没有命中站点的 Host 继续走路由转发",
+      "st.add":"+ 新增站点","st.save":"保存站点","st.saved":"站点已保存",
+      "st.order":"优先级：WAF → 规则 → 静态站点（按 Host 精确匹配，* 兜底）→ 路由转发。站点命中但文件不存在时返回 404，不会悄悄转给上游。",
+      "st.path":"root 支持相对路径，按配置文件所在目录解析；目录越界与软链穿越都会被拒绝。",
+      "st.name.ph":"站点名，如 官网","st.root":"根目录","st.open":"打开站点",
+      "st.empty":"还没有站点。点右上角「新增站点」，填域名和根目录即可（例如 optical.zakoflare.com → /srv/www/optical）。",
+      "ap.title":"动态项目","ap.hint":"Go / PHP / Java / Python / .NET / Node：网关负责拉起进程、端口映射、CORS 与启停",
+      "ap.add":"+ 新增应用","ap.save":"保存应用","ap.saved":"应用已保存",
+      "ap.order":"映射方式：应用只监听 127.0.0.1:port，网关按 host + path_prefix 把它挂到域名上；启停只影响进程，路由始终存在（停了返回 503，不是 502）。",
+      "ap.name.ph":"应用名，如 api","ap.start":"启动","ap.stop":"停止","ap.restart":"重启","ap.logs":"日志",
+      "ap.empty":"还没有动态项目。点右上角「新增应用」，填 kind / port / hosts 即可；command 留空会按 kind 推断。",
+      "ap.nolog":"（还没有输出）","ap.noname":"先给应用起个名字再启动",
+      "ap.done.start":"已启动","ap.done.stop":"已停止","ap.done.restart":"已重启",
+      "pt.title":"端口放行","pt.hint":"端口是\"包能不能进内核栈\"，和 URL/域名规则（请求进来之后怎么处理）分开管理",
+      "pt.fw":"系统防火墙联动","pt.extra":"额外放行端口（逗号分隔）","pt.list":"将要放行的端口",
+      "pt.refresh":"刷新","pt.apply":"立即应用","pt.savecfg":"保存配置",
+      "pt.note":"只做 ACCEPT、不做 DROP：最坏情况是\"没生效\"，不会把 SSH 关在门外。",
+      "pt.applying":"正在应用…","pt.saved":"防火墙配置已保存","pt.none":"没有端口",
+      "pt.tls":"HTTPS 证书","pt.resign":"重签自签证书","pt.signed":"已重签：",
+      "pt.san":"证书 SAN（逗号分隔；留空用配置里的 tls.san）",
+      "pt.tls.note":"重签会覆盖 dev-cert.pem，重启进程后生效；外部托管的 cert/key 不会被覆盖。",
+      "pt.tls.off":"未启用 TLS","pt.tls.self":"自签证书","pt.tls.ext":"外部证书","pt.tls.missing":"（文件缺失）",
+      "pt.tls.expire":"到期时间",
       "an.title":"流量分析","an.hint":"粒度/范围/筛选都是查询参数，不写配置；数据经 WebSocket 实时推送。",
       "ov.toanalytics":"流量曲线、排行榜与筛选已经挪到左侧「分析」页。","ov.goto":"去看看 →",
       "ov.rank":"排行榜","ov.rank.all":"全部",
@@ -1091,7 +1224,30 @@
       "empty.generic":"No data",
       "ov.title":"Overview",
       "ov.tab.req":"Requests / sample","ov.tab.bw":"Bandwidth","ov.tab.cache":"Cache","ov.tab.block":"Blocks",
-      "nav.analytics":"Analytics","nav.rules":"Rules",
+      "nav.analytics":"Analytics","nav.rules":"Rules","nav.sites":"Sites","nav.ports":"Ports","nav.apps":"Apps",
+      "st.title":"Static sites","st.hint":"Bind a host → point at a directory → the gateway serves files itself",
+      "st.add":"+ New site","st.save":"Save sites","st.saved":"Sites saved",
+      "st.order":"Order: WAF → rules → static site (exact host, * fallback) → route proxy. A matched host with a missing file returns 404 rather than silently proxying.",
+      "st.path":"root may be relative to the config file; traversal and symlink escapes are rejected.",
+      "st.name.ph":"Site name","st.root":"Root","st.open":"Open",
+      "st.empty":"No sites yet. Click \"New site\", fill host and root (e.g. optical.example.com → /srv/www/optical).",
+      "ap.title":"Dynamic apps","ap.hint":"Go / PHP / Java / Python / .NET / Node: the gateway spawns the process, maps the port, handles CORS and start/stop",
+      "ap.add":"+ New app","ap.save":"Save apps","ap.saved":"Apps saved",
+      "ap.order":"Apps listen on 127.0.0.1:port only; the gateway mounts them on host + path_prefix. Start/stop affects the process, not the route (stopped = 503, not 502).",
+      "ap.name.ph":"App name, e.g. api","ap.start":"Start","ap.stop":"Stop","ap.restart":"Restart","ap.logs":"Logs",
+      "ap.empty":"No apps yet. Click \"New app\", fill kind / port / hosts; leave command empty to infer it from kind.",
+      "ap.nolog":"(no output yet)","ap.noname":"Give the app a name before starting",
+      "ap.done.start":"Started","ap.done.stop":"Stopped","ap.done.restart":"Restarted",
+      "pt.title":"Port access","pt.hint":"Ports decide whether a packet reaches the kernel stack; URL/host rules decide what happens after",
+      "pt.fw":"System firewall","pt.extra":"Extra ports (comma separated)","pt.list":"Ports to allow",
+      "pt.refresh":"Refresh","pt.apply":"Apply now","pt.savecfg":"Save config",
+      "pt.note":"ACCEPT only, never DROP: worst case it does not take effect, and your SSH stays reachable.",
+      "pt.applying":"Applying…","pt.saved":"Firewall config saved","pt.none":"no ports",
+      "pt.tls":"HTTPS certificate","pt.resign":"Re-sign self-signed","pt.signed":"Re-signed:",
+      "pt.san":"Cert SAN (comma separated; empty = tls.san)",
+      "pt.tls.note":"Re-sign overwrites dev-cert.pem and takes effect after restart; externally managed cert/key is never overwritten.",
+      "pt.tls.off":"TLS off","pt.tls.self":"self-signed","pt.tls.ext":"external","pt.tls.missing":" (missing)",
+      "pt.tls.expire":"Expires",
       "an.title":"Traffic analytics","an.hint":"Bucket/range/filters are query params, never written to config; data streams over WebSocket.",
       "ov.toanalytics":"Traffic chart, leaderboard and filters moved to the Analytics page.","ov.goto":"Open →",
       "ov.rank":"Leaderboard","ov.rank.all":"All",
@@ -1282,7 +1438,8 @@
     rankBy:"route",
     // 0 = 全部。不能写成 `Number(...) || 10`——"全部"存的就是 0，会被 || 吃掉变回 10
     rankLimit:(function(){ var v = localStorage.getItem("optical.rankLimit"); return v === null ? 10 : Number(v); })(),
-    filters:[], rank:null, rules:null, cards:null,
+    filters:[], rank:null, rules:null, cards:null, sites:null, fw:null, tls:null,
+    appsDraft:null, appStatus:null,
     editing:false, editTimer:null, pendingRev:null, remoteToastShown:false,
     maskTimer:null, maskShown:false, maskGuard:null
   };
@@ -2068,6 +2225,380 @@
         refreshAnalytics();
       }
     });
+  }
+
+  // ---------- 静态站点 ----------
+  function blankSite(){
+    return {
+      name:"", enabled:true, hosts:["*"], root:"public",
+      index:["index.html"], spa:false, cache_secs:0, immutable:false, headers:[]
+    };
+  }
+
+  function siteDraft(){
+    if (!state.sites) state.sites = (clone().sites || []).map(function(x){ return JSON.parse(JSON.stringify(x)); });
+    return state.sites;
+  }
+
+  function siteCard(site, i){
+    var hosts = (site.hosts || []).join(", ");
+    var index = (site.index || []).join(", ");
+    return '<div class="card rule-card'+(site.enabled ? "" : " off")+'">'+
+      '<div class="rule-head">'+
+        '<input class="rname" data-si="'+i+'" data-sk="name" value="'+esc(site.name||"")+'" placeholder="'+esc(t("st.name.ph"))+'">'+
+        '<label class="rswitch"><input type="checkbox" data-si="'+i+'" data-sk="enabled"'+(site.enabled?" checked":"")+'>'+esc(t("rl.enabled"))+'</label>'+
+        '<span class="grow"></span>'+
+        '<span class="sec-hint">'+esc(t("st.root"))+': <code>'+esc(site.root||"")+'</code></span>'+
+        '<button class="btn btn-sm" data-sact="open" data-si="'+i+'">'+esc(t("st.open"))+'</button>'+
+        '<button class="btn btn-sm danger-btn" data-sact="del" data-si="'+i+'">'+esc(t("rl.remove"))+'</button>'+
+      '</div>'+
+      '<div class="rule-sec"><div class="agrid">'+
+        '<label class="af"><span>hosts</span><input type="text" data-si="'+i+'" data-sk="hosts" value="'+esc(hosts)+'" placeholder="example.com, *.example.com, *"></label>'+
+        '<label class="af"><span>root</span><input type="text" data-si="'+i+'" data-sk="root" value="'+esc(site.root||"")+'" placeholder="/srv/www/site"></label>'+
+        '<label class="af"><span>index</span><input type="text" data-si="'+i+'" data-sk="index" value="'+esc(index)+'" placeholder="index.html, index.htm"></label>'+
+        '<label class="af"><span>cache_secs</span><input type="number" min="0" data-si="'+i+'" data-sk="cache_secs" value="'+Number(site.cache_secs||0)+'"></label>'+
+        '<label class="af"><span>spa</span><select data-si="'+i+'" data-sk="spa"><option value="0"'+(site.spa?"":" selected")+'>false</option><option value="1"'+(site.spa?" selected":"")+'>true</option></select></label>'+
+        '<label class="af"><span>immutable</span><select data-si="'+i+'" data-sk="immutable"><option value="0"'+(site.immutable?"":" selected")+'>false</option><option value="1"'+(site.immutable?" selected":"")+'>true</option></select></label>'+
+      '</div></div>'+
+    '</div>';
+  }
+
+  function renderSites(){
+    var box = $("site-list");
+    if (!box) return;
+    var list = siteDraft();
+    if (!list.length){
+      box.innerHTML = '<div class="card"><div class="card-body note" style="padding:18px">'+esc(t("st.empty"))+'</div></div>';
+      return;
+    }
+    box.innerHTML = list.map(siteCard).join("");
+  }
+
+  function bindSites(){
+    $("btn-site-add").addEventListener("click", function(){
+      siteDraft().push(blankSite());
+      renderSites();
+      markEditing();
+    });
+    $("btn-site-save").addEventListener("click", function(){
+      var cfg = clone();
+      cfg.sites = siteDraft().map(function(x){
+        var o = JSON.parse(JSON.stringify(x));
+        if (!o.headers) o.headers = [];
+        return o;
+      });
+      save(cfg, t("st.saved"), this).then(function(){ state.sites = null; renderSites(); });
+    });
+    var box = $("site-list");
+    var apply = function(el){
+      var i = Number(el.getAttribute("data-si"));
+      var site = siteDraft()[i];
+      if (!site) return;
+      var k = el.getAttribute("data-sk");
+      if (k === "hosts" || k === "index"){
+        site[k] = el.value.split(",").map(function(x){ return x.trim(); }).filter(Boolean);
+      } else if (k === "cache_secs"){
+        site[k] = Number(el.value) || 0;
+      } else if (k === "enabled"){
+        site[k] = el.checked;
+      } else if (k === "spa" || k === "immutable"){
+        site[k] = el.value === "1";
+      } else {
+        site[k] = el.value;
+      }
+    };
+    box.addEventListener("input", function(ev){
+      var el = ev.target.closest("[data-sk]");
+      if (!el) return;
+      markEditing();
+      apply(el);
+    });
+    box.addEventListener("change", function(ev){
+      var el = ev.target.closest("select[data-sk]");
+      if (!el) return;
+      markEditing();
+      apply(el);
+    });
+    box.addEventListener("click", function(ev){
+      var btn = ev.target.closest("[data-sact]");
+      if (!btn) return;
+      var i = Number(btn.getAttribute("data-si"));
+      var list = siteDraft();
+      if (btn.getAttribute("data-sact") === "del"){
+        list.splice(i, 1);
+        renderSites();
+      } else {
+        var site = list[i];
+        var host = (site.hosts || [])[0] || "";
+        var scheme = (state.cfg && state.cfg.tls && state.cfg.tls.enabled) ? "https" : "http";
+        var port = scheme === "https"
+          ? (state.cfg.tls.listen || "").split(":").pop()
+          : (state.cfg.server.listen || "").split(":").pop();
+        var url = scheme + "://" + (host === "*" ? "localhost" : host) +
+                  (port && port !== "80" && port !== "443" ? ":" + port : "") + "/";
+        window.open(url, "_blank");
+      }
+    });
+  }
+
+  // ---------- 动态项目 ----------
+  var APP_KINDS = ["go","php","java","python","dotnet","node","custom"];
+
+  function blankApp(){
+    return {
+      name:"", enabled:true, autostart:false, restart:true, kind:"python",
+      cwd:"", command:"", entry:"", args:[], env:[], port:3000,
+      hosts:["*"], path_prefix:"/", strip_prefix:false, health_path:"",
+      cors:{enabled:false, origins:["*"], methods:["GET","POST","PUT","PATCH","DELETE","HEAD","OPTIONS"],
+            headers:[], expose:[], credentials:false, max_age:600}
+    };
+  }
+
+  function appDraft(){
+    if (!state.appsDraft) state.appsDraft = (clone().apps || []).map(function(x){ return JSON.parse(JSON.stringify(x)); });
+    return state.appsDraft;
+  }
+
+  function appStatus(name){
+    var list = (state.appStatus && state.appStatus.apps) || [];
+    return list.filter(function(a){ return a.name === name; })[0] || null;
+  }
+
+  function appCard(app, i){
+    var st0 = appStatus(app.name) || {};
+    var running = !!st0.running;
+    var badge = '<span class="app-dot'+(running?" on":"")+'"></span>' +
+      (running ? '<b style="color:var(--green)">运行中</b> pid '+st0.pid : '<b style="color:var(--ink-3)">已停止</b>');
+    var logs = (st0.logs || []).slice(-40).join("\n");
+    var c = app.cors || {};
+    var opts = function(list, cur){
+      return list.map(function(x){ return '<option value="'+x+'"'+(x===cur?' selected':'')+'>'+x+'</option>'; }).join("");
+    };
+    return '<div class="card rule-card'+(app.enabled ? "" : " off")+'">'+
+      '<div class="rule-head">'+
+        '<input class="rname" data-ai="'+i+'" data-ak="name" value="'+esc(app.name||"")+'" placeholder="'+esc(t("ap.name.ph"))+'">'+
+        '<span class="sec-hint">'+badge+'</span>'+
+        '<span class="grow"></span>'+
+        '<button class="btn btn-sm" data-aact="start" data-an="'+esc(app.name)+'"'+(running?" disabled":"")+'>'+esc(t("ap.start"))+'</button>'+
+        '<button class="btn btn-sm" data-aact="stop" data-an="'+esc(app.name)+'"'+(!running?" disabled":"")+'>'+esc(t("ap.stop"))+'</button>'+
+        '<button class="btn btn-sm" data-aact="restart" data-an="'+esc(app.name)+'">'+esc(t("ap.restart"))+'</button>'+
+        '<button class="btn btn-sm" data-aact="logs" data-ai="'+i+'">'+esc(t("ap.logs"))+'</button>'+
+        '<button class="btn btn-sm danger-btn" data-aact="del" data-ai="'+i+'">'+esc(t("rl.remove"))+'</button>'+
+      '</div>'+
+      '<div class="rule-sec"><div class="agrid">'+
+        '<label class="af"><span>kind</span><select data-ai="'+i+'" data-ak="kind">'+opts(APP_KINDS, app.kind||"custom")+'</select></label>'+
+        '<label class="af"><span>port</span><input type="number" min="1" max="65535" data-ai="'+i+'" data-ak="port" value="'+Number(app.port||0)+'"></label>'+
+        '<label class="af"><span>hosts</span><input type="text" data-ai="'+i+'" data-ak="hosts" value="'+esc((app.hosts||[]).join(", "))+'" placeholder="api.example.com, *"></label>'+
+        '<label class="af"><span>path_prefix</span><input type="text" data-ai="'+i+'" data-ak="path_prefix" value="'+esc(app.path_prefix||"/")+'" placeholder="/"></label>'+
+        '<label class="af"><span>cwd</span><input type="text" data-ai="'+i+'" data-ak="cwd" value="'+esc(app.cwd||"")+'" placeholder="/srv/app/myapp"></label>'+
+        '<label class="af"><span>entry</span><input type="text" data-ai="'+i+'" data-ak="entry" value="'+esc(app.entry||"")+'" placeholder="main.py / app.jar"></label>'+
+        '<label class="af" style="grid-column:span 2"><span>command</span><input type="text" data-ai="'+i+'" data-ak="command" value="'+esc(app.command||"")+'" placeholder="留空按 kind 推断，例：uvicorn app:app --host 127.0.0.1"></label>'+
+        '<label class="af"><span>args</span><input type="text" data-ai="'+i+'" data-ak="args" value="'+esc((app.args||[]).join(" "))+'" placeholder="--workers 2"></label>'+
+        '<label class="af"><span>health_path</span><input type="text" data-ai="'+i+'" data-ak="health_path" value="'+esc(app.health_path||"")+'" placeholder="/healthz（可空）"></label>'+
+        '<label class="af"><span>enabled</span><select data-ai="'+i+'" data-ak="enabled"><option value="1"'+(app.enabled?" selected":"")+'>true</option><option value="0"'+(app.enabled?"":" selected")+'>false</option></select></label>'+
+        '<label class="af"><span>autostart</span><select data-ai="'+i+'" data-ak="autostart"><option value="0"'+(app.autostart?"":" selected")+'>false</option><option value="1"'+(app.autostart?" selected":"")+'>true</option></select></label>'+
+        '<label class="af"><span>restart</span><select data-ai="'+i+'" data-ak="restart"><option value="0"'+(app.restart===false?" selected":"")+'>false</option><option value="1"'+(app.restart===false?"":" selected")+'>true</option></select></label>'+
+        '<label class="af"><span>strip_prefix</span><select data-ai="'+i+'" data-ak="strip_prefix"><option value="0"'+(app.strip_prefix?"":" selected")+'>false</option><option value="1"'+(app.strip_prefix?" selected":"")+'>true</option></select></label>'+
+        '<label class="af"><span>CORS</span><select data-ai="'+i+'" data-ak="cors.enabled"><option value="0"'+(c.enabled?"":" selected")+'>false</option><option value="1"'+(c.enabled?" selected":"")+'>true</option></select></label>'+
+        '<label class="af"><span>CORS origins</span><input type="text" data-ai="'+i+'" data-ak="cors.origins" value="'+esc((c.origins||[]).join(", "))+'" placeholder="*, https://a.example.com"></label>'+
+        '<label class="af"><span>CORS methods</span><input type="text" data-ai="'+i+'" data-ak="cors.methods" value="'+esc((c.methods||[]).join(","))+'" placeholder="GET,POST"></label>'+
+        '<label class="af"><span>CORS credentials</span><select data-ai="'+i+'" data-ak="cors.credentials"><option value="0"'+(c.credentials?"":" selected")+'>false</option><option value="1"'+(c.credentials?" selected":"")+'>true</option></select></label>'+
+      '</div></div>'+
+      '<pre class="app-logs" id="app-logs-'+i+'" style="display:none">'+esc(logs || t("ap.nolog"))+'</pre>'+
+    '</div>';
+  }
+
+  function renderApps(){
+    var box = $("app-list");
+    if (!box) return;
+    var list = appDraft();
+    if (!list.length){
+      box.innerHTML = '<div class="card"><div class="card-body note" style="padding:18px">'+esc(t("ap.empty"))+'</div></div>';
+      return;
+    }
+    box.innerHTML = list.map(appCard).join("");
+  }
+
+  function loadAppStatus(){
+    return api("/api/apps").then(function(d){
+      state.appStatus = d;
+      if (document.getElementById("p-apps").classList.contains("active")) renderApps();
+      return d;
+    }).catch(function(){});
+  }
+
+  function bindApps(){
+    if (!$("btn-app-add")) return;
+    $("btn-app-add").addEventListener("click", function(){
+      appDraft().push(blankApp());
+      renderApps();
+      markEditing();
+    });
+    $("btn-app-save").addEventListener("click", function(){
+      var cfg = clone();
+      cfg.apps = appDraft().map(function(x){ return JSON.parse(JSON.stringify(x)); });
+      save(cfg, t("ap.saved"), this).then(function(){ state.appsDraft = null; renderApps(); loadAppStatus(); });
+    });
+    var box = $("app-list");
+    var setPath = function(obj, path, val){
+      var parts = path.split("."), cur = obj;
+      for (var k = 0; k < parts.length - 1; k++){
+        if (cur[parts[k]] == null) cur[parts[k]] = {};
+        cur = cur[parts[k]];
+      }
+      cur[parts[parts.length-1]] = val;
+    };
+    var apply = function(el){
+      var i = Number(el.getAttribute("data-ai"));
+      var app = appDraft()[i];
+      if (!app) return;
+      var k = el.getAttribute("data-ak");
+      var v = el.value;
+      if (k === "hosts" || k === "args" || k === "cors.origins"){
+        v = v.split(",").map(function(x){ return x.trim(); }).filter(Boolean);
+        if (k === "args") v = el.value.split(/\s+/).filter(Boolean);
+      } else if (k === "cors.methods"){
+        v = v.split(",").map(function(x){ return x.trim().toUpperCase(); }).filter(Boolean);
+      } else if (k === "port"){
+        v = Number(v) || 0;
+      } else if (k === "enabled" || k === "autostart" || k === "restart" || k === "strip_prefix"
+                 || k === "cors.enabled" || k === "cors.credentials"){
+        v = el.value === "1";
+      }
+      setPath(app, k, v);
+    };
+    box.addEventListener("input", function(ev){
+      var el = ev.target.closest("[data-ak]");
+      if (!el) return;
+      markEditing();
+      apply(el);
+    });
+    box.addEventListener("change", function(ev){
+      var el = ev.target.closest("[data-ak]");
+      if (!el) return;
+      markEditing();
+      apply(el);
+      if (el.tagName === "SELECT") renderApps();
+    });
+    box.addEventListener("click", function(ev){
+      var btn = ev.target.closest("[data-aact]");
+      if (!btn) return;
+      var act = btn.getAttribute("data-aact");
+      var i = Number(btn.getAttribute("data-ai"));
+      if (act === "del"){
+        appDraft().splice(i, 1);
+        renderApps();
+        return;
+      }
+      if (act === "logs"){
+        var pre = $("app-logs-" + i);
+        if (pre) pre.style.display = pre.style.display === "none" ? "block" : "none";
+        return;
+      }
+      var name = btn.getAttribute("data-an") || "";
+      if (!name){ toast(t("ap.noname"), "err"); return; }
+      setBusy(btn, true);
+      api("/api/apps/" + encodeURIComponent(name) + "/" + act, {method:"POST"})
+        .then(function(d){
+          if (!d.ok) throw new Error(d.error || "失败");
+          toast(t("ap.done." + act) + (d.pid ? " · pid " + d.pid : ""), "ok");
+          return loadAppStatus();
+        })
+        .catch(function(e){ toast(e.message, "err"); })
+        .finally(function(){ setBusy(btn, false); });
+    });
+  }
+
+  // ---------- 端口放行 / 防火墙 / TLS ----------
+  function parsePorts(text){
+    return (text || "").split(/[,\s]+/).map(function(x){ return Number(x); })
+      .filter(function(n){ return n > 0 && n < 65536; });
+  }
+
+  function renderFirewallForm(){
+    var fw = (state.cfg && state.cfg.firewall) || {};
+    if ($("f-fw-enabled")) $("f-fw-enabled").value = String(!!fw.enabled);
+    if ($("f-fw-backend")) $("f-fw-backend").value = fw.backend || "auto";
+    if ($("f-fw-auto")) $("f-fw-auto").value = fw.auto_sync === false ? "false" : "true";
+    if ($("f-fw-extra")) $("f-fw-extra").value = (fw.extra_ports || []).join(", ");
+    var tls = (state.cfg && state.cfg.tls) || {};
+    if ($("f-tls-san") && document.activeElement !== $("f-tls-san")){
+      $("f-tls-san").value = (tls.san || []).join(", ");
+    }
+  }
+
+  function loadFirewall(){
+    return api("/api/firewall").then(function(d){
+      state.fw = d;
+      var ports = d.ports || [];
+      $("fw-backend").textContent = (d.enabled ? "" : "未启用 · ") + (d.backend || "—");
+      $("fw-ports").innerHTML = ports.length
+        ? ports.map(function(p){ return '<code style="margin-right:10px">'+p+'/tcp</code>'; }).join("")
+        : esc(t("pt.none"));
+      $("fw-detail").textContent = (d.detail || []).join("\n") || "—";
+      return d;
+    }).catch(function(){});
+  }
+
+  function bindPorts(){
+    if (!$("btn-fw-refresh")) return;
+    $("btn-fw-save").addEventListener("click", function(){
+      var cfg = clone();
+      cfg.firewall = cfg.firewall || {};
+      cfg.firewall.enabled = $("f-fw-enabled").value === "true";
+      cfg.firewall.backend = $("f-fw-backend").value;
+      cfg.firewall.auto_sync = $("f-fw-auto").value === "true";
+      cfg.firewall.extra_ports = parsePorts($("f-fw-extra").value);
+      save(cfg, t("pt.saved"), this).then(function(){ loadFirewall(); });
+    });
+    $("btn-fw-apply").addEventListener("click", function(){
+      var btn = this;
+      setBusy(btn, true);
+      $("fw-result").textContent = t("pt.applying");
+      api("/api/firewall/apply", {method:"POST"}).then(function(d){
+        $("fw-result").textContent = (d.ok ? "✓ " : "✗ ") + (d.backend || "") + " · " +
+          (d.ports || []).join(",") + (d.error ? " · " + d.error : "");
+        $("fw-result").style.color = d.ok ? "var(--green)" : "var(--red)";
+        if (d.steps && d.steps.length) $("fw-detail").textContent = d.steps.join("\n");
+        return loadFirewall();
+      }).catch(function(e){
+        $("fw-result").textContent = e.message;
+        $("fw-result").style.color = "var(--red)";
+      }).finally(function(){ setBusy(btn, false); });
+    });
+    $("btn-fw-refresh").addEventListener("click", loadFirewall);
+    $("btn-tls-sign").addEventListener("click", function(){
+      var btn = this;
+      var san = ($("f-tls-san").value || "").split(",").map(function(x){ return x.trim(); }).filter(Boolean);
+      setBusy(btn, true);
+      api("/api/tls/selfsigned", {method:"POST",headers:{"content-type":"application/json"},
+        body: JSON.stringify({san: san})})
+        .then(function(d){
+          if (!d.ok) throw new Error(d.error || "重签失败");
+          toast(t("pt.signed") + (d.names || []).join(", "), "ok");
+          $("tls-info").textContent = d.note || "";
+          return loadTls();
+        }).catch(function(e){ toast(e.message, "err"); })
+        .finally(function(){ setBusy(btn, false); });
+    });
+  }
+
+  function loadTls(){
+    return api("/api/tls").then(function(d){
+      state.tls = d;
+      $("tls-mode").textContent = !d.enabled ? t("pt.tls.off") : (d.self_signed ? t("pt.tls.self") : t("pt.tls.ext"));
+      var rows = [
+        ["listen", d.listen + (d.listen_v6 ? " / " + d.listen_v6 : "")],
+        ["min_version", d.min_version],
+        ["cert", d.cert_path + (d.exists ? "" : " " + t("pt.tls.missing"))],
+        ["SAN", (d.names || d.configured_san || []).join(", ") || "—"]
+      ];
+      if (d.not_after){ rows.push([t("pt.tls.expire"), new Date(d.not_after * 1000).toLocaleString()]); }
+      $("tls-info").innerHTML = rows.map(function(r){
+        return '<div style="display:flex;gap:10px;padding:2px 0"><b style="flex:0 0 96px;color:var(--ink-2)">'+esc(r[0])+'</b><span style="word-break:break-all">'+esc(r[1])+'</span></div>';
+      }).join("");
+      return d;
+    }).catch(function(){});
   }
 
   // ---------- 自定义规则 ----------
@@ -3105,6 +3636,9 @@
     if (!state.cfg) return;
     renderOverview(); renderRoutes(); renderWaf(); renderGroups(); renderBackends(); renderConfig(); renderHistory();
     renderRules();
+    renderSites();
+    renderApps();
+    renderFirewallForm();
   }
 
   function loadConfig(){
@@ -3145,6 +3679,14 @@
   function loadHistory(){
     var q = "/api/history?gran=" + view.gran + "&range=" + view.range;
     return api(q).then(applyHistory).catch(function(){});
+  }
+
+  function startAppTimer(){
+    if (state.appTimer) return;
+    state.appTimer = setInterval(function(){
+      var page = document.getElementById("p-apps");
+      if (page && page.classList.contains("active")) loadAppStatus();
+    }, 4000);
   }
 
   function startHistoryTimer(){
@@ -3265,6 +3807,13 @@
     }
   });
 
+  document.addEventListener("click", function(ev){
+    var item = ev.target.closest && ev.target.closest('.rail-item[data-page="p-ports"]');
+    if (item){ loadFirewall(); loadTls(); }
+    var appItem = ev.target.closest && ev.target.closest('.rail-item[data-page="p-apps"]');
+    if (appItem) loadAppStatus();
+  });
+
   document.querySelectorAll(".rail-item").forEach(function(item){
     item.addEventListener("click", function(){
       var id = item.getAttribute("data-page");
@@ -3310,12 +3859,16 @@
     bindRank();
     bindRules();
     bindAnTiles();
+    bindSites();
+    bindApps();
+    bindPorts();
     return checkAuth().then(function(ok){
       if (!ok) return;
       return refreshAll().then(function(){
         // 先起轮询兜底，WS 连上后立即停掉；断线会自动回退并重连
         startPolling();
         startHistoryTimer();
+        startAppTimer();
         loadHistory();
         loadStats();
         connectWs();

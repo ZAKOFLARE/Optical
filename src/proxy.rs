@@ -406,6 +406,114 @@ pub async fn handle(
         return error_response(&state, &cfg, StatusCode::FORBIDDEN, "该路径不允许 WebSocket 升级", Some("rule-ws"));
     }
 
+    // ---- 动态项目：CORS 预检在选路之前就给结论 ----
+    // 预检请求不带凭据也不该进 WAF 打分，浏览器只看 OPTIONS 的响应头。
+    let cors_app = if cfg.apps.is_empty() {
+        None
+    } else {
+        crate::apps::pick(&cfg.apps, &host_str, &path)
+    };
+    let origin = parts
+        .headers
+        .get("origin")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    if let Some(app) = cors_app {
+        if app.cors.enabled && parts.method == Method::OPTIONS && !origin.is_empty() {
+            state.record_hit(
+                &ua,
+                &ip_str,
+                204,
+                crate::stats::ReqDims {
+                    route: &format!("app:{}", app.name),
+                    backend: "",
+                    host: &host_str,
+                },
+                0,
+            );
+            return cors_preflight(&app.cors, &origin, &parts.headers);
+        }
+    }
+
+    // ---- 全局 HTTP → HTTPS ----
+    // 放在规则之后、选路之前：规则里的 force_https 可以按路径精细化，
+    // 这里是"整个网关都别用明文"的粗开关，两者不冲突。
+    if cfg.tls.enabled && cfg.tls.http_redirect && scheme == "http" {
+        let host = original_host.as_deref().unwrap_or("");
+        let uri = match &query {
+            Some(q) => format!("{}?{q}", path),
+            None => path.clone(),
+        };
+        state.record_profile(&ua, &ip_str, 301);
+        return redirect_response(&state, &cfg, 301, &format!("https://{host}{uri}"));
+    }
+
+    // ---- 静态站点 ----
+    // host 命中站点就由网关自己吐文件，不再往下转发；
+    // 没命中（或没这个文件）才继续走 routes，两条路互不干扰。
+    if !cfg.sites.is_empty() && !is_ws {
+        if let Some(site) = crate::sites::pick(&cfg.sites, &host_str) {
+            let site_name = site.display_name().to_string();
+            match crate::sites::serve_site(site, &path, &parts.method, state.base_dir()).await {
+                Some(mut resp) => {
+                    // 条件请求：ETag 命中直接 304，别再读一遍盘
+                    let inm = parts
+                        .headers
+                        .get(http::header::IF_NONE_MATCH)
+                        .and_then(|v| v.to_str().ok());
+                    if crate::sites::is_not_modified(inm, &resp) {
+                        let keep: Vec<(http::HeaderName, http::HeaderValue)> = resp
+                            .headers()
+                            .iter()
+                            .filter(|(k, _)| {
+                                *k == http::header::ETAG
+                                    || *k == http::header::CACHE_CONTROL
+                                    || *k == http::header::LAST_MODIFIED
+                            })
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect();
+                        let mut not_modified = Response::builder()
+                            .status(StatusCode::NOT_MODIFIED)
+                            .body(
+                                Full::new(Bytes::new())
+                                    .map_err(|never| match never {})
+                                    .boxed(),
+                            )
+                            .unwrap_or_else(|_| {
+                                Response::new(
+                                    Full::new(Bytes::new())
+                                        .map_err(|never| match never {})
+                                        .boxed(),
+                                )
+                            });
+                        for (k, v) in keep {
+                            not_modified.headers_mut().insert(k, v);
+                        }
+                        resp = not_modified;
+                    }
+                    state.record_hit(
+                        &ua,
+                        &ip_str,
+                        resp.status().as_u16(),
+                        crate::stats::ReqDims {
+                            route: &format!("site:{site_name}"),
+                            backend: "",
+                            host: &host_str,
+                        },
+                        0,
+                    );
+                    return resp;
+                }
+                None => {
+                    // 没这个文件就继续往下走（等价 nginx 的 try_files $uri @backend）。
+                    // 同一域名常常既要发静态文件、又要挂 /api 或动态项目：
+                    // 这里若直接 404，应用就永远轮不到，只能把站点和应用拆去不同域名。
+                }
+            }
+        }
+    }
+
     // ---- 路由 ----
     let info = RequestInfo {
         method: &parts.method,
@@ -487,7 +595,7 @@ pub async fn handle(
                 },
                 0,
             );
-            return Response::builder()
+            let mut hit_resp = Response::builder()
                 .status(status)
                 .body(Full::new(body).map_err(|never| match never {}).boxed())
                 .map(|mut r| {
@@ -495,8 +603,40 @@ pub async fn handle(
                     r
                 })
                 .unwrap_or_else(|_| error_response(&state, &cfg, StatusCode::INTERNAL_SERVER_ERROR, "缓存响应构造失败", None));
+            // 缓存命中也要带 CORS：否则预检过了、真实响应却没有 Allow-Origin，前端照旧报错
+            if let Some(app) = cors_app {
+                apply_cors(&app.cors, &origin, hit_resp.headers_mut());
+            }
+            return hit_resp;
         }
         state.metrics.cache_miss.fetch_add(1, Ordering::Relaxed);
+    }
+
+    // 动态项目：进程没在跑时给 503，而不是让它去 connect 一个没人监听的端口。
+    // 502 会被当成"网关坏了"，503 + 明确文案才说明是"应用停了"。
+    if let Some(rn) = decision.route_name.as_deref() {
+        if let Some(app_name) = rn.strip_prefix("app:") {
+            if !crate::apps::is_running(&state.apps, app_name).await {
+                state.record_hit(
+                    &ua,
+                    &ip_str,
+                    503,
+                    crate::stats::ReqDims {
+                        route: rn,
+                        backend: "",
+                        host: original_host.as_deref().unwrap_or(""),
+                    },
+                    0,
+                );
+                return error_response(
+                    &state,
+                    &cfg,
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    &format!("项目 {app_name} 未启动，请在控制台「应用」页启动"),
+                    Some("app-stopped"),
+                );
+            }
+        }
     }
 
     if parts.method == Method::CONNECT {
@@ -618,6 +758,10 @@ pub async fn handle(
 
     // ---- 响应头改写 ----
     apply_header_rules(&cfg, HeaderPhase::Response, &mut rparts.headers, &path, original_host.as_deref(), status.as_u16());
+    // 动态项目的 CORS 头（静态站点/纯 API 也可以开，只要是 app 路由）
+    if let Some(app) = cors_app {
+        apply_cors(&app.cors, &origin, &mut rparts.headers);
+    }
     // 规则动作盖在全局配置之上
     if let Some(name) = &act.server_name {
         if let Ok(v) = HeaderValue::from_str(name) {
@@ -1086,6 +1230,58 @@ fn fail(
     state.record_profile(ua, ip, status.as_u16());
     tracing::warn!(%status, reason = msg.as_ref(), "转发失败");
     error_response(state, cfg, status, msg.as_ref(), None)
+}
+
+/// CORS 预检响应：只回浏览器要看的头，不带 body。
+fn cors_preflight(cors: &crate::apps::CorsConfig, origin: &str, req: &http::HeaderMap) -> Response<ProxyBody> {
+    let mut b = Response::builder().status(StatusCode::NO_CONTENT);
+    if let Some(allow) = cors.allows(origin) {
+        b = b.header("access-control-allow-origin", allow);
+        b = b.header("access-control-allow-methods", cors.methods.join(", "));
+        let allow_headers = if cors.headers.is_empty() {
+            req.get("access-control-request-headers")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("*")
+                .to_string()
+        } else {
+            cors.headers.join(", ")
+        };
+        b = b.header("access-control-allow-headers", allow_headers);
+        if cors.credentials {
+            b = b.header("access-control-allow-credentials", "true");
+        }
+        b = b.header("access-control-max-age", cors.max_age.to_string());
+        b = b.header("vary", "origin");
+    }
+    b.body(Full::new(Bytes::new()).map_err(|n| match n {}).boxed())
+        .unwrap_or_else(|_| Response::new(Full::new(Bytes::new()).map_err(|n| match n {}).boxed()))
+}
+
+/// 给真实响应套 CORS 头
+fn apply_cors(cors: &crate::apps::CorsConfig, origin: &str, headers: &mut http::HeaderMap) {
+    if !cors.enabled || origin.is_empty() {
+        return;
+    }
+    if let Some(allow) = cors.allows(origin) {
+        if let Ok(v) = HeaderValue::from_str(&allow) {
+            headers.insert(http::header::HeaderName::from_static("access-control-allow-origin"), v);
+        }
+        if cors.credentials {
+            headers.insert(
+                http::header::HeaderName::from_static("access-control-allow-credentials"),
+                HeaderValue::from_static("true"),
+            );
+        }
+        if !cors.expose.is_empty() {
+            if let Ok(v) = HeaderValue::from_str(&cors.expose.join(", ")) {
+                headers.insert(http::header::HeaderName::from_static("access-control-expose-headers"), v);
+            }
+        }
+        headers.insert(
+            http::header::HeaderName::from_static("vary"),
+            HeaderValue::from_static("origin"),
+        );
+    }
 }
 
 /// 规则产生的重定向。状态码只认 301/302/303/307/308，其它按 302 处理，

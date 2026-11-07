@@ -52,6 +52,12 @@ pub async fn serve(state: Arc<AppState>, listener: TcpListener) -> anyhow::Resul
         .route("/api/ws", get(api_ws))
         .route("/api/admin/password", post(api_set_password))
         .route("/api/backends", get(api_backends))
+        .route("/api/apps", get(api_apps))
+        .route("/api/apps/{name}/{action}", post(api_app_action))
+        .route("/api/firewall", get(api_firewall))
+        .route("/api/firewall/apply", post(api_firewall_apply))
+        .route("/api/tls", get(api_tls_info))
+        .route("/api/tls/selfsigned", post(api_tls_selfsigned))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     let app = public.merge(protected).fallback(not_found).with_state(state);
@@ -771,6 +777,134 @@ async fn api_history(
     Json(out)
 }
 
+/// 动态项目列表：配置 + 运行状态（pid / 退出码 / 最近日志）
+async fn api_apps(State(st): State<Arc<AppState>>) -> Json<Value> {
+    let cfg = st.snapshot().await;
+    let list = st.apps.status(&cfg.apps).await;
+    Json(json!({ "ok": true, "apps": list }))
+}
+
+/// 启停：`/api/apps/{name}/start|stop|restart`。
+/// 名字来自路径，必须和配置里的名字完全一致，不做模糊匹配。
+async fn api_app_action(
+    State(st): State<Arc<AppState>>,
+    AxumPath((name, action)): AxumPath<(String, String)>,
+) -> Result<Json<Value>, ApiError> {
+    let cfg = st.snapshot().await;
+    let app = cfg
+        .apps
+        .iter()
+        .find(|a| a.name == name)
+        .cloned()
+        .ok_or_else(|| ApiError::not_found(format!("没有这个应用: {name}")))?;
+    let base = st.base_dir().to_path_buf();
+
+    let result: anyhow::Result<u32> = match action.as_str() {
+        "start" => st.apps.start(&app, &base).await,
+        "stop" => {
+            let stopped = st.apps.stop(&app.name).await.map_err(ApiError::bad)?;
+            return Ok(Json(json!({ "ok": true, "stopped": stopped })));
+        }
+        "restart" => {
+            let _ = st.apps.stop(&app.name).await;
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            st.apps.start(&app, &base).await
+        }
+        other => return Err(ApiError::bad(anyhow::anyhow!("不认识的动作: {other}"))),
+    };
+
+    match result {
+        Ok(pid) => Ok(Json(json!({ "ok": true, "pid": pid }))),
+        Err(e) => Err(ApiError::bad(e)),
+    }
+}
+
+/// 防火墙视图：期望端口 + 实际状态 + 当前配置。
+/// 端口放行刻意和 rules 分开：那套是"请求进来之后怎么处理"，
+/// 这套是"包能不能进内核栈"，混一起改错一条就能把自己关在门外。
+async fn api_firewall(State(st): State<Arc<AppState>>) -> Json<Value> {
+    let cfg = st.snapshot().await;
+    let report = tokio::task::spawn_blocking(move || crate::firewall::status(&cfg))
+        .await
+        .unwrap_or_else(|e| crate::firewall::Report {
+            ok: false,
+            backend: "none".into(),
+            ports: Vec::new(),
+            steps: Vec::new(),
+            error: format!("状态查询失败: {e}"),
+        });
+    let cfg = st.snapshot().await;
+    Json(json!({
+        "ok": true,
+        "enabled": cfg.firewall.enabled,
+        "backend": report.backend,
+        "configured_backend": cfg.firewall.backend,
+        "auto_sync": cfg.firewall.auto_sync,
+        "extra_ports": cfg.firewall.extra_ports,
+        "ports": report.ports,
+        "detail": report.steps,
+        "error": report.error,
+    }))
+}
+
+/// 手动应用一次端口放行。命令是阻塞的，丢进 blocking 线程池，别堵住事件循环。
+async fn api_firewall_apply(State(st): State<Arc<AppState>>) -> Json<Value> {
+    let cfg = st.snapshot().await;
+    let report = tokio::task::spawn_blocking(move || crate::firewall::apply(&cfg))
+        .await
+        .unwrap_or_else(|e| crate::firewall::Report {
+            ok: false,
+            backend: "none".into(),
+            ports: Vec::new(),
+            steps: Vec::new(),
+            error: format!("执行失败: {e}"),
+        });
+    Json(json!({
+        "ok": report.ok,
+        "backend": report.backend,
+        "ports": report.ports,
+        "steps": report.steps,
+        "error": report.error,
+    }))
+}
+
+/// TLS 现状：证书来源、协议版本、SAN、到期时间。
+/// 自签证书会顺手写一份 sidecar JSON（`.cert-meta.json`），这里读它；
+/// 外部托管的证书不去猜元数据，只报文件路径与修改时间。
+async fn api_tls_info(State(st): State<Arc<AppState>>) -> Json<Value> {
+    let cfg = st.snapshot().await;
+    let base = st.base_dir().to_path_buf();
+    Json(crate::tls::describe(&cfg.tls, &st.paths.tls_dir, &base))
+}
+
+#[derive(Deserialize)]
+struct SelfSignedReq {
+    /// 要签进证书的域名/IP；空则用配置里的 san
+    #[serde(default)]
+    san: Vec<String>,
+}
+
+/// 用当前域名重签自签证书。写盘后需要重启（或下一次进程启动）才生效，
+/// 这一点在返回值里如实写明，不假装能热替换。
+async fn api_tls_selfsigned(
+    State(st): State<Arc<AppState>>,
+    Json(req): Json<SelfSignedReq>,
+) -> Json<Value> {
+    let cfg = st.snapshot().await;
+    let mut names = req.san;
+    if names.is_empty() {
+        names = cfg.tls.san.clone();
+    }
+    match crate::tls::reset_self_signed(&cfg.tls, &st.paths.tls_dir, &names) {
+        Ok(v) => Json(json!({
+            "ok": true,
+            "names": v,
+            "note": "证书已重写；重启进程或下一次热重载后生效",
+        })),
+        Err(e) => Json(json!({ "ok": false, "error": format!("{e:#}") })),
+    }
+}
+
 async fn api_backends(State(st): State<Arc<AppState>>) -> Json<Value> {
     let cfg = st.snapshot().await;
     Json(json!({
@@ -863,12 +997,35 @@ async fn api_put_config(
         before.server.listen != cfg.server.listen || before.server.admin_listen != cfg.server.admin_listen;
     let tls_restart = before.tls.enabled != cfg.tls.enabled || before.tls.listen != cfg.tls.listen;
 
+    let fw_auto = cfg.firewall.enabled && cfg.firewall.auto_sync;
+    let fw_cfg = cfg.clone();
     st.apply(cfg).await.map_err(ApiError::bad)?;
+
+    // 改了规则/监听地址 → 端口集合可能变了，顺手把系统防火墙同步一次。
+    // 放在 apply 之后：配置都没生效就放行端口，等于给一个不存在的服务开口子。
+    let mut firewall = serde_json::Value::Null;
+    if fw_auto {
+        if let Ok(report) =
+            tokio::task::spawn_blocking(move || crate::firewall::apply(&fw_cfg)).await
+        {
+            if !report.ok {
+                tracing::warn!(backend = %report.backend, error = %report.error, "防火墙同步失败");
+            }
+            firewall = json!({
+                "ok": report.ok,
+                "backend": report.backend,
+                "ports": report.ports,
+                "error": report.error,
+            });
+        }
+    }
+
     Ok(Json(json!({
         "ok": true,
         "applied": true,
         "restart_required": restart_required,
         "tls_restart_required": tls_restart,
+        "firewall": firewall,
     })))
 }
 

@@ -42,6 +42,14 @@ pub struct Config {
     /// 自定义规则：按请求特征改写网关行为（缓存/回源/重定向/鉴权等）
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub rules: Vec<crate::rules::Rule>,
+    /// 静态站点：网关自己托管，不必再挂一个 nginx
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub sites: Vec<crate::sites::SiteConfig>,
+    /// 动态项目：网关负责拉起进程、端口映射、CORS、启停
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub apps: Vec<crate::apps::AppConfig>,
+    /// 系统防火墙联动（端口放行），和 rules 刻意分开
+    pub firewall: crate::firewall::FirewallConfig,
     pub extensions: ExtensionsConfig,
 }
 
@@ -66,6 +74,9 @@ pub struct ServerConfig {
     pub log_level: String,
     /// 请求体参与 WAF 检查的最大字节数；超出则跳过 body 检查（记 skip 计数）
     pub max_inspect_bytes: usize,
+    /// 多久扫一次堆、把空闲页还给系统（秒）。0 = 关闭。
+    /// malloc_trim 只是遍历 arena 释放空闲页，代价很小；高频轻扫比低频大扫更平稳。
+    pub heap_trim_secs: u64,
     /// 后端负载均衡策略，路由可用 `lb` 覆盖
     pub lb: LbStrategy,
     /// 响应里的 Server 头。非空则统一覆盖（含转发响应），空串则删除该头。
@@ -120,6 +131,12 @@ pub struct TlsConfig {
     pub min_version: String,
     /// 自签证书有效期（天）
     pub self_signed_days: u32,
+    /// 自签证书要签进去的额外域名/IP（SAN）。写产品域名，浏览器才能对上号
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub san: Vec<String>,
+    /// 明文 HTTP 一律 301 到 HTTPS（tls.enabled 为真时生效）
+    #[serde(default)]
+    pub http_redirect: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -579,6 +596,10 @@ pub struct RouteConfig {
     /// 覆盖全局负载均衡策略（None = 跟随 server.lb）
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub lb: Option<LbStrategy>,
+    /// 由 `[[apps]]` 推导出来的路由（不写盘、不出现在 UI 里）。
+    /// 有它就能复用整套转发/统计/缓存逻辑，不必为动态项目再写一条旁路。
+    #[serde(skip_serializing, default, rename = "_synthetic")]
+    pub synthetic: bool,
 }
 
 /// 路由目标：单个后端或一个分组。
@@ -617,6 +638,7 @@ impl Default for ServerConfig {
             default_upstream: DEFAULT_UPSTREAM.to_string(),
             request_timeout_ms: DEFAULT_TIMEOUT_MS,
             log_level: "info".to_string(),
+            heap_trim_secs: 5,
             max_inspect_bytes: 8192,
             lb: LbStrategy::Wrr,
             server_header: "optical".into(),
@@ -634,6 +656,8 @@ impl Default for TlsConfig {
             key: String::new(),
             min_version: "1.2".to_string(),
             self_signed_days: 365,
+            san: Vec::new(),
+            http_redirect: false,
         }
     }
 }
@@ -892,6 +916,7 @@ impl Default for RouteConfig {
             timeout_ms: None,
             cache: None,
             lb: None,
+            synthetic: false,
         }
     }
 }
@@ -914,6 +939,39 @@ pub fn demo_config() -> Config {
 }
 
 impl Config {
+    /// 把 `[[apps]]` 展开成普通路由（name = `app:<name>`），并前置到路由表最前面。
+    /// 只要 enabled，映射就在；启停的是进程，不是路由——否则"停掉服务"会变成 502 而不是明确的 503。
+    pub fn expand_apps(&mut self) {
+        self.routes.retain(|r| !r.synthetic);
+        let mut extra: Vec<RouteConfig> = Vec::new();
+        for app in self.apps.iter().filter(|a| a.enabled) {
+            for host in &app.hosts {
+                extra.push(RouteConfig {
+                    name: format!("app:{}", app.name),
+                    host: host.clone(),
+                    path_prefix: if app.path_prefix.trim().is_empty() {
+                        "/".to_string()
+                    } else {
+                        app.path_prefix.clone()
+                    },
+                    upstream: app.upstream(),
+                    backend: String::new(),
+                    backend_group: String::new(),
+                    strip_prefix: app.strip_prefix,
+                    rewrite_host: true,
+                    timeout_ms: None,
+                    cache: Some(false),
+                    lb: None,
+                    synthetic: true,
+                });
+            }
+        }
+        if !extra.is_empty() {
+            extra.extend(self.routes.drain(..));
+            self.routes = extra;
+        }
+    }
+
     pub fn load_or_init(path: &Path) -> Result<(Self, bool)> {
         if path.exists() {
             Ok((Self::load(path)?, false))
@@ -1220,6 +1278,65 @@ impl Config {
                 Err(e) => errs.push(format!("{field} 非法: {e}")),
             }
         }
+        // ---- 静态站点 ----
+        let mut seen_site = std::collections::HashSet::new();
+        for (i, site) in self.sites.iter().enumerate() {
+            if site.hosts.is_empty() {
+                errs.push(format!("sites[{i}] 没有绑定任何 hosts"));
+            }
+            if site.root.trim().is_empty() {
+                errs.push(format!("sites[{i}] ({}) 缺少 root", site.display_name()));
+            } else if !resolve_one(&site.root, base).exists() {
+                errs.push(format!(
+                    "sites[{i}] ({}) 的 root 不存在: {}",
+                    site.display_name(),
+                    site.root
+                ));
+            }
+            if !seen_site.insert(site.display_name().to_string()) {
+                errs.push(format!("sites[{i}] 站点名重复: {}", site.display_name()));
+            }
+            if site.index.is_empty() {
+                errs.push(format!("sites[{i}] index 不能为空，至少写一个默认文档"));
+            }
+        }
+
+        // ---- 动态项目 ----
+        let mut seen_app = std::collections::HashSet::new();
+        for (i, app) in self.apps.iter().enumerate() {
+            if app.name.trim().is_empty() {
+                errs.push(format!("apps[{i}] 缺少 name"));
+            } else if !seen_app.insert(app.name.clone()) {
+                errs.push(format!("apps[{i}] 名称重复: {}", app.name));
+            }
+            if app.port == 0 {
+                errs.push(format!("apps[{i}] ({}) 缺少 port（应用在 127.0.0.1 上的监听端口）", app.name));
+            }
+            if app.hosts.is_empty() {
+                errs.push(format!("apps[{i}] ({}) 没有绑定任何 hosts", app.name));
+            }
+            if !app.path_prefix.trim().is_empty() && !app.path_prefix.starts_with('/') {
+                errs.push(format!("apps[{i}] ({}) path_prefix 必须以 / 开头", app.name));
+            }
+            if app.command.trim().is_empty() && app.entry.trim().is_empty() {
+                errs.push(format!(
+                    "apps[{i}] ({}) 既没有 command 也没有 entry，不知道该怎么启动",
+                    app.name
+                ));
+            }
+            if !app.cwd.trim().is_empty() && !resolve_one(&app.cwd, base).exists() {
+                errs.push(format!("apps[{i}] ({}) 的 cwd 不存在: {}", app.name, app.cwd));
+            }
+        }
+
+        // ---- 防火墙联动 ----
+        if self.firewall.enabled {
+            let b = self.firewall.backend.trim().to_ascii_lowercase();
+            if !matches!(b.as_str(), "" | "auto" | "nft" | "iptables" | "ufw" | "none" | "off") {
+                errs.push(format!("firewall.backend 不认识: {b}"));
+            }
+        }
+
         // ---- 自定义规则 ----
         let mut seen = std::collections::HashSet::new();
         for (i, r) in self.rules.iter().enumerate() {
@@ -1263,6 +1380,10 @@ impl Config {
                     errs.push(format!("rules[{i}] ({}) 自定义响应状态码非法", r.name));
                 }
             }
+        }
+
+        if self.server.heap_trim_secs > 3600 {
+            errs.push("server.heap_trim_secs 必须在 0~3600 之间（0 = 关闭）".to_string());
         }
 
         if !(MIN_SAMPLE_MS..=MAX_SAMPLE_MS).contains(&self.metrics.sample_interval_ms) {

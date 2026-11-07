@@ -9,6 +9,7 @@
 //! 明确未交付：QUIC/HTTP3（需要完整 h3 协议栈，见 README「未实现」一节）。
 
 mod admin;
+mod apps;
 mod auth;
 mod backends;
 mod cache;
@@ -21,6 +22,8 @@ mod history;
 mod proxy;
 mod route;
 mod rules;
+mod sites;
+mod firewall;
 mod stats;
 mod state;
 mod storage;
