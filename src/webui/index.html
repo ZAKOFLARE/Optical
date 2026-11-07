@@ -1545,7 +1545,13 @@
     }).then(function(){
       hideLogin(); $("lg-pass").value=""; $("lg-totp").value="";
       return boot();
-    }).catch(function(e){ $("lg-err").textContent = e.message || t("login.failed"); });
+    }).catch(function(e){
+      $("lg-err").textContent = e.message || t("login.failed");
+      // 失败后把口令框全选：浏览器自动填充常常塞的是旧口令，
+      // 不选中就会变成"在旧口令后面接着打字"，怎么试都错。
+      $("lg-pass").focus();
+      $("lg-pass").select();
+    });
   });
 
   function checkAuth(){
