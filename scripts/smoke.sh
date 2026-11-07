@@ -98,7 +98,7 @@ audit_max_bytes = 262144
 
 [metrics]
 top_n = 5
-history_secs = 60
+history_points = 2400
 
 # 非固化路径：所有落盘位置挪到 <cfg_dir>/data
 [paths]
@@ -297,13 +297,29 @@ patch_sample() {
   curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config" \
     | python3 -c "import sys,json; c=json.load(sys.stdin)['config']; c['metrics']['sample_interval_ms']=$1; print(json.dumps(c))" 2>/dev/null
 }
-SAMPLE_BODY="$(patch_sample 3600000)"
-check "PUT 采样间隔 1 小时档" '"applied":true' "$(curl -s -m 6 -X PUT "${AUTH[@]}" -H 'content-type: application/json' -d "$SAMPLE_BODY" "http://$ADM/api/config")"
-sleep 1.2
-check "历史接口回显采样间隔" '"interval_ms":3600000' "$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/history")"
-check "1 小时档保留 168 点（窗口 7 天）" '"capacity":168' "$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/history")"
-check "低于 15 秒的间隔被拒" '400' "$(code -X PUT "${AUTH[@]}" -H 'content-type: application/json' -d "$(patch_sample 1000)" "http://$ADM/api/config")"
-check "超过 1 个月的间隔被拒" '400' "$(code -X PUT "${AUTH[@]}" -H 'content-type: application/json' -d "$(patch_sample 9999999999)" "http://$ADM/api/config")"
+SAMPLE_BODY="$(patch_sample 30000)"
+check "PUT 采集间隔 30 秒" '"applied":true' "$(curl -s -m 6 -X PUT "${AUTH[@]}" -H 'content-type: application/json' -d "$SAMPLE_BODY" "http://$ADM/api/config")"
+# 等热重载生效并在新间隔下补出第一个点（换间隔会清空历史）
+for _ in $(seq 1 16); do
+  if curl -s -m 3 "${AUTH[@]}" "http://$ADM/api/history?gran=60&range=3600" | grep -q '"points":\[{"t"'; then break; fi
+  sleep 0.5
+done
+check "低于 5 秒的采集间隔被拒" '400' "$(code -X PUT "${AUTH[@]}" -H 'content-type: application/json' -d "$(patch_sample 1000)" "http://$ADM/api/config")"
+check "超过 10 分钟的采集间隔被拒" '400' "$(code -X PUT "${AUTH[@]}" -H 'content-type: application/json' -d "$(patch_sample 9999999999)" "http://$ADM/api/config")"
+
+# 粒度/范围是查询参数：不写配置，也就不会和别的会话打架
+HIST="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/history?gran=60&range=3600")"
+check "历史接口回显请求粒度（60s）" '"gran_secs":60' "$HIST"
+check "历史接口按粒度返回桶宽" '"bucket_ms":60000' "$HIST"
+check "历史接口回显请求范围（1h）" '"range_secs":3600' "$HIST"
+check "点自带时间戳 t" '"t":' "$HIST"
+# 范围比粒度还小的时候必须被夹到粒度，否则返回空图
+check "范围小于粒度时自动夹到粒度" '"range_secs":60' "$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/history?gran=60&range=1")"
+# 粒度查询前后配置版本号不变 = 真的没有写配置
+REV_BEFORE="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config" | python3 -c 'import sys,json;print(json.load(sys.stdin)["rev"])' 2>/dev/null)"
+curl -s -o /dev/null -m 6 "${AUTH[@]}" "http://$ADM/api/history?gran=3600&range=86400"
+REV_AFTER="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config" | python3 -c 'import sys,json;print(json.load(sys.stdin)["rev"])' 2>/dev/null)"
+check "换粒度不写配置（版本号不变）" "$REV_BEFORE" "$REV_AFTER"
 
 echo "-- 配置乐观锁 --"
 CUR="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config")"

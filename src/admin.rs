@@ -314,8 +314,8 @@ async fn status_payload(st: &Arc<AppState>) -> Value {
             "inline": cfg.error_pages.bodies.len(),
         },
         "sample_interval_ms": cfg.metrics.sample_interval_ms,
-        // 档位保留点数：前端用它算窗口（间隔 × 点数），不用等 /api/history
-        "sample_points": st.sampling().1,
+        "history_points": cfg.metrics.history_points,
+        "stored_bucket_ms": st.history_meta().0,
         "ws_clients": st.metrics.ws_clients.load(std::sync::atomic::Ordering::Relaxed),
         "config_rev": st.config_rev(),
         "listen_v6": cfg.server.listen_v6,
@@ -353,7 +353,6 @@ async fn ws_loop(mut socket: WebSocket, st: Arc<AppState>) {
                 let cfg = st.snapshot().await;
                 let mut payload = status_payload(&st).await;
                 payload["type"] = json!("snapshot");
-                payload["history"] = json!(st.history_snapshot());
                 payload["top"] = json!({
                     "ua": st.top_ua(cfg.metrics.top_n.max(1)),
                     "ip": st.top_ip(cfg.metrics.top_n.max(1)),
@@ -454,8 +453,41 @@ async fn api_metrics(State(st): State<Arc<AppState>>) -> Json<Value> {
     }))
 }
 
-async fn api_history(State(st): State<Arc<AppState>>) -> Json<Value> {
-    Json(json!({ "ok": true, "history": st.history_snapshot() }))
+#[derive(Deserialize)]
+struct HistoryQuery {
+    /// 桶宽度（秒），默认 60
+    gran: Option<u64>,
+    /// 回看范围（秒），默认 3600
+    range: Option<u64>,
+}
+
+/// 历史曲线：`?gran=60&range=3600` 是查询参数，不落到配置里。
+/// 换粒度/范围只是换个视角看同一份数据，谁也不覆盖谁，自然不会有会话冲突。
+async fn api_history(
+    State(st): State<Arc<AppState>>,
+    Query(q): Query<HistoryQuery>,
+) -> Json<Value> {
+    let (sample_ms, points_cap) = st.sampling();
+    let gran_secs = q
+        .gran
+        .unwrap_or(60)
+        .clamp((sample_ms / 1000).max(1), 86_400);
+    let range_secs = q.range.unwrap_or(3_600).clamp(gran_secs, 90 * 86_400);
+    let b = st.history_query(gran_secs * 1000, range_secs);
+    let (stored_bucket_ms, stored_points) = st.history_meta();
+    Json(json!({
+        "ok": true,
+        "gran_secs": gran_secs,
+        "range_secs": range_secs,
+        "bucket_ms": b.bucket_ms,
+        "exact": b.exact,
+        "sample_interval_ms": sample_ms,
+        "history_points": points_cap,
+        // 服务端真实存着的分辨率：前端据此说明"更早的数据已经降采样"
+        "stored_bucket_ms": stored_bucket_ms,
+        "stored_points": stored_points,
+        "points": b.points,
+    }))
 }
 
 async fn api_backends(State(st): State<Arc<AppState>>) -> Json<Value> {

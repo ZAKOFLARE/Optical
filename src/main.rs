@@ -17,6 +17,7 @@ mod commands;
 mod config;
 mod echo;
 mod errors;
+mod history;
 mod proxy;
 mod route;
 mod state;
