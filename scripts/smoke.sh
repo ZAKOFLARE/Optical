@@ -287,6 +287,43 @@ check "HTTPS 握手并转发" '"service":"optical-echo"' "$(curl -sk -m 6 "https
 check "TLS1.2 客户端可握手（min=1.2）" '200' "$(code -k --tls-max 1.2 "https://$TLS/hello")"
 check "TLS 握手计数已统计" '"tls_handshakes"' "$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/metrics")"
 
+echo "-- 证书上传（网关只挂证书，不签发） --"
+# 上传接口的入参是一对现成的 PEM，用 python 拼 JSON 比在 shell 里转义换行靠谱
+up_json() {
+  python3 - "$1" "$2" <<'PY'
+import json, sys
+print(json.dumps({"cert": open(sys.argv[1]).read(), "key": open(sys.argv[2]).read()}))
+PY
+}
+up_post() {
+  curl -s -m 8 "${AUTH[@]}" -H 'content-type: application/json' --data-binary "$(up_json "$1" "$2")" "http://$ADM/api/tls/upload"
+}
+tls_field() {
+  curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/tls" \
+    | python3 -c "import sys,json;print(json.load(sys.stdin)['$1'])"
+}
+
+# A 组：先签一张已知域名的证书，后面断言才有确定的期望值
+curl -s -m 6 "${AUTH[@]}" -X POST -H 'content-type: application/json' \
+  -d '{"san":["upload.example.com"]}' "http://$ADM/api/tls/selfsigned" >/dev/null
+check "证书概况带指纹（外部证书也能解析）" '"fingerprint"' "$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/tls")"
+cp "$(tls_field cert_path)" "$TMP/a-cert.pem"
+cp "$(tls_field key_path)" "$TMP/a-key.pem"
+
+# B 组：重签一次，手上就有一把与 A 证书对不上的私钥
+curl -s -m 6 "${AUTH[@]}" -X POST -H 'content-type: application/json' \
+  -d '{"san":["b.example.com"]}' "http://$ADM/api/tls/selfsigned" >/dev/null
+UP_BAD="$(up_post "$TMP/a-cert.pem" "$(tls_field key_path)")"
+check "证书与私钥对不上时拒绝上传" '"ok":false' "$UP_BAD"
+
+UP_OK="$(up_post "$TMP/a-cert.pem" "$TMP/a-key.pem")"
+check "合法证书对上传成功" '"ok":true' "$UP_OK"
+check "上传回执带覆盖域名" 'upload.example.com' "$UP_OK"
+check "上传回执带 SHA-256 指纹" '"fingerprint"' "$UP_OK"
+check "上传后配置指向外部证书" '"self_signed":false' "$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/tls")"
+NEWKEY="$(printf '%s' "$UP_OK" | python3 -c 'import sys,json;print(json.load(sys.stdin)["key_path"])')"
+check "私钥落盘 0600" '^600$' "$(stat -c %a "$NEWKEY" 2>/dev/null || echo unknown)"
+
 echo "-- WebSocket / TOTP 二维码 / 采样间隔 --"
 WS_CODE="$(curl -s -o /dev/null -w '%{http_code}' -m 2   -H 'Connection: Upgrade' -H 'Upgrade: websocket'   -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw=='   -b "$COOKIE" "http://$ADM/api/ws" 2>/dev/null || true)"
 check "管理面 WebSocket 升级返回 101" '101' "$WS_CODE"
