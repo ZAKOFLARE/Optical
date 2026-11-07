@@ -157,6 +157,28 @@
   .rank-tbl .pct i{display:block;height:100%;background:var(--blue);border-radius:3px}
   .rank-tbl .pct-n{margin-left:8px;font-size:11.5px;color:var(--ink-2)}
   .rank-tbl .muted{color:var(--ink-3)}
+  /* 自定义规则编辑器 */
+  .rule-card{padding:14px 16px;margin-bottom:12px}
+  .rule-card.off{opacity:.62}
+  .rule-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  .rule-head .rname{flex:0 0 220px;height:28px;border:1px solid var(--line-2);background:var(--panel);
+    color:var(--ink);border-radius:var(--r);padding:0 8px;font-family:inherit;font-size:12.5px;font-weight:600}
+  .rule-head .grow{flex:1}
+  .rswitch{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--ink-2)}
+  .rule-sec{border-top:1px dashed var(--line);padding-top:10px;margin-top:6px}
+  .rule-label{font-size:11px;color:var(--ink-3);letter-spacing:.04em;margin-bottom:6px;text-transform:uppercase}
+  .mrow{display:flex;gap:6px;align-items:center;margin-bottom:6px}
+  .mrow select,.mrow input{height:28px;border:1px solid var(--line-2);background:var(--panel);
+    color:var(--ink);border-radius:var(--r);padding:0 7px;font-family:inherit;font-size:12px}
+  .mrow select{flex:0 0 116px}
+  .mrow .mnames{flex:0 0 110px}
+  .mrow input[data-path$=".value"]{flex:1}
+  .agrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));gap:8px 14px;margin-bottom:8px}
+  .af{display:flex;flex-direction:column;gap:3px;font-size:11.5px;color:var(--ink-2)}
+  .af input,.af select{height:28px;border:1px solid var(--line-2);background:var(--panel);
+    color:var(--ink);border-radius:var(--r);padding:0 7px;font-family:inherit;font-size:12px}
+  .af .pair{display:flex;gap:6px}
+  .af .pair input{flex:1;min-width:0}
   .tbl td.copyable:hover{color:var(--blue);text-decoration:underline;text-underline-offset:2px}
   .totp-qr{display:flex;align-items:center;gap:14px}
   .totp-qr img{border:1px solid var(--line);background:#fff;padding:6px}
@@ -308,6 +330,10 @@
         <svg viewBox="0 0 24 24"><path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z"/></svg>
         <span data-i18n="nav.overview">概览</span>
       </button>
+      <button class="rail-item" data-page="p-analytics">
+        <svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"/><path d="M7 15l4-5 3 3 4-6"/></svg>
+        <span data-i18n="nav.analytics">分析</span>
+      </button>
       <button class="rail-item" data-page="p-routes">
         <svg viewBox="0 0 24 24"><path d="M6 5v11a3 3 0 0 0 3 3h9"/><circle cx="18" cy="19" r="2.2"/><circle cx="6" cy="4" r="2.2"/></svg>
         <span data-i18n="nav.routes">路由</span>
@@ -315,6 +341,10 @@
       <button class="rail-item" data-page="p-waf">
         <svg viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4.4-3 8-7 9-4-1-7-4.6-7-9V6z"/></svg>
         <span data-i18n="nav.waf">WAF</span>
+      </button>
+      <button class="rail-item" data-page="p-rules">
+        <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h13"/><circle cx="19" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg>
+        <span data-i18n="nav.rules">自定义</span>
       </button>
       <button class="rail-item" data-page="p-backends">
         <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6"/><rect x="3" y="14" width="18" height="6"/></svg>
@@ -356,6 +386,19 @@
         </div>
         <div class="kpi-strip" id="kpis"></div>
 
+        <div class="sec-hint" style="margin-top:14px">
+          <span data-i18n="ov.toanalytics">流量曲线、排行榜与筛选已经挪到左侧「分析」页。</span>
+          <a href="#" id="go-analytics" style="margin-left:6px" data-i18n="ov.goto">去看看 →</a>
+        </div>
+      </section>
+
+
+      <!-- ================= 分析 ================= -->
+      <section class="page" id="p-analytics">
+        <div class="sec-head">
+          <h2 data-i18n="an.title">流量分析</h2>
+          <span class="sec-hint" data-i18n="an.hint">粒度/范围/筛选都是查询参数，不写配置；数据经 WebSocket 实时推送。</span>
+        </div>
         <div class="card">
           <div class="chart-head">
             <div class="tabs" id="chart-tabs">
@@ -394,6 +437,9 @@
                 <option value="10" selected>Top 10</option>
                 <option value="20">Top 20</option>
                 <option value="50">Top 50</option>
+                <option value="100">Top 100</option>
+                <option value="200">Top 200</option>
+                <option value="all" data-i18n="ov.rank.all">全部</option>
               </select>
               <span class="sec-hint" id="rank-window">—</span>
             </div>
@@ -413,7 +459,6 @@
           </table>
         </div>
       </section>
-
       <!-- ================= 路由 ================= -->
       <section class="page" id="p-routes">
         <div class="sec-head">
@@ -484,6 +529,24 @@
             <tbody id="header-rules"></tbody>
           </table>
         </div>
+      </section>
+
+      <!-- ================= 自定义规则 ================= -->
+      <section class="page" id="p-rules">
+        <div class="sec-head">
+          <h2 data-i18n="rl.title">自定义规则</h2>
+          <span class="sec-hint" data-i18n="rl.hint">按请求特征改写网关行为。规则自上而下评估，所有命中的规则依次合并，后面的覆盖前面的。</span>
+          <button class="btn btn-primary btn-sm" id="btn-rule-add" data-i18n="rl.add">+ 新建规则</button>
+          <button class="btn btn-sm" id="btn-rule-save" data-i18n="rl.save">保存规则</button>
+        </div>
+        <div class="card" style="margin-bottom:12px">
+          <div class="card-body note" style="padding:14px 18px">
+            <span data-i18n="rl.order">执行顺序：WAF → 规则短路动作（鉴权 / 强制 HTTPS / 重定向 / 自定义响应 / 上传上限 / WS 开关）→ 选路 → 缓存 → 回源改写 → 响应头。</span>
+            <br>
+            <span data-i18n="rl.unsupported">暂不支持：分片回源、OCSP、下行限速（需要改动数据面结构，不给空开关）。</span>
+          </div>
+        </div>
+        <div id="rule-list"></div>
       </section>
 
       <!-- ================= 后端 ================= -->
@@ -770,7 +833,30 @@
       "empty.generic":"暂无数据",
       "ov.title":"运行概览",
       "ov.tab.req":"请求 / 采样","ov.tab.bw":"带宽","ov.tab.cache":"缓存","ov.tab.block":"拦截",
-      "ov.rank":"排行榜","ov.rank.key":"名称","ov.rank.req":"请求","ov.rank.err":"错误",
+      "nav.analytics":"分析","nav.rules":"自定义",
+      "an.title":"流量分析","an.hint":"粒度/范围/筛选都是查询参数，不写配置；数据经 WebSocket 实时推送。",
+      "ov.toanalytics":"流量曲线、排行榜与筛选已经挪到左侧「分析」页。","ov.goto":"去看看 →",
+      "ov.rank":"排行榜","ov.rank.all":"全部",
+      "rl.title":"自定义规则","rl.add":"+ 新建规则","rl.save":"保存规则",
+      "rl.hint":"按请求特征改写网关行为。规则自上而下评估，所有命中的规则依次合并，后面的覆盖前面的。",
+      "rl.order":"执行顺序：WAF → 规则短路动作（鉴权 / 强制 HTTPS / 重定向 / 自定义响应 / 上传上限 / WS 开关）→ 选路 → 缓存 → 回源改写 → 响应头。",
+      "rl.unsupported":"暂不支持：分片回源、OCSP、下行限速（需要改动数据面结构，不给空开关）。",
+      "rl.name.ph":"规则名，如 静态资源长缓存","rl.enabled":"启用","rl.remove":"删除",
+      "rl.when":"匹配条件（全部满足）","rl.then":"执行动作","rl.add.cond":"添加条件",
+      "rl.value":"匹配值","rl.header.name":"头/Cookie 名","rl.keep":"不改","rl.yes":"是","rl.no":"否",
+      "rl.empty":"还没有规则。点右上角「新建规则」，例如：路径前缀 /static → 缓存 1 天。",
+      "rl.saved":"规则已保存",
+      "act.cache_ttl":"节点缓存 TTL（秒）","act.browser_ttl":"浏览器缓存 TTL（秒）",
+      "act.cache_key":"自定义 cache key","act.server":"server 名","act.force_https":"强制 HTTPS",
+      "act.ws":"WebSocket","act.max_upload":"最大上传（字节）","act.timeout":"回源超时（ms）",
+      "act.host_rewrite":"Host 头改写","act.url_rewrite":"回源 URL 重写",
+      "act.redirect":"URL 重定向（状态码 / 目标）","act.custom":"自定义返回（状态码 / 内容）",
+      "act.token":"Token 鉴权（名 / 值）",
+      "mk.host":"域名","mk.path":"路径前缀","mk.full_path":"完整路径","mk.query":"查询字符串",
+      "mk.ext":"文件后缀","mk.filename":"文件名","mk.header":"请求头","mk.scheme":"请求协议",
+      "mk.client_ip":"客户端 IP","mk.method":"请求方法","mk.cookie":"Cookie",
+      "mo.eq":"等于","mo.ne":"不等于","mo.contains":"包含","mo.ncontains":"不包含",
+      "mo.prefix":"前缀","mo.suffix":"后缀","mo.wildcard":"通配","mo.cidr":"网段","ov.rank.key":"名称","ov.rank.req":"请求","ov.rank.err":"错误",
       "ov.rank.pct":"占比","ov.rank.avg":"平均耗时","ov.rank.add":"添加筛选","ov.rank.remove":"删除",
       "ov.rank.value":"值，如 2xx / api","ov.rank.nofilter":"暂无筛选条件，统计全部流量",
       "ov.rank.empty":"当前时间范围没有匹配的请求","ov.rank.total":"总计",
@@ -914,7 +1000,30 @@
       "empty.generic":"No data",
       "ov.title":"Overview",
       "ov.tab.req":"Requests / sample","ov.tab.bw":"Bandwidth","ov.tab.cache":"Cache","ov.tab.block":"Blocks",
-      "ov.rank":"Leaderboard","ov.rank.key":"Name","ov.rank.req":"Requests","ov.rank.err":"Errors",
+      "nav.analytics":"Analytics","nav.rules":"Rules",
+      "an.title":"Traffic analytics","an.hint":"Bucket/range/filters are query params, never written to config; data streams over WebSocket.",
+      "ov.toanalytics":"Traffic chart, leaderboard and filters moved to the Analytics page.","ov.goto":"Open →",
+      "ov.rank":"Leaderboard","ov.rank.all":"All",
+      "rl.title":"Custom rules","rl.add":"+ New rule","rl.save":"Save rules",
+      "rl.hint":"Rewrite gateway behaviour by request traits. Rules are evaluated top-down; all matches merge, later ones win.",
+      "rl.order":"Order: WAF → short-circuit actions (auth / force HTTPS / redirect / custom response / upload cap / WS) → routing → cache → origin rewrite → response headers.",
+      "rl.unsupported":"Not supported yet: slice origin, OCSP, downstream throttling (needs data-plane work; no fake switches).",
+      "rl.name.ph":"Rule name, e.g. static long cache","rl.enabled":"Enabled","rl.remove":"Delete",
+      "rl.when":"Match (all must hold)","rl.then":"Actions","rl.add.cond":"Add condition",
+      "rl.value":"value","rl.header.name":"header/cookie name","rl.keep":"unchanged","rl.yes":"yes","rl.no":"no",
+      "rl.empty":"No rules yet. Click \"New rule\" — e.g. path prefix /static → cache 1 day.",
+      "rl.saved":"Rules saved",
+      "act.cache_ttl":"Edge cache TTL (s)","act.browser_ttl":"Browser TTL (s)",
+      "act.cache_key":"Custom cache key","act.server":"Server name","act.force_https":"Force HTTPS",
+      "act.ws":"WebSocket","act.max_upload":"Max upload (bytes)","act.timeout":"Origin timeout (ms)",
+      "act.host_rewrite":"Host header rewrite","act.url_rewrite":"Origin URL rewrite",
+      "act.redirect":"Redirect (status / target)","act.custom":"Custom response (status / body)",
+      "act.token":"Token auth (name / value)",
+      "mk.host":"Host","mk.path":"Path prefix","mk.full_path":"Full path","mk.query":"Query",
+      "mk.ext":"Extension","mk.filename":"Filename","mk.header":"Header","mk.scheme":"Scheme",
+      "mk.client_ip":"Client IP","mk.method":"Method","mk.cookie":"Cookie",
+      "mo.eq":"equals","mo.ne":"not equals","mo.contains":"contains","mo.ncontains":"not contains",
+      "mo.prefix":"prefix","mo.suffix":"suffix","mo.wildcard":"wildcard","mo.cidr":"CIDR","ov.rank.key":"Name","ov.rank.req":"Requests","ov.rank.err":"Errors",
       "ov.rank.pct":"Share","ov.rank.avg":"Avg latency","ov.rank.add":"Add filter","ov.rank.remove":"Remove",
       "ov.rank.value":"value, e.g. 2xx / api","ov.rank.nofilter":"No filters — counting all traffic",
       "ov.rank.empty":"No matching requests in this range","ov.rank.total":"total",
@@ -1071,7 +1180,8 @@
     cfg:null, status:null, metrics:null, history:null, snapshots:[], audit:[],
     chart:"requests", rows:[], headerRules:[], backends:[], groups:[], errorBodies:[],
     filter:"", authed:false, paths:null, ws:null, pollTimer:null, wsRetry:0, rev:0,
-    rankBy:"route", rankLimit:10, filters:[], rank:null
+    rankBy:"route", rankLimit:Number(localStorage.getItem("optical.rankLimit")) || 10,
+    filters:[], rank:null, rules:null
   };
 
   function t(k, vars){
@@ -1436,7 +1546,7 @@
       }).join("");
     }
     sel.value = state.rankBy;
-    $("rank-limit").value = String(state.rankLimit);
+    $("rank-limit").value = state.rankLimit >= 200 ? "all" : String(state.rankLimit);
   }
 
   function renderFilters(){
@@ -1545,7 +1655,8 @@
       refreshAnalytics();
     });
     $("rank-limit").addEventListener("change", function(){
-      state.rankLimit = Number(this.value) || 10;
+      state.rankLimit = this.value === "all" ? 200 : (Number(this.value) || 10);
+      localStorage.setItem("optical.rankLimit", state.rankLimit);
       refreshAnalytics();
     });
     var box = $("rank-filters");
@@ -1579,6 +1690,187 @@
         if (state.filters[i]) state.filters[i].value = el.value;
         refreshAnalytics();
       }
+    });
+  }
+
+  // ---------- 自定义规则 ----------
+  var MATCH_KINDS = ["host","path","full_path","query","ext","filename","header","scheme","client_ip","method","cookie"];
+  var MATCH_OPS = ["eq","ne","contains","ncontains","prefix","suffix","wildcard","cidr"];
+
+  function blankRule(){
+    return {
+      name: "", enabled: true, note: "",
+      matches: [{ kind: "path", name: "", op: "prefix", value: "" }],
+      actions: { response_headers: [] }
+    };
+  }
+
+  // 深拷一份在工作区改，保存时才写回配置——避免边打字边污染 cfg
+  function rulesDraft(){
+    if (!state.rules) state.rules = clone().rules || [];
+    return state.rules;
+  }
+
+  function setPath(obj, path, val){
+    var parts = path.split(".");
+    var cur = obj;
+    for (var i = 0; i < parts.length - 1; i++){
+      var k = parts[i];
+      if (cur[k] == null) cur[k] = /^\d+$/.test(parts[i+1]) ? [] : {};
+      cur = cur[k];
+    }
+    cur[parts[parts.length - 1]] = val;
+  }
+
+  function actionField(r, i, path, label, type, ph){
+    var v = path.split(".").reduce(function(o, k){ return o == null ? undefined : o[k]; }, r);
+    var val = (v === undefined || v === null) ? "" : v;
+    var input = type === "select"
+      ? '<select data-ri="'+i+'" data-path="'+path+'" data-type="bool">'+
+          '<option value=""'+(val===""?' selected':'')+'>'+esc(t("rl.keep"))+'</option>'+
+          '<option value="1"'+(val===true?' selected':'')+'>'+esc(t("rl.yes"))+'</option>'+
+          '<option value="0"'+(val===false?' selected':'')+'>'+esc(t("rl.no"))+'</option>'+
+        '</select>'
+      : '<input type="'+(type==="num"?"number":"text")+'" data-ri="'+i+'" data-path="'+path+'" data-type="'+(type||"text")+'" '+
+        'value="'+esc(String(val))+'" placeholder="'+esc(ph||t("rl.keep"))+'">';
+    return '<label class="af"><span>'+esc(label)+'</span>'+input+'</label>';
+  }
+
+  function ruleCard(r, i){
+    var matches = (r.matches || []).map(function(m, j){
+      var needName = m.kind === "header" || m.kind === "cookie";
+      return '<div class="mrow">'+
+        '<select data-ri="'+i+'" data-path="matches.'+j+'.kind" data-type="text">'+
+          MATCH_KINDS.map(function(k){
+            return '<option value="'+k+'"'+(k===m.kind?' selected':'')+'>'+esc(t("mk."+k))+'</option>';
+          }).join("")+'</select>'+
+        '<input class="mnames" data-ri="'+i+'" data-path="matches.'+j+'.name" data-type="text" '+
+          'value="'+esc(m.name||"")+'" placeholder="'+esc(t("rl.header.name"))+'"'+(needName?"":" style=display:none")+'>'+
+        '<select data-ri="'+i+'" data-path="matches.'+j+'.op" data-type="text">'+
+          MATCH_OPS.map(function(o){
+            return '<option value="'+o+'"'+(o===m.op?' selected':'')+'>'+esc(t("mo."+o))+'</option>';
+          }).join("")+'</select>'+
+        '<input data-ri="'+i+'" data-path="matches.'+j+'.value" data-type="text" value="'+esc(m.value||"")+'" placeholder="'+esc(t("rl.value"))+'">'+
+        '<button class="f-del" data-act="del-match" data-ri="'+i+'" data-mi="'+j+'" title="'+esc(t("ov.rank.remove"))+'">×</button>'+
+      '</div>';
+    }).join("");
+
+    var a = r.actions || {};
+    var redirect = a.redirect || {};
+    var custom = a.custom_response || {};
+    var token = a.token_auth || {};
+
+    return '<div class="card rule-card'+(r.enabled?"":" off")+'" data-ru="'+i+'">'+
+      '<div class="rule-head">'+
+        '<input class="rname" data-ri="'+i+'" data-path="name" data-type="text" value="'+esc(r.name||"")+'" placeholder="'+esc(t("rl.name.ph"))+'">'+
+        '<label class="rswitch"><input type="checkbox" data-ri="'+i+'" data-path="enabled" data-type="bool"'+(r.enabled?" checked":"")+'>'+esc(t("rl.enabled"))+'</label>'+
+        '<span class="grow"></span>'+
+        '<button class="btn btn-sm" data-act="up" data-ri="'+i+'">↑</button>'+
+        '<button class="btn btn-sm" data-act="down" data-ri="'+i+'">↓</button>'+
+        '<button class="btn btn-sm danger-btn" data-act="del-rule" data-ri="'+i+'">'+esc(t("rl.remove"))+'</button>'+
+      '</div>'+
+      '<div class="rule-sec"><div class="rule-label">'+esc(t("rl.when"))+'</div>'+matches+
+        '<button class="btn btn-sm" data-act="add-match" data-ri="'+i+'">+ '+esc(t("rl.add.cond"))+'</button></div>'+
+      '<div class="rule-sec"><div class="rule-label">'+esc(t("rl.then"))+'</div>'+
+        '<div class="agrid">'+
+          actionField(r, i, "actions.cache_ttl_secs", t("act.cache_ttl"), "num", "0 = 不缓存")+
+          actionField(r, i, "actions.browser_ttl_secs", t("act.browser_ttl"), "num")+
+          actionField(r, i, "actions.cache_key", t("act.cache_key"), "text", "{method}:{host}{path}")+
+          actionField(r, i, "actions.server_name", t("act.server"), "text")+
+          actionField(r, i, "actions.force_https", t("act.force_https"), "select")+
+          actionField(r, i, "actions.ws", t("act.ws"), "select")+
+          actionField(r, i, "actions.max_upload_bytes", t("act.max_upload"), "num")+
+          actionField(r, i, "actions.upstream_timeout_ms", t("act.timeout"), "num")+
+          actionField(r, i, "actions.host_rewrite", t("act.host_rewrite"), "text", "origin.internal")+
+          actionField(r, i, "actions.upstream_url_rewrite", t("act.url_rewrite"), "text", "/static{path}")+
+        '</div>'+
+        '<div class="agrid">'+
+          '<label class="af"><span>'+esc(t("act.redirect"))+'</span>'+
+            '<div class="pair"><input type="number" data-ri="'+i+'" data-path="actions.redirect.status" data-type="num" value="'+esc(String(redirect.status||""))+'" placeholder="301">'+
+            '<input type="text" data-ri="'+i+'" data-path="actions.redirect.to" data-type="text" value="'+esc(redirect.to||"")+'" placeholder="https://{host}{uri}"></div></label>'+
+          '<label class="af"><span>'+esc(t("act.custom"))+'</span>'+
+            '<div class="pair"><input type="number" data-ri="'+i+'" data-path="actions.custom_response.status" data-type="num" value="'+esc(String(custom.status||""))+'" placeholder="200">'+
+            '<input type="text" data-ri="'+i+'" data-path="actions.custom_response.body" data-type="text" value="'+esc(custom.body||"")+'" placeholder="&lt;h1&gt;维护中&lt;/h1&gt;"></div></label>'+
+          '<label class="af"><span>'+esc(t("act.token"))+'</span>'+
+            '<div class="pair"><input type="text" data-ri="'+i+'" data-path="actions.token_auth.name" data-type="text" value="'+esc(token.name||"")+'" placeholder="x-token">'+
+            '<input type="text" data-ri="'+i+'" data-path="actions.token_auth.value" data-type="text" value="'+esc(token.value||"")+'" placeholder="'+esc(t("rl.value"))+'"></div></label>'+
+        '</div>'+
+      '</div>'+
+    '</div>';
+  }
+
+  function renderRules(){
+    var box = $("rule-list");
+    if (!box) return;
+    var list = rulesDraft();
+    if (!list.length){
+      box.innerHTML = '<div class="card"><div class="card-body note" style="padding:18px">'+esc(t("rl.empty"))+'</div></div>';
+      return;
+    }
+    box.innerHTML = list.map(ruleCard).join("");
+  }
+
+  function bindRules(){
+    $("btn-rule-add").addEventListener("click", function(){
+      rulesDraft().push(blankRule());
+      renderRules();
+    });
+    var box = $("rule-list");
+    box.addEventListener("input", function(ev){
+      var el = ev.target.closest("[data-path]");
+      if (!el) return;
+      var r = rulesDraft()[Number(el.getAttribute("data-ri"))];
+      if (!r) return;
+      var path = el.getAttribute("data-path");
+      var type = el.getAttribute("data-type");
+      var val;
+      if (type === "bool" && el.type === "checkbox") val = el.checked;
+      else if (type === "bool") val = el.value === "" ? null : el.value === "1";
+      else if (type === "num") val = el.value === "" ? null : Number(el.value);
+      else val = el.value;
+      if (path.indexOf("actions.redirect.") === 0 || path.indexOf("actions.custom_response.") === 0 || path.indexOf("actions.token_auth.") === 0){
+        // 子对象整块赋值，避免出现 {} 空壳
+        var kind = path.split(".")[1];
+        var field = path.split(".")[2];
+        var obj = Object.assign({}, r.actions[kind] || {});
+        if (val === null || val === "") delete obj[field]; else obj[field] = val;
+        var any = Object.keys(obj).length > 0;
+        setPath(r, "actions." + kind, any ? obj : null);
+      } else {
+        setPath(r, path, val);
+      }
+      // header/cookie 才显示名称框
+      if (path.endsWith(".kind")){
+        var mi = path.split(".")[1];
+        var nm = box.querySelector('[data-path="matches.'+mi+'.name"]');
+        if (nm) nm.style.display = (val === "header" || val === "cookie") ? "" : "none";
+      }
+    });
+    box.addEventListener("click", function(ev){
+      var btn = ev.target.closest("[data-act]");
+      if (!btn) return;
+      var i = Number(btn.getAttribute("data-ri"));
+      var list = rulesDraft();
+      var act = btn.getAttribute("data-act");
+      if (act === "del-rule") list.splice(i, 1);
+      else if (act === "add-match") list[i].matches.push({kind:"path", name:"", op:"prefix", value:""});
+      else if (act === "del-match") list[i].matches.splice(Number(btn.getAttribute("data-mi")), 1);
+      else if (act === "up" && i > 0){ var x = list[i]; list[i] = list[i-1]; list[i-1] = x; }
+      else if (act === "down" && i < list.length-1){ var y = list[i]; list[i] = list[i+1]; list[i+1] = y; }
+      renderRules();
+    });
+    $("btn-rule-save").addEventListener("click", function(){
+      var cfg = clone();
+      cfg.rules = rulesDraft().map(function(r){
+        var o = JSON.parse(JSON.stringify(r));
+        if (!o.actions) o.actions = { response_headers: [] };
+        if (!o.actions.response_headers) o.actions.response_headers = [];
+        return o;
+      });
+      save(cfg, t("rl.saved"), this).then(function(){
+        state.rules = null; // 保存后从服务端重新读一份
+        renderRules();
+      });
     });
   }
 
@@ -2429,6 +2721,7 @@
   function renderAll(){
     if (!state.cfg) return;
     renderOverview(); renderRoutes(); renderWaf(); renderGroups(); renderBackends(); renderConfig(); renderHistory();
+    renderRules();
   }
 
   function loadConfig(){
@@ -2575,6 +2868,15 @@
   }
 
   // ---------- 导航 / 主题 / 语言 ----------
+  // 概览里的指路链接：直接切到分析页
+  document.addEventListener("click", function(ev){
+    if (ev.target && ev.target.id === "go-analytics"){
+      ev.preventDefault();
+      var rail = document.querySelector('.rail-item[data-page="p-analytics"]');
+      if (rail) rail.click();
+    }
+  });
+
   document.querySelectorAll(".rail-item").forEach(function(item){
     item.addEventListener("click", function(){
       var id = item.getAttribute("data-page");
@@ -2618,6 +2920,7 @@
     bindCopy();
     fillViewSelects();
     bindRank();
+    bindRules();
     return checkAuth().then(function(ok){
       if (!ok) return;
       return refreshAll().then(function(){

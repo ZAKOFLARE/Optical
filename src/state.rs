@@ -263,6 +263,11 @@ impl AppState {
         self.overrides.read().await.apply(&mut effective);
         effective.validate_ok_in(self.base_dir())?;
         *self.config.write().await = effective;
+        // 版本号必须**在这里**同步自增，不能等热重载。
+        // 以前的实现只有 watcher 自增：保存后页面立刻 GET 拿到的是旧版本号，
+        // 1 秒后 watcher 再 +1，用户下一次保存就被自己的热重载顶成 409——
+        // 表现就是"必须刷新页面才能再存一次"。
+        self.config_rev.fetch_add(1, Ordering::Relaxed);
         self.metrics.reloads.fetch_add(1, Ordering::Relaxed);
         self.audit.push(
             &storage,
@@ -652,6 +657,16 @@ pub fn spawn_watcher(state: Arc<AppState>) {
                     Ok(()) => {
                         let mut cfg = cfg;
                         state.overrides.read().await.apply(&mut cfg);
+                        // 自己写盘也会触发 mtime 变化。如果读出来跟内存里一模一样，
+                        // 就只是"回声"：**不能**动版本号，否则页面刚保存完、
+                        // 下一次保存就会撞乐观锁，表现就是"必须刷新页面才能再存一次"。
+                        {
+                            let cur = state.config.read().await;
+                            if cur.to_toml() == cfg.to_toml() {
+                                tracing::debug!("配置文件内容与内存一致，跳过重载与版本号自增");
+                                continue;
+                            }
+                        }
                         let routes = cfg.routes.len();
                         let listen = cfg.server.listen.clone();
                         *state.config.write().await = cfg;

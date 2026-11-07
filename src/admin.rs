@@ -397,7 +397,7 @@ impl WsView {
         StatsQuery {
             by: crate::stats::Dim::parse(&self.by).unwrap_or(crate::stats::Dim::Route),
             range_secs: self.range.clamp(60, 7 * 86_400),
-            limit: self.limit.clamp(1, 50),
+            limit: self.limit.clamp(1, 200),
             filters: self
                 .filters
                 .iter()
@@ -597,7 +597,7 @@ async fn api_stats(
                 }
             }
             "range" => range_secs = v.parse().unwrap_or(3_600).clamp(60, 7 * 86_400),
-            "limit" => limit = v.parse().unwrap_or(10).clamp(1, 50),
+            "limit" => limit = v.parse().unwrap_or(10).clamp(1, 200),
             "f" => {
                 // 值里可能自带冒号（UA 全文），所以只切前两段
                 let mut parts = v.splitn(3, ':');

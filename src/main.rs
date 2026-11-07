@@ -20,6 +20,7 @@ mod errors;
 mod history;
 mod proxy;
 mod route;
+mod rules;
 mod stats;
 mod state;
 mod storage;
