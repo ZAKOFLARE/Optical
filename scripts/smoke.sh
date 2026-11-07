@@ -294,6 +294,7 @@ check "管理面 WebSocket 升级返回 101" '101' "$WS_CODE"
 PROBE="$(python3 scripts/ws_probe.py "http://$ADM" "$COOKIE" 2>&1)"
 check "WS 按视角推送历史/排行榜/配置" 'VIEW_OK' "$PROBE"
 check "WS 的\"查看全部\"不被夹成 TOP1" 'ALL_OK' "$PROBE"
+check "WS 承载写操作（命令 + 回执）" 'CMD_OK' "$PROBE"
 check "状态接口带进程占用" '"rss_bytes":' "$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/status")"
 check "进程占用带线程数" '"threads":' "$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/status")"
 check "TOTP 二维码返回 SVG" '<svg' "$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/totp/qr?secret=JBSWY3DPEHPK3PXP&user=admin")"
@@ -446,6 +447,14 @@ ST="$("$BIN" --config "$CFG" status)"
 check "status 通过本地令牌认证" '运行中' "$ST"
 check "status 显示 WAF 状态" 'WAF' "$ST"
 check "status 显示缓存命中率" '命中率' "$ST"
+
+echo "-- 规则关系判断（纯逻辑，不起服务） --"
+if command -v node >/dev/null 2>&1; then
+  REL="$(node "$(dirname "$0")/rel_test.js" 2>&1)"
+  check "关系判断：重叠/完全重复/受影响目标" '关系判断全部通过' "$REL"
+else
+  echo "  SKIP 未安装 node，跳过关系判断"
+fi
 
 echo
 if [ "$FAIL" -eq 0 ]; then

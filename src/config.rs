@@ -37,7 +37,10 @@ pub struct Config {
     pub backend_groups: Vec<BackendGroupConfig>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub backends: Vec<BackendConfig>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    // `[[apps]]` 展开出来的路由只存在于内存里：序列化时滤掉，
+    // 否则它们会被写进配置文件、也会出现在管理面 JSON 里，
+    // 下一次保存再展开就变成"重名路由"，直接报错。
+    #[serde(skip_serializing_if = "Vec::is_empty", serialize_with = "serialize_user_routes")]
     pub routes: Vec<RouteConfig>,
     /// 自定义规则：按请求特征改写网关行为（缓存/回源/重定向/鉴权等）
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -602,6 +605,20 @@ pub struct RouteConfig {
     pub synthetic: bool,
 }
 
+/// 只序列化用户自己写的路由；合成路由（`synthetic`）留在内存里。
+fn serialize_user_routes<S: serde::Serializer>(
+    routes: &[RouteConfig],
+    ser: S,
+) -> Result<S::Ok, S::Error> {
+    use serde::ser::SerializeSeq;
+    let user: Vec<&RouteConfig> = routes.iter().filter(|r| !r.synthetic).collect();
+    let mut seq = ser.serialize_seq(Some(user.len()))?;
+    for r in user {
+        seq.serialize_element(r)?;
+    }
+    seq.end()
+}
+
 /// 路由目标：单个后端或一个分组。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TargetSpec<'a> {
@@ -942,7 +959,11 @@ impl Config {
     /// 把 `[[apps]]` 展开成普通路由（name = `app:<name>`），并前置到路由表最前面。
     /// 只要 enabled，映射就在；启停的是进程，不是路由——否则"停掉服务"会变成 502 而不是明确的 503。
     pub fn expand_apps(&mut self) {
-        self.routes.retain(|r| !r.synthetic);
+        // 除了自己标了 synthetic 的，还要清掉「上一版把合成路由写进配置文件」留下的残渣：
+        // 名字正好是 app:<某个应用名> 的，一定是展开产物，不是人手写的。
+        let app_names: Vec<String> = self.apps.iter().map(|a| format!("app:{}", a.name)).collect();
+        self.routes
+            .retain(|r| !r.synthetic && !app_names.iter().any(|n| *n == r.name));
         let mut extra: Vec<RouteConfig> = Vec::new();
         for app in self.apps.iter().filter(|a| a.enabled) {
             for host in &app.hosts {
@@ -1690,6 +1711,59 @@ mod tests {
         assert_eq!(back.header_rules.len(), 1);
         assert!(back.waf.enabled);
         assert_eq!(back.server.listen, DEFAULT_LISTEN);
+    }
+
+    #[test]
+    fn app_routes_are_memory_only_and_survive_a_roundtrip() {
+        let mut c = Config::default();
+        c.apps.push(crate::apps::AppConfig {
+            name: "demo".into(),
+            port: 18100,
+            hosts: vec!["a.example.com".into()],
+            path_prefix: "/demo".into(),
+            command: "python3 app.py".into(),
+            ..Default::default()
+        });
+        c.expand_apps();
+        assert!(c.routes.iter().any(|r| r.synthetic), "内存里应该有合成路由");
+
+        // 序列化必须滤掉合成路由：否则会被写进配置文件，下一次展开就重名
+        let json = serde_json::to_string(&c).unwrap();
+        assert!(!json.contains("app:demo"), "合成路由不该出现在 JSON 里: {json}");
+        let toml_text = c.to_toml();
+        assert!(!toml_text.contains("app:demo"), "合成路由不该写进 TOML");
+
+        // 反序列化后再展开，仍然只有一条，且不报重名
+        let mut back: Config = serde_json::from_str(&json).unwrap();
+        back.expand_apps();
+        let n = back.routes.iter().filter(|r| r.name == "app:demo").count();
+        assert_eq!(n, 1, "重复展开不该产生两条同名路由");
+        assert!(back.validate().is_empty(), "{:?}", back.validate());
+    }
+
+    #[test]
+    fn stale_synthetic_route_in_file_is_dropped_on_expand() {
+        // 上一版把合成路由写进了配置文件：加载时必须清掉，否则和本次展开重名
+        let mut c = Config::default();
+        c.apps.push(crate::apps::AppConfig {
+            name: "demo".into(),
+            port: 18100,
+            command: "x".into(),
+            ..Default::default()
+        });
+        c.routes.push(RouteConfig {
+            name: "app:demo".into(),
+            host: "a.example.com".into(),
+            path_prefix: "/demo".into(),
+            upstream: "http://127.0.0.1:18100".into(),
+            ..Default::default()
+        });
+        c.expand_apps();
+        assert_eq!(
+            c.routes.iter().filter(|r| r.name == "app:demo").count(),
+            1,
+            "文件里的历史合成路由应被清掉"
+        );
     }
 
     #[test]

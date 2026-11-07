@@ -92,8 +92,10 @@ def main():
         if not chunk:
             break
         resp += chunk
-    if b"101" not in resp.split(b"\r\n")[0]:
-        print(f"握手失败: {resp.split(b'\r\n')[0]!r}")
+    first_line = resp.split(b"\r\n")[0]
+    if b"101" not in first_line:
+        # 不要在 f-string 里写反斜杠：Python 3.11 及更早会直接语法错误
+        print("握手失败: " + repr(first_line))
         return 1
     expect = base64.b64encode(
         hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()
@@ -173,10 +175,30 @@ def main():
                     return 1
                 print("ALL_OK")
                 break
+            # 第三轮：写操作也必须走这条通道（命令 + 回执），不是只有推送
+            send_text(sock, json.dumps({"type": "cmd", "id": "p1", "action": "cache.purge", "payload": {}}))
+            sock.settimeout(2.0)
+            for _ in range(20):
+                try:
+                    opcode, data = read_frame(sock)
+                except socket.timeout:
+                    continue
+                if opcode != 0x1:
+                    continue
+                m3 = json.loads(data)
+                if m3.get("type") != "reply" or m3.get("id") != "p1":
+                    continue
+                if not m3.get("ok"):
+                    print(f"WS 命令回执失败: {m3.get('error')}")
+                    return 1
+                print("CMD_OK")
+                break
             print("VIEW_OK")
             print(f"  history bucket_ms={msg['history']['bucket_ms']} points={len(msg['history']['points'])}")
             print(f"  stats rows={len(msg['stats']['rows'])} total={msg['stats']['total']}")
-            print(f"  config rev={msg['rev']} keys={len(msg['config'])}")
+            # 这一帧可能只带 stats/history（没改配置就不推 config），别硬取
+            if "rev" in msg:
+                print(f"  config rev={msg['rev']} keys={len(msg.get('config') or {})}")
             return 0
     print(f"没等到完整快照 history={got_history} stats={got_stats} config={got_config}")
     return 1

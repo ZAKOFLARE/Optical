@@ -50,8 +50,17 @@ impl ConfigHistory {
         if storage.config_history_keep == 0 {
             return Ok(());
         }
-        fs::create_dir_all(&self.dir)
-            .with_context(|| format!("创建快照目录失败: {}", self.dir.display()))?;
+        fs::create_dir_all(&self.dir).map_err(|e| {
+            // 这个错最常见的原因不是磁盘满，而是目录落在只读位置：
+            // data_dir 默认跟着配置文件走，配置在 /etc 时，systemd 的 ProtectSystem
+            // 会让服务进程写不进去——报错必须点出这一层，否则人只会去查磁盘。
+            let hint = if e.kind() == std::io::ErrorKind::PermissionDenied {
+                "\n提示：目录不可写。若服务跑在 systemd 沙箱里，/etc 默认只读；\n     把 [paths] data_dir 指到 /var/lib/optical，或用 ReadWritePaths 放开该目录。"
+            } else {
+                ""
+            };
+            anyhow::anyhow!("创建快照目录失败: {} ({e}){hint}", self.dir.display())
+        })?;
 
         if let Some(latest) = self.list_meta().first() {
             if let Ok(prev) = self.read(&latest.id) {
