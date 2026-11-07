@@ -1501,13 +1501,40 @@
     state.filters.forEach(function(f){
       if (f.value) q += "&f=" + encodeURIComponent(f.field + ":" + f.op + ":" + f.value);
     });
-    return api(q).then(function(d){
-      state.rank = d;
-      renderFilters();
-      renderRank();
-      $("rank-window").textContent = spanText(view.range) + " · " +
-        t("ov.rank.total") + " " + d.total;
-    }).catch(function(){});
+    return api(q).then(applyStats).catch(function(){});
+  }
+
+  function applyStats(d){
+    if (!d) return;
+    state.rank = d;
+    renderFilters();
+    renderRank();
+    $("rank-window").textContent = spanText(view.range) + " · " +
+      t("ov.rank.total") + " " + d.total;
+  }
+
+  // WS 通着就走 WS：把"我现在在看什么"发过去，服务端按这个视角推
+  function sendView(){
+    if (state.ws && state.ws.readyState === 1){
+      try {
+        state.ws.send(JSON.stringify({
+          type: "view", gran: view.gran, range: view.range,
+          by: state.rankBy, limit: state.rankLimit,
+          filters: state.filters.filter(function(f){ return f.value; })
+            .map(function(f){ return {field: f.field, op: f.op, value: f.value}; })
+        }));
+        return true;
+      } catch(e){ /* 掉线就退回 HTTP */ }
+    }
+    return false;
+  }
+
+  // 换视角/换筛选统一走这里：WS 在就推，不在才回落到 HTTP
+  function refreshAnalytics(){
+    if (!sendView()){
+      loadHistory();
+      loadStats();
+    }
   }
 
   function bindRank(){
@@ -1515,18 +1542,18 @@
       state.rankBy = this.value;
       // 换维度后原来的筛选字段可能不适用了，清掉更诚实
       state.filters = [];
-      loadStats();
+      refreshAnalytics();
     });
     $("rank-limit").addEventListener("change", function(){
       state.rankLimit = Number(this.value) || 10;
-      loadStats();
+      refreshAnalytics();
     });
     var box = $("rank-filters");
     box.addEventListener("click", function(ev){
       var del = ev.target.closest("[data-del]");
       if (del){
         state.filters.splice(Number(del.getAttribute("data-del")), 1);
-        loadStats();
+        refreshAnalytics();
         return;
       }
       if (ev.target.closest("#btn-add-filter")){
@@ -1543,14 +1570,14 @@
       var i = Number(el.getAttribute("data-i"));
       if (!state.filters[i]) return;
       state.filters[i][el.getAttribute("data-k")] = el.value;
-      loadStats();
+      refreshAnalytics();
     });
     box.addEventListener("keydown", function(ev){
       if (ev.key === "Enter" && ev.target.closest("[data-k=value]")){
         var el = ev.target.closest("[data-i]");
         var i = Number(el.getAttribute("data-i"));
         if (state.filters[i]) state.filters[i].value = el.value;
-        loadStats();
+        refreshAnalytics();
       }
     });
   }
@@ -2286,8 +2313,7 @@
     view.range = Number($("range-sel").value) || 3600;
     localStorage.setItem("optical.gran", view.gran);
     localStorage.setItem("optical.range", view.range);
-    loadHistory();
-    loadStats();
+    refreshAnalytics();
   }
   $("gran-sel").addEventListener("change", onViewChange);
   $("range-sel").addEventListener("change", onViewChange);
@@ -2427,22 +2453,26 @@
 
   // 历史曲线：粒度/范围都走查询参数，服务端按需求临时分桶。
   // 失败时保留上一帧，不要把图清空——网络抖一下不该看起来像"网关挂了"。
+  function applyHistory(d){
+    if (!d) return;
+    state.history = d;
+    // 服务端存的分辨率比请求粗时，如实提示，别假装时间对得上
+    state.histNote = (d.exact === false && d.bucket_ms > view.gran * 1000)
+      ? (t("ov.down") + spanText(Math.round(d.bucket_ms / 1000)))
+      : "";
+    drawChart();
+  }
+
   function loadHistory(){
     var q = "/api/history?gran=" + view.gran + "&range=" + view.range;
-    return api(q).then(function(d){
-      state.history = d;
-      // 服务端存的分辨率比请求粗时，如实提示，别假装时间对得上
-      state.histNote = (d.exact === false && d.bucket_ms > view.gran * 1000)
-        ? (t("ov.down") + spanText(Math.round(d.bucket_ms / 1000)))
-        : "";
-      drawChart();
-    }).catch(function(){});
+    return api(q).then(applyHistory).catch(function(){});
   }
 
   function startHistoryTimer(){
     if (state.histTimer) return;
+    // WS 通着就不轮询——这是备用通道，不是常态
     state.histTimer = setInterval(function(){
-      if (!state.authed) return;
+      if (!state.authed || state.ws) return;
       loadHistory();
       loadStats();
     }, 5000);
@@ -2497,11 +2527,20 @@
     var sock;
     try { sock = new WebSocket(wsUrl()); } catch(e){ startPolling(); return; }
     state.ws = sock;
-    sock.onopen = function(){ state.wsRetry = 0; stopPolling(); $("dot").className = "on"; };
+    sock.onopen = function(){
+      state.wsRetry = 0;
+      stopPolling();
+      $("dot").className = "on";
+      // 连上第一件事：告诉服务端我在看什么，之后历史和排行榜都从这条通道来
+      sendView();
+    };
     sock.onmessage = function(ev){
       var d = null;
       try { d = JSON.parse(ev.data); } catch(e){ return; }
-      if (d && d.type === "snapshot") applySnapshot(d);
+      if (!d || d.type !== "snapshot") return;
+      applySnapshot(d);
+      if (d.history) applyHistory(d.history);
+      if (d.stats) applyStats(d.stats);
     };
     sock.onerror = function(){ try { sock.close(); } catch(e){} };
     sock.onclose = function(){
@@ -2585,6 +2624,7 @@
         // 先起轮询兜底，WS 连上后立即停掉；断线会自动回退并重连
         startPolling();
         startHistoryTimer();
+        loadHistory();
         loadStats();
         connectWs();
       });
