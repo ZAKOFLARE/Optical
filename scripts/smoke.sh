@@ -375,10 +375,50 @@ check "Top IP 有数据" '"ip":\[\[' "$M"
 check "规则命中按族统计" 'family:' "$M"
 check "状态码分布有数据" '"status":\[' "$M"
 
+echo "-- 同一会话连续保存（热重载不能吃掉版本号）--"
+REV_A="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config" | python3 -c 'import sys,json;print(json.load(sys.stdin)["rev"])' 2>/dev/null)"
+BODY_A="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config" | python3 -c 'import sys,json;print(json.dumps(json.load(sys.stdin)["config"]))' 2>/dev/null)"
+check "第一次保存" '"applied":true' "$(curl -s -m 6 -X PUT "${AUTH[@]}" -H 'content-type: application/json' -H "x-optical-config-rev: $REV_A" -d "$BODY_A" "http://$ADM/api/config")"
+# 关键：保存完马上读一次版本号，然后等热重载跑过一轮（旧实现会在这里偷偷 +1）
+REV_B="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config" | python3 -c 'import sys,json;print(json.load(sys.stdin)["rev"])' 2>/dev/null)"
+sleep 2
+BODY_B="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config" | python3 -c 'import sys,json;print(json.dumps(json.load(sys.stdin)["config"]))' 2>/dev/null)"
+check "不刷新页面也能再次保存" '"applied":true' "$(curl -s -m 6 -X PUT "${AUTH[@]}" -H 'content-type: application/json' -H "x-optical-config-rev: $REV_B" -d "$BODY_B" "http://$ADM/api/config")"
+
+echo "-- 自定义规则 --"
+add_rules() {
+  curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config" | python3 -c "
+import sys, json
+c = json.load(sys.stdin)['config']
+c['rules'] = [
+  {'name':'redir','enabled':True,'matches':[{'kind':'path','name':'','op':'prefix','value':'/r-redir'}],
+   'actions':{'redirect':{'status':302,'to':'https://example.com{moved}'}}},
+  {'name':'custom','enabled':True,'matches':[{'kind':'path','name':'','op':'prefix','value':'/r-custom'}],
+   'actions':{'custom_response':{'status':200,'content_type':'text/plain','body':'RULE_OK'},'server_name':'rule-srv'}},
+  {'name':'auth','enabled':True,'matches':[{'kind':'path','name':'','op':'prefix','value':'/r-auth'}],
+   'actions':{'token_auth':{'name':'x-token','value':'s3cret','from_query':False}}},
+  {'name':'fail','enabled':False,'matches':[{'kind':'host','name':'','op':'eq','value':'nope'}],'actions':{}}
+]
+print(json.dumps(c))
+" 2>/dev/null
+}
+RREV="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config" | python3 -c 'import sys,json;print(json.load(sys.stdin)["rev"])' 2>/dev/null)"
+check "写入自定义规则" '"applied":true' "$(curl -s -m 6 -X PUT "${AUTH[@]}" -H 'content-type: application/json' -H "x-optical-config-rev: $RREV" -d "$(add_rules)" "http://$ADM/api/config")"
+sleep 1.5
+REDIR_HEAD="$(curl -si -m 6 "http://$GW/r-redir/x" | tr -d '\r' | head -12)"
+check "规则重定向返回 302" '302' "$(printf '%s' "$REDIR_HEAD" | head -1)"
+check "重定向 Location 正确" 'example.com' "$(printf '%s' "$REDIR_HEAD" | grep -i '^location:')"
+check "自定义返回页面" 'RULE_OK' "$(curl -s -m 6 "http://$GW/r-custom/")"
+check "自定义 server 名" 'rule-srv' "$(curl -si -m 6 "http://$GW/r-custom/" | tr -d '\r' | grep -i '^server:')"
+check "规则命中标记" 'custom' "$(curl -si -m 6 "http://$GW/r-custom/" | tr -d '\r' | grep -i '^x-optical-rule:')"
+check "Token 鉴权拦截无令牌请求" '401' "$(code "http://$GW/r-auth/")"
+check "Token 鉴权放行正确令牌" '200' "$(code -H 'x-token: s3cret' "http://$GW/r-auth/")"
+
 echo "-- 排行榜（维度 / 范围 / 筛选） --"
 STATS="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/stats?by=route&range=3600")"
 check "按路由出排行榜" '"by":"route"' "$STATS"
 check "排行榜带请求数" '"requests":' "$STATS"
+check "排行榜最多 200 条" '"limit":200' "$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/stats?by=ip&range=3600&limit=999")"
 check "能按后端分组" '"by":"backend"' "$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/stats?by=backend&range=3600")"
 check "组合维度可互相筛选" '"filter_fields":\["route","backend","host","status"\]' "$STATS"
 # 跨维度筛选：按路由看，只要 2xx —— 结果里不能出现非 2xx 的错误

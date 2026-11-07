@@ -39,6 +39,9 @@ pub struct Config {
     pub backends: Vec<BackendConfig>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub routes: Vec<RouteConfig>,
+    /// 自定义规则：按请求特征改写网关行为（缓存/回源/重定向/鉴权等）
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub rules: Vec<crate::rules::Rule>,
     pub extensions: ExtensionsConfig,
 }
 
@@ -1217,6 +1220,51 @@ impl Config {
                 Err(e) => errs.push(format!("{field} 非法: {e}")),
             }
         }
+        // ---- 自定义规则 ----
+        let mut seen = std::collections::HashSet::new();
+        for (i, r) in self.rules.iter().enumerate() {
+            if r.name.trim().is_empty() {
+                errs.push(format!("rules[{i}] 缺少 name"));
+            } else if !seen.insert(r.name.clone()) {
+                errs.push(format!("rules[{i}] 名称重复: {}", r.name));
+            }
+            if r.matches.is_empty() {
+                // 没有条件的规则会命中所有请求，几乎肯定是配错了
+                errs.push(format!(
+                    "rules[{i}] ({}) 没有任何匹配条件，不会生效",
+                    r.name
+                ));
+            }
+            for (j, m) in r.matches.iter().enumerate() {
+                if m.value.trim().is_empty() {
+                    errs.push(format!("rules[{i}].matches[{j}] 的 value 为空"));
+                }
+                if matches!(
+                    m.kind,
+                    crate::rules::MatchKind::Header | crate::rules::MatchKind::Cookie
+                ) && m.name.trim().is_empty()
+                {
+                    errs.push(format!("rules[{i}].matches[{j}] 需要填 header/cookie 名"));
+                }
+            }
+            if let Some(rd) = &r.actions.redirect {
+                if !matches!(rd.status, 301 | 302 | 303 | 307 | 308) {
+                    errs.push(format!(
+                        "rules[{i}] ({}) 重定向状态码只能是 301/302/303/307/308",
+                        r.name
+                    ));
+                }
+                if rd.to.trim().is_empty() {
+                    errs.push(format!("rules[{i}] ({}) 重定向目标为空", r.name));
+                }
+            }
+            if let Some(c) = &r.actions.custom_response {
+                if !(100..=599).contains(&c.status) {
+                    errs.push(format!("rules[{i}] ({}) 自定义响应状态码非法", r.name));
+                }
+            }
+        }
+
         if !(MIN_SAMPLE_MS..=MAX_SAMPLE_MS).contains(&self.metrics.sample_interval_ms) {
             errs.push(format!(
                 "metrics.sample_interval_ms 必须在 {MIN_SAMPLE_MS}~{MAX_SAMPLE_MS} 之间（5 秒 ~ 10 分钟）"

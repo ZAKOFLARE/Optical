@@ -191,6 +191,32 @@ pub async fn handle(
     let is_ws = ws_upgrade.is_some();
     let is_grpc = content_type.starts_with("application/grpc");
 
+    // ---- 自定义规则：评估一次，后面各个阶段按需取动作 ----
+    // 事实结构借了 parts.headers，所以必须在一个独立作用域里用完即弃，
+    // 否则后面改写请求头时借用检查直接拦下来。
+    let host_str = original_host.clone().unwrap_or_default();
+    let method_str = parts.method.as_str().to_string();
+    let query_str = query.clone().unwrap_or_default();
+    let rule_hit = {
+        let facts = crate::rules::ReqFacts {
+            host: &host_str,
+            path: &path,
+            query: &query_str,
+            method: &method_str,
+            scheme,
+            client_ip: &ip_str,
+            headers: &parts.headers,
+        };
+        crate::rules::resolve(&cfg.rules, &facts)
+    };
+    let vars = crate::rules::Vars {
+        host: &host_str,
+        path: &path,
+        query: &query_str,
+        method: &method_str,
+    };
+    let act = &rule_hit.actions;
+
     // ---- DoS 体积闸门（读 body 之前就拦）----
     if cfg.waf.enabled && cfg.waf.dos.enabled && cfg.waf.dos.max_body_bytes > 0
         && content_length > cfg.waf.dos.max_body_bytes
@@ -292,6 +318,94 @@ pub async fn handle(
         }
     }
 
+    // ---- 规则里的"短路"动作：在选路之前就该给结论 ----
+    // 放在 WAF 之后是故意的：安全策略先过，规则不能用来绕开 WAF。
+    if let Some(tk) = &act.token_auth {
+        if !tk.name.is_empty() {
+            let got = if tk.from_query {
+                query
+                    .as_deref()
+                    .unwrap_or("")
+                    .split('&')
+                    .find_map(|kv| {
+                        let mut p = kv.splitn(2, '=');
+                        (p.next().unwrap_or("") == tk.name).then(|| p.next().unwrap_or("").to_string())
+                    })
+                    .unwrap_or_default()
+            } else {
+                parts
+                    .headers
+                    .get(tk.name.as_str())
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("")
+                    .to_string()
+            };
+            if got != tk.value {
+                state.record_profile(&ua, &ip_str, 401);
+                return error_response(&state, &cfg, StatusCode::UNAUTHORIZED, "缺少或错误的访问令牌", Some("rule-token"));
+            }
+        }
+    }
+
+    if act.force_https == Some(true) && scheme == "http" {
+        let host = original_host.as_deref().unwrap_or("");
+        let uri = match &query {
+            Some(q) => format!("{}?{q}", path),
+            None => path.clone(),
+        };
+        state.record_profile(&ua, &ip_str, 301);
+        return redirect_response(&state, &cfg, 301, &format!("https://{host}{uri}"));
+    }
+
+    if let Some(r) = &act.redirect {
+        if !r.to.is_empty() {
+            let target = crate::rules::expand(&r.to, &vars);
+            state.record_profile(&ua, &ip_str, r.status);
+            return redirect_response(&state, &cfg, r.status.max(300), &target);
+        }
+    }
+
+    if let Some(c) = &act.custom_response {
+        state.record_profile(&ua, &ip_str, c.status);
+        let ct = if c.content_type.is_empty() {
+            "text/html; charset=utf-8".to_string()
+        } else {
+            c.content_type.clone()
+        };
+        let mut resp = Response::builder()
+            .status(StatusCode::from_u16(c.status).unwrap_or(StatusCode::OK))
+            .header(CONTENT_TYPE, ct)
+            .header(http::header::CACHE_CONTROL, "no-store")
+            .body(
+                Full::new(Bytes::from(c.body.clone()))
+                    .map_err(|never| match never {})
+                    .boxed(),
+            )
+            .unwrap_or_else(|_| {
+                error_response(&state, &cfg, StatusCode::INTERNAL_SERVER_ERROR, "自定义响应构造失败", None)
+            });
+        apply_rule_headers(&mut resp, &rule_hit);
+        return resp;
+    }
+
+    if let Some(limit) = act.max_upload_bytes {
+        if content_length as u64 > limit {
+            state.record_profile(&ua, &ip_str, 413);
+            return error_response(
+                &state,
+                &cfg,
+                StatusCode::PAYLOAD_TOO_LARGE,
+                &format!("请求体超过规则限制（{limit} 字节）"),
+                Some("rule-max-upload"),
+            );
+        }
+    }
+
+    if is_ws && act.ws == Some(false) {
+        state.record_profile(&ua, &ip_str, 403);
+        return error_response(&state, &cfg, StatusCode::FORBIDDEN, "该路径不允许 WebSocket 升级", Some("rule-ws"));
+    }
+
     // ---- 路由 ----
     let info = RequestInfo {
         method: &parts.method,
@@ -329,16 +443,24 @@ pub async fn handle(
     }
 
     // ---- 缓存查找 ----
-    let cache_key = format!(
-        "{}#{}",
-        crate::cache::ResponseCache::key(&parts.method, original_host.as_deref(), &path, query.as_deref()),
-        parts
-            .headers
-            .get(http::header::ACCEPT_ENCODING)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("-")
-    );
-    let cache_ok = (parts.method == Method::GET || parts.method == Method::HEAD)
+    let enc = parts
+        .headers
+        .get(http::header::ACCEPT_ENCODING)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("-");
+    // 规则可以自定义 cache key（比如按客户端分组、忽略某个查询参数）
+    let cache_key = match &act.cache_key {
+        Some(tpl) if !tpl.is_empty() => {
+            format!("rule:{}#{enc}", crate::rules::expand(tpl, &vars))
+        }
+        _ => format!(
+            "{}#{}",
+            crate::cache::ResponseCache::key(&parts.method, original_host.as_deref(), &path, query.as_deref()),
+            enc
+        ),
+    };
+    let cache_ok = act.cache_ttl_secs != Some(0)
+        && (parts.method == Method::GET || parts.method == Method::HEAD)
         && cfg.cache_allowed(route.as_ref())
         && is_cacheable_path(&path, &cfg.cache.cacheable_exts);
 
@@ -406,9 +528,19 @@ pub async fn handle(
     }
     let base_path = base.path().trim_end_matches('/');
     let joined = format!("{base_path}{new_path}");
-    let path_and_query = match &query {
-        Some(q) => format!("{joined}?{q}"),
-        None => joined,
+    // 规则里的回源 URL 重写优先级最高，直接替换整段 path?query
+    let path_and_query = match &act.upstream_url_rewrite {
+        Some(tpl) if !tpl.is_empty() => {
+            let mut p = crate::rules::expand(tpl, &vars);
+            if !p.starts_with('/') {
+                p = format!("/{p}");
+            }
+            p
+        }
+        _ => match &query {
+            Some(q) => format!("{joined}?{q}"),
+            None => joined,
+        },
     };
 
     // ---- WebSocket ----
@@ -442,6 +574,14 @@ pub async fn handle(
             parts.headers.insert(HOST, v);
         }
     }
+    // 规则里的 host 头改写盖过上面的默认行为（支持 {host} 模板）
+    if let Some(h) = &act.host_rewrite {
+        if !h.is_empty() {
+            if let Ok(v) = HeaderValue::from_str(&crate::rules::expand(h, &vars)) {
+                parts.headers.insert(HOST, v);
+            }
+        }
+    }
     append_forwarded(&mut parts.headers, &peer, original_host.as_deref(), scheme);
 
     let is_h2 = parts.version == Version::HTTP_2;
@@ -450,10 +590,11 @@ pub async fn handle(
     let upstream_req = Request::from_parts(parts, forward_body);
 
     let client = if is_h2 { clients.h2 } else { clients.h1 };
-    let timeout = Duration::from_millis(decision.timeout_ms);
+    let timeout_ms = act.upstream_timeout_ms.unwrap_or(decision.timeout_ms);
+    let timeout = Duration::from_millis(timeout_ms);
     let resp = match tokio::time::timeout(timeout, client.request(upstream_req)).await {
         Err(_) => {
-            return fail(&state, &cfg, &ua, &ip_str, StatusCode::GATEWAY_TIMEOUT, format!("上游超时（{} ms）", decision.timeout_ms))
+            return fail(&state, &cfg, &ua, &ip_str, StatusCode::GATEWAY_TIMEOUT, format!("上游超时（{} ms）", timeout_ms))
         }
         Ok(Err(e)) => {
             return fail(&state, &cfg, &ua, &ip_str, StatusCode::BAD_GATEWAY, format!("连接上游失败: {e}"))
@@ -477,6 +618,27 @@ pub async fn handle(
 
     // ---- 响应头改写 ----
     apply_header_rules(&cfg, HeaderPhase::Response, &mut rparts.headers, &path, original_host.as_deref(), status.as_u16());
+    // 规则动作盖在全局配置之上
+    if let Some(name) = &act.server_name {
+        if let Ok(v) = HeaderValue::from_str(name) {
+            rparts.headers.insert(SERVER, v);
+        }
+    }
+    if let Some(secs) = act.browser_ttl_secs {
+        if let Ok(v) = HeaderValue::from_str(&format!("public, max-age={secs}")) {
+            rparts.headers.insert(http::header::CACHE_CONTROL, v);
+        }
+    }
+    for (k, v) in act.response_headers.iter() {
+        if let (Ok(name), Ok(val)) = (HeaderName::from_bytes(k.as_bytes()), HeaderValue::from_str(v)) {
+            rparts.headers.insert(name, val);
+        }
+    }
+    if !rule_hit.hit.is_empty() {
+        if let Ok(v) = HeaderValue::from_str(&rule_hit.hit.join(",")) {
+            rparts.headers.insert(HeaderName::from_static("x-optical-rule"), v);
+        }
+    }
     insert_debug_headers(
         &mut rparts.headers,
         &decision,
@@ -511,7 +673,9 @@ pub async fn handle(
                     stored,
                     bytes.clone(),
                     crate::cache::CachePolicy {
-                        ttl: Duration::from_secs(cfg.cache.ttl_secs.max(1)),
+                        ttl: Duration::from_secs(
+                            act.cache_ttl_secs.unwrap_or(cfg.cache.ttl_secs).max(1),
+                        ),
                         max_bytes: cfg.cache.max_bytes,
                         max_entries: cfg.cache.max_entries,
                     },
@@ -922,6 +1086,64 @@ fn fail(
     state.record_profile(ua, ip, status.as_u16());
     tracing::warn!(%status, reason = msg.as_ref(), "转发失败");
     error_response(state, cfg, status, msg.as_ref(), None)
+}
+
+/// 规则产生的重定向。状态码只认 301/302/303/307/308，其它按 302 处理，
+/// 免得配置里写个 200 让人以为"重定向没生效"。
+fn redirect_response(
+    state: &Arc<AppState>,
+    cfg: &crate::config::Config,
+    status: u16,
+    to: &str,
+) -> Response<ProxyBody> {
+    let code = match status {
+        301 | 302 | 303 | 307 | 308 => StatusCode::from_u16(status).unwrap_or(StatusCode::FOUND),
+        _ => StatusCode::FOUND,
+    };
+    let loc = HeaderValue::from_str(to)
+        .unwrap_or_else(|_| HeaderValue::from_static("/"));
+    let server = cfg.server.server_header.clone();
+    let mut b = Response::builder()
+        .status(code)
+        .header(http::header::LOCATION, loc)
+        .header(http::header::CACHE_CONTROL, "no-store");
+    if !server.is_empty() {
+        if let Ok(v) = HeaderValue::from_str(&server) {
+            b = b.header(SERVER, v);
+        }
+    }
+    let _ = state;
+    b.body(
+        Full::new(Bytes::from(format!("重定向到 {to}")))
+            .map_err(|never| match never {})
+            .boxed(),
+    )
+    .unwrap_or_else(|_| {
+        error_response(state, cfg, StatusCode::INTERNAL_SERVER_ERROR, "重定向构造失败", None)
+    })
+}
+
+/// 把规则动作里的响应头（server_name / 附加头 / 命中标记）写到响应上。
+fn apply_rule_headers<B>(resp: &mut Response<B>, hit: &crate::rules::Resolved) {
+    if let Some(name) = &hit.actions.server_name {
+        if let Ok(v) = HeaderValue::from_str(name) {
+            resp.headers_mut().insert(SERVER, v);
+        }
+    }
+    for (k, v) in hit.actions.response_headers.iter() {
+        if let (Ok(name), Ok(val)) = (
+            HeaderName::from_bytes(k.as_bytes()),
+            HeaderValue::from_str(v),
+        ) {
+            resp.headers_mut().insert(name, val);
+        }
+    }
+    if !hit.hit.is_empty() {
+        if let Ok(v) = HeaderValue::from_str(&hit.hit.join(",")) {
+            resp.headers_mut()
+                .insert(HeaderName::from_static("x-optical-rule"), v);
+        }
+    }
 }
 
 /// 本地生成的错误响应：优先用运维自定义的错误页，绝不把内部细节原样吐给客户端。

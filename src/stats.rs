@@ -418,7 +418,7 @@ fn trim<K: std::hash::Hash + Eq + Clone, V>(map: &mut HashMap<K, V>, cap: usize,
         return;
     }
     let mut keys: Vec<(K, u64)> = map.iter().map(|(k, v)| (k.clone(), score(v))).collect();
-    keys.sort_by(|a, b| b.1.cmp(&a.1));
+    keys.sort_by_key(|b| std::cmp::Reverse(b.1));
     keys.truncate(cap);
     let keep: std::collections::HashSet<K> = keys.into_iter().map(|(k, _)| k).collect();
     map.retain(|k, _| keep.contains(k));
