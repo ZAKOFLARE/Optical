@@ -50,28 +50,9 @@ pub fn build_acceptor(cfg: &TlsConfig, tls_dir: &Path, base_dir: &Path) -> Resul
                 Some(cert_path),
             )
         } else {
-            let names = vec![
-                "localhost".to_string(),
-                "optical.local".to_string(),
-                "127.0.0.1".to_string(),
-            ];
-            let key_pair = rcgen::KeyPair::generate().context("生成自签私钥失败")?;
-            let mut params = rcgen::CertificateParams::new(names).context("构造证书参数失败")?;
-            // 证书有效期必须真的吃 self_signed_days，否则这个配置项就是摆设
-            let days = cfg.self_signed_days.clamp(1, 3650) as i64;
-            params.not_before = time::OffsetDateTime::now_utc() - time::Duration::hours(1);
-            params.not_after = params.not_before + time::Duration::days(days);
-            params
-                .distinguished_name
-                .push(rcgen::DnType::CommonName, "Optical Dev Gateway");
-            params
-                .distinguished_name
-                .push(rcgen::DnType::OrganizationName, "Optical");
-            let cert = params.self_signed(&key_pair).context("签发自签证书失败")?;
-            let cert_pem = cert.pem();
-            let key_pem = key_pair.serialize_pem();
-            std::fs::write(&cert_path, &cert_pem).ok();
-            std::fs::write(&key_path, &key_pem).ok();
+            // 自签也要把真实域名签进 SAN，否则 https://<域名> 上去永远是"证书不匹配"
+            let names = san_names(cfg);
+            let (cert_pem, key_pem) = generate_self_signed(&dir, &names, cfg.self_signed_days)?;
             (cert_pem, key_pem, true, Some(cert_path))
         }
     } else {
@@ -175,6 +156,143 @@ pub async fn serve(state: Arc<AppState>, listener: TcpListener, acceptor: TlsAcc
             drop(guard);
         });
     }
+}
+
+/// 自签证书要签进去的名字：本机固定项 + 配置里的 san。
+/// 顺序稳定（去重后排序），重复生成得到同样的 SAN 列表，便于比对。
+fn san_names(cfg: &TlsConfig) -> Vec<String> {
+    let mut names = vec![
+        "localhost".to_string(),
+        "127.0.0.1".to_string(),
+        "::1".to_string(),
+    ];
+    for n in &cfg.san {
+        let n = n.trim();
+        if !n.is_empty() {
+            names.push(n.to_string());
+        }
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// 生成并落盘自签证书 + 一份 sidecar 元数据（SAN / 起止时间）。
+/// 存元数据是为了管理面能如实展示到期时间，而不是去解析 X.509。
+fn generate_self_signed(
+    dir: &Path,
+    names: &[String],
+    days: u32,
+) -> Result<(String, String)> {
+    let key_pair = rcgen::KeyPair::generate().context("生成自签私钥失败")?;
+    let mut params = rcgen::CertificateParams::new(names.to_vec()).context("构造证书参数失败")?;
+    // 证书有效期必须真的吃 self_signed_days，否则这个配置项就是摆设
+    let days = days.clamp(1, 3650) as i64;
+    params.not_before = time::OffsetDateTime::now_utc() - time::Duration::hours(1);
+    params.not_after = params.not_before + time::Duration::days(days);
+    params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, "Optical Gateway");
+    params
+        .distinguished_name
+        .push(rcgen::DnType::OrganizationName, "Optical");
+    let not_before = params.not_before.unix_timestamp();
+    let not_after = params.not_after.unix_timestamp();
+    let cert = params.self_signed(&key_pair).context("签发自签证书失败")?;
+    let cert_pem = cert.pem();
+    let key_pem = key_pair.serialize_pem();
+    std::fs::write(dir.join("dev-cert.pem"), &cert_pem).ok();
+    std::fs::write(dir.join("dev-key.pem"), &key_pem).ok();
+    let meta = serde_json::json!({
+        "names": names,
+        "not_before": not_before,
+        "not_after": not_after,
+        "generated_at": time::OffsetDateTime::now_utc().unix_timestamp(),
+    });
+    std::fs::write(dir.join("dev-cert.json"), serde_json::to_vec_pretty(&meta)?).ok();
+    Ok((cert_pem, key_pem))
+}
+
+/// 重签自签证书。外部托管的 cert/key 不碰——那是别人的证书，覆盖等于闯祸。
+pub fn reset_self_signed(cfg: &TlsConfig, tls_dir: &Path, names: &[String]) -> Result<Vec<String>> {
+    if !cfg.cert.is_empty() || !cfg.key.is_empty() {
+        return Err(anyhow!(
+            "配置里指定了 cert/key，证书由外部管理；请替换文件后重启，不要在网关上重签"
+        ));
+    }
+    let dir = tls_dir.to_path_buf();
+    std::fs::create_dir_all(&dir)?;
+    let mut all = vec![
+        "localhost".to_string(),
+        "127.0.0.1".to_string(),
+        "::1".to_string(),
+    ];
+    for n in names {
+        let n = n.trim();
+        if !n.is_empty() {
+            all.push(n.to_string());
+        }
+    }
+    all.sort();
+    all.dedup();
+    generate_self_signed(&dir, &all, cfg.self_signed_days)?;
+    Ok(all)
+}
+
+/// 管理面用的证书概况
+pub fn describe(cfg: &TlsConfig, tls_dir: &Path, base_dir: &Path) -> serde_json::Value {
+    let external = !cfg.cert.is_empty() && !cfg.key.is_empty();
+    let (cert_path, key_path) = if external {
+        (
+            crate::config::resolve_one(&cfg.cert, base_dir),
+            crate::config::resolve_one(&cfg.key, base_dir),
+        )
+    } else {
+        (tls_dir.join("dev-cert.pem"), tls_dir.join("dev-key.pem"))
+    };
+    let exists = cert_path.exists() && key_path.exists();
+    let mut names: Vec<String> = Vec::new();
+    let mut not_after = 0i64;
+    let mut not_before = 0i64;
+    if !external {
+        if let Ok(raw) = std::fs::read_to_string(tls_dir.join("dev-cert.json")) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
+                names = v["names"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                not_after = v["not_after"].as_i64().unwrap_or(0);
+                not_before = v["not_before"].as_i64().unwrap_or(0);
+            }
+        }
+    }
+    let modified = std::fs::metadata(&cert_path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    serde_json::json!({
+        "enabled": cfg.enabled,
+        "listen": cfg.listen,
+        "listen_v6": cfg.listen_v6,
+        "min_version": cfg.min_version,
+        "self_signed": !external,
+        "cert_path": cert_path.display().to_string(),
+        "key_path": key_path.display().to_string(),
+        "exists": exists,
+        "names": names,
+        "configured_san": cfg.san,
+        "http_redirect": cfg.http_redirect,
+        "not_before": not_before,
+        "not_after": not_after,
+        "cert_mtime": modified,
+        "generated_at": if exists { modified } else { 0 },
+    })
 }
 
 #[cfg(test)]

@@ -193,6 +193,25 @@ impl Bucket {
             ..Default::default()
         }
     }
+
+    /// 回收复用：清空内容并把 start 挪到新时间片。
+    /// 容量只保留一小截——留太多等于每个桶都攥着历史峰值内存，
+    /// 288 个桶乘起来就是几十兆；全丢又会回到每分钟重新分配的老路。
+    fn reset(&mut self, start: i64) {
+        self.start = start;
+        self.trimmed = false;
+        keep_small(&mut self.combos);
+        keep_small(&mut self.ips);
+        keep_small(&mut self.uas);
+        keep_small(&mut self.rules);
+    }
+}
+
+fn keep_small<K: std::hash::Hash + Eq, V>(m: &mut HashMap<K, V>) {
+    m.clear();
+    if m.capacity() > 128 {
+        m.shrink_to(32);
+    }
 }
 
 /// 单个桶里每张表最多留多少个键。超了就把最小的挤掉——
@@ -206,6 +225,9 @@ struct Ring {
     span: i64,
     buckets: VecDeque<Bucket>,
     cap: usize,
+    /// 淘汰的桶不扔，清空后复用。每分钟 new 四张 HashMap、再整批 drop，
+    /// 是 RSS 只涨不回的源头：分配器把空闲页留在 arena 里，从不还 OS。
+    pool: Vec<Bucket>,
 }
 
 impl Ring {
@@ -214,6 +236,7 @@ impl Ring {
             span,
             buckets: VecDeque::with_capacity(cap),
             cap,
+            pool: Vec::new(),
         }
     }
 
@@ -228,9 +251,14 @@ impl Ring {
             if let Some(pos) = self.buckets.iter().position(|b| b.start == start) {
                 return &mut self.buckets[pos];
             }
-            self.buckets.push_back(Bucket::new(start));
+            let mut fresh = self.pool.pop().unwrap_or_else(|| Bucket::new(start));
+            // 无条件 reset：空桶上 clear 是 no-op，而"池里恰好取到最后一个"时会漏清
+            fresh.reset(start);
+            self.buckets.push_back(fresh);
             while self.buckets.len() > self.cap {
-                self.buckets.pop_front();
+                if let Some(old) = self.buckets.pop_front() {
+                    self.pool.push(old);
+                }
             }
         }
         self.buckets
@@ -451,7 +479,8 @@ fn trim<K: std::hash::Hash + Eq + Clone, V>(
     cap: usize,
     score: impl Fn(&V) -> u64,
 ) -> bool {
-    if map.len() <= cap {
+    // 留 25% 余量再裁：贴着上限裁会让后续每个请求都触发一次全表 clone+sort
+    if map.len() <= cap + cap / 4 {
         return false;
     }
     let mut keys: Vec<(K, u64)> = map.iter().map(|(k, v)| (k.clone(), score(v))).collect();
@@ -593,6 +622,9 @@ mod tests {
             s.record_request(now, dims("api", "b", "h"), 200, &c(1, 0), "ua", &ip);
         }
         let b = s.minute.buckets.back().unwrap();
-        assert!(b.ips.len() <= CAP_TEXT, "IP 表被长尾撑爆了: {}", b.ips.len());
+        // 裁剪有 25% 迟滞（贴着上限裁会让每个请求都全表 clone 一次），
+        // 所以边界是 cap + cap/4，而不是刚好 cap。
+        let bound = CAP_TEXT + CAP_TEXT / 4;
+        assert!(b.ips.len() <= bound, "IP 表被长尾撑爆了: {}", b.ips.len());
     }
 }

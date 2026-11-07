@@ -10,6 +10,8 @@ admin_listen_v6 = ""
 default_upstream = "http://127.0.0.1:8081"
 request_timeout_ms = 30000
 log_level = "info"
+# 每 5 秒扫一次堆，把空闲页还给系统（0 = 关闭）。高频轻扫比低频大扫更平稳。
+heap_trim_secs = 5
 # 请求体参与 WAF 检查的上限（超出则跳过 body 检查，计入 waf_skipped）
 max_inspect_bytes = 8192
 # 全局负载均衡策略：wrr(加权轮询) | rr | iphash | random
@@ -28,6 +30,10 @@ cert = ""
 key = ""
 min_version = "1.2"          # "1.2" | "1.3"
 self_signed_days = 365
+# 自签证书要签进 SAN 的域名/IP。不写这里的话，浏览器永远"证书与域名不匹配"。
+san = []
+# 明文 HTTP 一律 301 到 HTTPS（tls.enabled 为真时生效）
+http_redirect = false
 
 # ---------- 管理面认证 ----------
 [admin]
@@ -59,6 +65,56 @@ config_history_keep_days = 30        # 快照保留天数（0 = 不限）
 audit_enabled = true
 audit_keep = 2000
 audit_max_bytes = 4194304
+
+# ---------- 静态站点：网关自己托管，不必再挂 nginx ----------
+# 命中顺序：Host 精确匹配优先，`*` 兜底；命中站点就直接吐文件，不再走 routes。
+# [[sites]]
+# name = "官网"
+# enabled = true
+# hosts = ["optical.zakoflare.com", "www.zakoflare.com"]
+# root = "/srv/www/optical"     # 相对路径按配置文件所在目录解析
+# index = ["index.html"]
+# spa = false                    # true 时无扩展名的未命中路径回退到首页
+# cache_secs = 0                 # 0 = no-cache
+# immutable = false              # true 时带指纹的资源加 immutable
+# headers = []
+
+# ---------- 动态项目：网关替你拉起并守护进程 ----------
+# 应用只监听 127.0.0.1:port，网关按 hosts + path_prefix 映射到域名上。
+# 启停只影响进程，路由始终在：停了的服务返回 503，而不是让人猜 502。
+# [[apps]]
+# name = "api"
+# enabled = true
+# autostart = true         # 网关启动时拉起
+# restart = true           # 跑挂了自动拉起（10 秒内最多 3 次，防崩溃循环）
+# kind = "python"          # go / php / java / python / dotnet / node / custom
+# cwd = "/srv/app/api"
+# entry = "main.py"        # 推断默认命令用；写了 command 就忽略
+# command = ""             # 显式命令优先，例：uvicorn app:app --host 127.0.0.1
+# args = []
+# env = [["ENV", "prod"]]
+# port = 18100
+# hosts = ["api.example.com"]
+# path_prefix = "/"
+# strip_prefix = false
+# health_path = ""         # 例 /healthz
+# [apps.cors]
+# enabled = true
+# origins = ["https://example.com"]   # 支持 *、精确、*.example.com 前缀通配
+# methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+# headers = []             # 空 = 回显预检里的 Access-Control-Request-Headers
+# expose = []
+# credentials = false      # true 时不能用 "*"（浏览器禁止）
+# max_age = 600
+
+# ---------- 系统防火墙联动（端口放行） ----------
+# 和 [rules] 分开：端口决定"包能不能进内核栈"，规则决定"进来之后怎么处理"。
+# 只做 ACCEPT、不做 DROP，最坏情况是没生效，不会把 SSH 锁在门外。
+[firewall]
+enabled = false
+backend = "auto"        # auto / nft / iptables / ufw / none
+auto_sync = true        # 保存配置后自动重放（监听端口变了就跟着放行）
+extra_ports = []        # 额外要放行的 TCP 端口
 
 [metrics]
 top_n = 8

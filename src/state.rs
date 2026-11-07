@@ -146,6 +146,8 @@ pub struct AppState {
     pub stats_rev: AtomicU64,
     /// 进程 CPU 时间的上一次采样（算百分比用）
     sys_prev: Mutex<Option<(f64, std::time::Instant)>>,
+    /// 动态项目的进程管理（启停 / 日志 / 自动拉起）
+    pub apps: Arc<crate::apps::AppManager>,
     last_sample: Mutex<LastSample>,
     pub cache: ResponseCache,
     pub backends: Arc<BackendRegistry>,
@@ -188,6 +190,10 @@ impl Drop for ConnGuard {
 
 impl AppState {
     pub fn new(config: Config, config_path: PathBuf, overrides: Overrides) -> Self {
+        // 启动时也要把 `[[apps]]` 展开成路由：否则动态项目要等第一次保存配置才生效，
+        // 重启后又会消失一阵——这种"有时好有时不好"最难查。
+        let mut config = config;
+        config.expand_apps();
         // 所有落盘位置统一由 resolve_paths 算，绝不在各处拼 "conf-history" / ".audit.jsonl"
         let paths = config.resolve_paths(&config_path);
         let (sample_ms, history_points) = (
@@ -209,6 +215,7 @@ impl AppState {
             sample_rev: AtomicU64::new(0),
             stats_rev: AtomicU64::new(0),
             sys_prev: Mutex::new(None),
+            apps: Arc::new(crate::apps::AppManager::default()),
             last_sample: Mutex::new(LastSample::default()),
             cache: ResponseCache::default(),
             backends: Arc::new(BackendRegistry::default()),
@@ -264,6 +271,7 @@ impl AppState {
 
         let mut effective = cfg;
         self.overrides.read().await.apply(&mut effective);
+        effective.expand_apps();
         effective.validate_ok_in(self.base_dir())?;
         *self.config.write().await = effective;
         // 版本号必须**在这里**同步自增，不能等热重载。
@@ -291,6 +299,7 @@ impl AppState {
         let mut cfg = Config::load(&self.config_path)?;
         cfg.validate_ok_in(self.base_dir())?;
         self.overrides.read().await.apply(&mut cfg);
+        cfg.expand_apps();
         *self.config.write().await = cfg;
         self.config_rev.fetch_add(1, Ordering::Relaxed);
         self.metrics.reloads.fetch_add(1, Ordering::Relaxed);
@@ -444,6 +453,19 @@ impl AppState {
             *g = Some((c, now));
         }
         out
+    }
+
+    /// 堆回收间隔。`heap_trim_secs = 0` 表示关闭，返回一个"很久以后"避免空转。
+    pub fn trim_interval(&self) -> Duration {
+        let secs = match self.try_config() {
+            Some(c) => c.server.heap_trim_secs,
+            None => crate::config::ServerConfig::default().heap_trim_secs,
+        };
+        if secs == 0 {
+            Duration::from_secs(3600)
+        } else {
+            Duration::from_secs(secs.min(3600))
+        }
     }
 
     /// 排行榜查询：维度 + 范围 + 筛选。粒度只是图表的展示方式，不影响这里。
@@ -633,6 +655,32 @@ pub fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// 动态项目的守护循环：回收僵尸、按策略拉起。
+///
+/// 2 秒一轮是有意的：进程退出到自动拉起之间的窗口足够小，
+/// 又不会因为每 100ms 扫一遍进程表而白烧 CPU。
+pub fn spawn_apps_supervisor(state: Arc<AppState>) {
+    tokio::spawn(async move {
+        // 启动时先按 autostart 拉一轮
+        let (apps, base) = {
+            let cfg = state.snapshot().await;
+            (cfg.apps.clone(), state.base_dir().to_path_buf())
+        };
+        state.apps.supervise(&apps, &base).await;
+        let mut ticker = tokio::time::interval(Duration::from_secs(2));
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            ticker.tick().await;
+            let (apps, base) = {
+                let cfg = state.snapshot().await;
+                (cfg.apps.clone(), state.base_dir().to_path_buf())
+            };
+            state.apps.tick(&apps, &base).await;
+            state.apps.reap_removed(&apps).await;
+        }
+    });
+}
+
 /// 按配置的采集间隔采样，供 WebUI 画折线图。
 ///
 /// 不能直接 `sleep(interval)` 了事：配置随时可能被热重载改掉（比如把 15 秒调成 60 秒），
@@ -642,6 +690,11 @@ pub fn spawn_sampler(state: Arc<AppState>) {
     tokio::spawn(async move {
         let mut due = std::time::Instant::now();
         let mut active: u64 = 0;
+        // 堆回收：高频轻扫，而不是低频大扫。
+        // malloc_trim 只是遍历 arena 把空闲页还给内核，单次代价很小的；
+        // 攒着几分钟不动，反而会让 RSS 一路顶在高水位上不回落。
+        // 间隔由 `server.heap_trim_secs` 控制（默认 5 秒，0 = 关闭）。
+        let mut next_trim = std::time::Instant::now();
         loop {
             state.sync_history();
             let (interval_ms, _) = state.sampling();
@@ -652,6 +705,15 @@ pub fn spawn_sampler(state: Arc<AppState>) {
                 state.sample_once();
                 due = std::time::Instant::now() + Duration::from_millis(active);
                 continue;
+            }
+            if std::time::Instant::now() >= next_trim {
+                let before = crate::sys::sample().rss_bytes;
+                crate::sys::trim_heap();
+                let after = crate::sys::sample().rss_bytes;
+                if after < before {
+                    tracing::debug!(freed_kb = (before - after) / 1024, "堆回收：空闲页已归还");
+                }
+                next_trim = std::time::Instant::now() + state.trim_interval();
             }
             tokio::time::sleep(Duration::from_millis(interval_ms.min(1000))).await;
             if std::time::Instant::now() >= due {

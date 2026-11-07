@@ -44,6 +44,11 @@ TLS 1.2/1.3、WebSocket 隧道、gRPC 透传，配 CLI + WebUI 双操作面（�
 | 28 | 分析页 | 流量曲线 + 排行榜独立成页（概览只留 KPI）；左侧四个指标条带 sparkline、点一下切主曲线；底部三张 mini 排行卡（首张跟随当前维度）。排行榜 Top 5/10/20/50/100/200 或**全部**（`limit=0` 真的不截断，表格内部滚动、表头 sticky）。换视角时有加载遮罩，8 秒兜底收起 | ✅ |
 | 29 | 概览增强 | 状态码分布 / 缓存命中两个环形图 + 本进程内存、CPU、线程、运行时长（Linux 读 /proc，macOS 走 ps，Windows 用 GetProcessMemoryInfo/GetProcessTimes，读不到显示「—」） | ✅ |
 | 30 | WS 承载配置 | 配置版本号变化时 WS 直接推 `rev` + 完整 `config`，别的会话改完规则/路由这边不用刷新就能看到；本页正在编辑时不覆盖，保存后自动同步 | ✅ |
+| 31 | 静态站点 | `[[sites]]`：host → 目录直出，ETag/304、SPA 回退、缓存策略、额外响应头；路径解码后逐段校验 + canonicalize 防穿越；未命中继续走路由（等价 try_files） | ✅ |
+| 32 | 动态项目 | `[[apps]]`：Go/PHP/Java/Python/.NET/Node 由网关拉起并守护（autostart / 崩溃重启 / 退避），端口映射到 host+path_prefix，CORS（预检 + 真实响应，支持 *.example.com 通配，credentials 与 `*` 互斥），启停/重启/日志尾巴走管理面；停了的服务返回 503 而不是 502 | ✅ |
+| 33 | 端口放行 | 单独一页：端口 = "包能不能进内核栈"，与 URL/域名规则分开；按监听端口自动推导，幂等写入 nft / iptables / ufw（只 ACCEPT 不 DROP），配置保存后自动重放 | ✅ |
+| 34 | SSL | 自签证书带真实 SAN（`tls.san` + 域名），可一键重签；外部 cert/key 不会被覆盖；`tls.http_redirect` 全局 301；证书页展示来源/SAN/到期时间 | ✅ |
+| 35 | 内存回收 | 统计桶回收复用 + 裁剪迟滞；按 `server.heap_trim_secs`（默认 5 秒）高频轻扫归还空闲页 | ✅ |
 
 > **关于 QUIC**：它不是"加个监听器"就完事的。HTTP/3 需要 h3 帧层 + QUIC 传输 + TLS 会话票据一整套，
 > 而且必须先把 TLS 栈跑稳。本轮把 TLS/WS/gRPC 三层落地了，QUIC 留作独立里程碑——

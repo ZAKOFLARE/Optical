@@ -20,6 +20,9 @@ tokio = { version = "1", features = [
     "time",
     "sync",
     "fs",
+    # 动态项目管理要拉起子进程并读它的 stdout/stderr
+    "process",
+    "io-util",
 ] }
 hyper = { version = "1", features = ["server", "client", "http1", "http2"] }
 hyper-util = { version = "0.1", features = [
@@ -40,6 +43,8 @@ clap = { version = "4", features = ["derive", "env"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 anyhow = "1"
+# 只为一件事：v6 监听显式打 IPV6_V6ONLY（tokio 的 TcpSocket 没这个开关）
+socket2 = "0.6"
 
 # TLS / 证书
 rustls = { version = "0.23", default-features = false, features = ["std", "ring", "tls12"] }

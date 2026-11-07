@@ -19,6 +19,15 @@ pub fn cpu_seconds() -> Option<f64> {
     imp::cpu_seconds()
 }
 
+/// 把分配器手里空闲的内存页还给操作系统。
+///
+/// Rust 释放内存只到分配器为止：glibc 会把空闲页留在 arena 里复用，
+/// 于是突发流量过后 RSS 停在高水位不回落——从外面看就是"内存只涨不退"。
+/// 网关本身没有持续增长的数据结构，定期 trim 一次就够。
+pub fn trim_heap() {
+    imp::trim_heap()
+}
+
 pub fn sample() -> SysSample {
     imp::sample()
 }
@@ -80,6 +89,8 @@ mod imp {
         times().map(|(k, u)| k + u)
     }
 
+    pub fn trim_heap() {}
+
     pub fn sample() -> SysSample {
         let mut c = ProcessMemoryCounters {
             cb: std::mem::size_of::<ProcessMemoryCounters>() as u32,
@@ -107,6 +118,21 @@ mod imp {
         let raw = read("/proc/self/stat")?;
         let tail = &raw[raw.rfind(')')? + 1..];
         Some(tail.split_whitespace().map(str::to_string).collect())
+    }
+
+    pub fn trim_heap() {
+        // musl 没有 malloc_trim；glibc 才有。用弱符号并不存在，只好按目标三元组判断。
+        #[cfg(all(target_env = "gnu", target_pointer_width = "64"))]
+        unsafe {
+            unsafe extern "C" {
+                fn malloc_trim(pad: usize) -> i32;
+            }
+            malloc_trim(0);
+        }
+        #[cfg(not(all(target_env = "gnu", target_pointer_width = "64")))]
+        {
+            // 其它 libc 没有等价调用，什么都不做
+        }
     }
 
     pub fn cpu_seconds() -> Option<f64> {
@@ -143,6 +169,10 @@ mod imp {
     use super::SysSample;
 
     /// macOS / BSD 上直接问 ps：一次 fork 换四个数，比引一个 crate 划算
+    pub fn trim_heap() {
+        // macOS 没有 malloc_trim；malloc_zone_pressure_relief 需要额外 FFI，先不做
+    }
+
     pub fn cpu_seconds() -> Option<f64> {
         let out = std::process::Command::new("ps")
             .args(["-o", "time=", "-p", &std::process::id().to_string()])
@@ -193,6 +223,7 @@ mod imp {
     pub fn cpu_seconds() -> Option<f64> {
         None
     }
+    pub fn trim_heap() {}
     pub fn sample() -> SysSample {
         SysSample::default()
     }
