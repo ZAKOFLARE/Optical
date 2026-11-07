@@ -39,6 +39,36 @@ pub enum Command {
     UpstreamEcho(EchoArgs),
     /// 生成/写入管理面口令（argon2 哈希）
     Passwd(PasswdArgs),
+    /// 把当前可执行文件装进 PATH，之后任何目录都能直接敲 optical
+    Install(InstallArgs),
+    /// 管理工作面二次验证（离线应急：忘密钥/算法不对时关掉 2FA）
+    Totp {
+        #[command(subcommand)]
+        cmd: TotpCmd,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum TotpCmd {
+    /// 关闭二次验证并清掉密钥（不需要登录，直接改配置文件）
+    Off,
+    /// 显示当前 2FA 状态与算法（不打印密钥）
+    Status,
+}
+
+#[derive(Args, Debug, Default)]
+pub struct InstallArgs {
+    /// 安装目录；默认 ~/.local/bin，Windows 为 %LOCALAPPDATA%\Programs\Optical
+    #[arg(long, value_name = "DIR")]
+    pub dir: Option<PathBuf>,
+
+    /// 只复制文件，不碰 PATH
+    #[arg(long)]
+    pub no_path: bool,
+
+    /// 目标已存在时覆盖
+    #[arg(long)]
+    pub force: bool,
 }
 
 #[derive(Args, Debug, Default)]

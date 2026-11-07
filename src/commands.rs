@@ -268,6 +268,14 @@ fn banner(cfg: &Config, path: &Path, generated_pw: Option<&str>, tls: Option<&cr
     );
     println!("  config    {}", path.display());
     println!("  data      {}", cfg.resolve_paths(path).data_dir.display());
+    // 不在 PATH 里就别让人每次敲 ./target/release/optical
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            if !dir_in_path(dir) {
+                println!("  tip       把 optical 装成全局命令（一次性）：optical install");
+            }
+        }
+    }
     println!("  ----------------------------------------------------------------");
     if cfg.admin.enabled {
         match generated_pw {
@@ -310,6 +318,207 @@ fn absolutize(p: &Path) -> PathBuf {
 }
 
 // ---------- config ----------
+
+/// 安装目录：Unix 用 ~/.local/bin（不需要 root），Windows 用 %LOCALAPPDATA%\Programs\Optical。
+fn default_install_dir() -> PathBuf {
+    if cfg!(windows) {
+        let base = std::env::var("LOCALAPPDATA")
+            .or_else(|_| std::env::var("USERPROFILE").map(|p| format!("{p}\\AppData\\Local")))
+            .unwrap_or_else(|_| ".".to_string());
+        PathBuf::from(base).join("Programs").join("Optical")
+    } else {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        PathBuf::from(home).join(".local").join("bin")
+    }
+}
+
+fn trim_sep(s: &str) -> String {
+    s.trim_end_matches(['/', '\\']).to_lowercase()
+}
+
+fn dir_in_path(dir: &Path) -> bool {
+    let want = trim_sep(&dir.to_string_lossy());
+    std::env::var("PATH")
+        .unwrap_or_default()
+        .split(if cfg!(windows) { ';' } else { ':' })
+        .any(|p| trim_sep(p) == want)
+}
+
+/// 把安装目录写进 PATH。
+/// Unix 写进 shell rc（幂等）；Windows 只改"用户变量"，不碰系统 PATH，也不重排已有条目。
+fn add_to_path(dir: &Path) -> Result<Vec<String>> {
+    let mut notes = Vec::new();
+    let disp = dir.display().to_string();
+
+    if cfg!(windows) {
+        notes.push(win_user_path_note(&disp));
+        return Ok(notes);
+    }
+
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    let line = format!("export PATH=\"{disp}:$PATH\"  # added by optical install");
+    let mut touched = Vec::new();
+    let mut already = false;
+    for rc in [".bashrc", ".zshrc", ".profile"] {
+        let path = PathBuf::from(&home).join(rc);
+        if !path.exists() {
+            continue;
+        }
+        let body = std::fs::read_to_string(&path).unwrap_or_default();
+        if body.contains("added by optical install") && body.contains(&disp) {
+            already = true;
+            continue;
+        }
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(&path) {
+            let _ = writeln!(f, "\n{line}");
+            touched.push(rc.to_string());
+        }
+    }
+    if !touched.is_empty() {
+        notes.push(format!(
+            "已把 {disp} 加进 {}（重开终端或 source 一下生效）",
+            touched.join(" / ")
+        ));
+    } else if already {
+        notes.push(format!("{disp} 已在 shell 配置里，没有重复写入"));
+    } else {
+        notes.push(format!(
+            "{disp} 没有可写入的 shell 配置；需要时手动加：{line}"
+        ));
+    }
+    Ok(notes)
+}
+
+/// Windows 上改用户 PATH。用 PowerShell 的 [Environment] API 而不是 setx：
+/// setx 会在 1024 字符处截断 PATH，那是能把整台机器搞坏的操作。
+#[cfg(windows)]
+fn win_user_path_note(disp: &str) -> String {
+    let escaped = disp.replace('\'', "''");
+    let script = format!(
+        "$p=[Environment]::GetEnvironmentVariable('Path','User'); \
+         if ($null -eq $p) {{ $p='' }}; \
+         if ($p -notlike '*{d}*') {{ \
+           [Environment]::SetEnvironmentVariable('Path', (($p.TrimEnd(';') + ';{d}').TrimStart(';')), 'User'); \
+           Write-Output 'added' }} else {{ Write-Output 'exists' }}",
+        d = escaped
+    );
+    let out = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .output();
+    match out {
+        Ok(o) if String::from_utf8_lossy(&o.stdout).contains("added") => {
+            format!("已把 {disp} 写入用户 PATH（新开终端生效）")
+        }
+        Ok(o) if String::from_utf8_lossy(&o.stdout).contains("exists") => {
+            format!("{disp} 已在用户 PATH 里")
+        }
+        Ok(o) => format!(
+            "没能自动改 PATH（{}）；手动加：设置 → 系统 → 环境变量 → 用户变量 Path → 新建 {disp}",
+            String::from_utf8_lossy(&o.stderr).trim()
+        ),
+        Err(e) => format!(
+            "没能自动改 PATH（{e}）；手动加：设置 → 系统 → 环境变量 → 用户变量 Path → 新建 {disp}"
+        ),
+    }
+}
+
+#[cfg(not(windows))]
+fn win_user_path_note(disp: &str) -> String {
+    disp.to_string()
+}
+
+pub async fn totp_cmd(config_opt: Option<PathBuf>, cmd: crate::cli::TotpCmd) -> Result<()> {
+    let path = crate::config::resolve_path(config_opt);
+    let mut cfg = Config::load(&path)?;
+    use crate::cli::TotpCmd;
+    match cmd {
+        TotpCmd::Status => {
+            println!("  config      {}", path.display());
+            println!("  enabled     {}", cfg.admin.totp_enabled);
+            println!("  algorithm   {}", cfg.admin.totp_algorithm.otpauth_name());
+            println!(
+                "  secret      {}",
+                if cfg.admin.totp_secret.is_empty() {
+                    "（未设置）".to_string()
+                } else {
+                    format!("已设置（{} 位 Base32，不在终端回显）", cfg.admin.totp_secret.len())
+                }
+            );
+        }
+        TotpCmd::Off => {
+            let was = cfg.admin.totp_enabled;
+            cfg.admin.totp_enabled = false;
+            cfg.admin.totp_secret = String::new();
+            cfg.validate_ok_in(path.parent().unwrap_or(Path::new(".")))?;
+            cfg.save(&path)?;
+            println!(
+                "  已关闭 2FA{}，密钥已清除。运行中的实例会在 1 秒内热重载生效。",
+                if was { "" } else { "（本来就是关的）" }
+            );
+            println!("  重新配置：WebUI「安全」→ 生成密钥 → 用 App 扫 → 填验证码点「验证」→ 保存");
+        }
+    }
+    Ok(())
+}
+
+pub async fn install_cmd(args: crate::cli::InstallArgs) -> Result<()> {
+    let exe = std::env::current_exe().context("拿不到当前可执行文件路径")?;
+    let dir = args.dir.clone().unwrap_or_else(default_install_dir);
+    std::fs::create_dir_all(&dir)
+        .with_context(|| format!("创建安装目录失败: {}", dir.display()))?;
+
+    let name = exe
+        .file_name()
+        .map(|n| n.to_os_string())
+        .unwrap_or_else(|| std::ffi::OsString::from(if cfg!(windows) {
+            "optical.exe"
+        } else {
+            "optical"
+        }));
+    let target = dir.join(&name);
+
+    if target == exe {
+        println!("  {} 就是当前位置，无需复制", target.display());
+    } else {
+        if target.exists() && !args.force {
+            anyhow::bail!(
+                "{} 已存在。要覆盖请加 --force（或先删掉它）",
+                target.display()
+            );
+        }
+        // 先复制到临时名再 rename：正在运行的旧二进制在 Windows 上不能被覆盖，
+        // 但可以被改名——这样"覆盖安装"不会因为进程占用而失败。
+        let tmp = dir.join(format!("{}.new", name.to_string_lossy()));
+        std::fs::copy(&exe, &tmp).with_context(|| format!("复制到 {} 失败", tmp.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755));
+        }
+        if target.exists() {
+            let old = dir.join(format!("{}.old", name.to_string_lossy()));
+            let _ = std::fs::remove_file(&old);
+            let _ = std::fs::rename(&target, &old);
+        }
+        std::fs::rename(&tmp, &target)
+            .with_context(|| format!("安装到 {} 失败", target.display()))?;
+        println!("  已安装  {}", target.display());
+    }
+
+    if args.no_path {
+        println!("  按 --no-path 要求，未改动 PATH");
+    } else if dir_in_path(&dir) {
+        println!("  目录已在 PATH 中，直接敲 `optical` 即可");
+    } else {
+        for n in add_to_path(&dir)? {
+            println!("  {n}");
+        }
+    }
+
+    println!("\n  验证：新开一个终端 → optical --version");
+    Ok(())
+}
 
 pub async fn config_cmd(config_opt: Option<PathBuf>, cmd: ConfigCmd) -> Result<()> {
     let path = crate::config::resolve_path(config_opt);
