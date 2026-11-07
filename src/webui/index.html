@@ -1017,7 +1017,7 @@
     var zh = lang === "zh";
     if (secs < 120) return Math.round(secs) + (zh ? " 秒" : "s");
     if (secs < 3600) return Math.round(secs / 60) + (zh ? " 分" : "min");
-    if (secs < 172800) return Math.round(secs / 3600) + (zh ? " 小时" : "h");
+    if (secs < 86400) return Math.round(secs / 3600) + (zh ? " 小时" : "h");
     if (secs < 63072000) return Math.round(secs / 86400) + (zh ? " 天" : "d");
     return Math.round(secs / 31536000) + (zh ? " 年" : "y");
   }
