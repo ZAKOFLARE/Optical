@@ -211,6 +211,34 @@
   .rank-card .mini-row b{font-variant-numeric:tabular-nums}
   /* 自定义规则编辑器 */
   .rule-card{padding:14px 16px;margin-bottom:12px}
+  .gs-card{margin-top:12px}
+  .gs-box{display:flex;align-items:center;gap:10px;padding:0 18px 10px}
+  .gs-box input{flex:1;height:34px;border:1px solid var(--line-2);border-radius:var(--r);
+    background:var(--panel);color:var(--ink);padding:0 10px;font-family:inherit;font-size:13px}
+  .gs-box input:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px var(--blue-soft)}
+  .gs-count{font-size:11.5px;color:var(--ink-3)}
+  .gs-list{display:flex;flex-direction:column;padding:0 0 6px}
+  .gs-row{display:flex;align-items:center;gap:10px;padding:7px 18px;cursor:pointer;
+    border-top:1px solid var(--line);font-size:12.5px}
+  .gs-row:hover{background:var(--bg)}
+  .gs-row .k{flex:0 0 46px;font-size:10.5px;letter-spacing:.04em;color:var(--ink-3);text-transform:uppercase}
+  .gs-row .t{flex:0 0 auto;font-weight:600;color:var(--ink)}
+  .gs-row .s{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    color:var(--ink-3);font-family:ui-monospace,Menlo,monospace;font-size:11.5px}
+  .gs-row .go{color:var(--blue);font-size:11.5px;opacity:0;transition:opacity .15s}
+  .gs-row:hover .go{opacity:1}
+  .rel-chip{border:1px solid var(--line-2);background:var(--panel);color:var(--ink-2);
+    border-radius:999px;font-family:inherit;font-size:11px;padding:2px 8px;cursor:pointer;line-height:1.4}
+  .rel-chip:hover{border-color:var(--blue);color:var(--blue)}
+  .rel-panel{margin-top:8px;padding:10px 12px;border:1px dashed var(--line-2);border-radius:var(--r);
+    background:var(--bg);font-size:12px;color:var(--ink-2)}
+  .rel-panel h4{margin:0 0 6px;font-size:11px;letter-spacing:.04em;color:var(--ink-3);text-transform:uppercase;font-weight:600}
+  .rel-panel ul{margin:0 0 8px;padding-left:16px}
+  .rel-panel li{margin:2px 0}
+  .rel-panel li b{color:var(--ink);font-weight:600}
+  .rel-panel .warn{color:var(--amber)}
+  .flash{animation:flash 1.1s ease-out}
+  @keyframes flash{0%{box-shadow:0 0 0 2px var(--blue),0 0 0 6px var(--blue-soft)}100%{box-shadow:0 0 0 0 transparent}}
   .app-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ink-3);margin-right:5px}
   .app-dot.on{background:var(--green);box-shadow:0 0 0 3px rgba(0,168,112,.14)}
   .app-logs{margin:6px 0 0;padding:10px 12px;max-height:220px;overflow:auto;border-radius:var(--r);
@@ -474,6 +502,19 @@
             <div class="card-head"><h3 data-i18n="ov.sys">系统占用</h3><span class="sec-hint" data-i18n="ov.sys.hint">本进程</span></div>
             <div class="sys-list" id="sys-list"></div>
           </div>
+        </div>
+
+        <div class="card gs-card">
+          <div class="card-head">
+            <h3 data-i18n="gs.title">全局检索</h3>
+            <span class="sec-hint" data-i18n="gs.hint">回车跳到第一条；结果可以直接点进对应页面</span>
+          </div>
+          <div class="gs-box">
+            <input id="gs-input" data-i18n-ph="gs.ph" placeholder="搜规则、路由、站点、应用、后端…（输入即筛）" autocomplete="off">
+            <button class="btn btn-sm" id="gs-go" data-i18n="gs.go">跳过去</button>
+            <span class="gs-count" id="gs-count"></span>
+          </div>
+          <div class="gs-list" id="gs-list"></div>
         </div>
 
         <div class="sec-hint" style="margin-top:14px">
@@ -1027,23 +1068,37 @@
       "ov.title":"运行概览",
       "ov.tab.req":"请求 / 采样","ov.tab.bw":"带宽","ov.tab.cache":"缓存","ov.tab.block":"拦截",
       "nav.analytics":"分析","nav.rules":"自定义","nav.sites":"站点","nav.ports":"端口","nav.apps":"应用",
-      "st.title":"静态站点","st.hint":"绑定域名 → 指定目录 → 网关直接吐文件；没有命中站点的 Host 继续走路由转发",
+      "st.title":"静态站点","st.hint":"把域名指到一个目录，网关自己发文件；这个域名下没找到文件，就继续交给路由/应用处理",
       "st.add":"+ 新增站点","st.save":"保存站点","st.saved":"站点已保存",
-      "st.order":"优先级：WAF → 规则 → 静态站点（按 Host 精确匹配，* 兜底）→ 路由转发。站点命中但文件不存在时返回 404，不会悄悄转给上游。",
-      "st.path":"root 支持相对路径，按配置文件所在目录解析；目录越界与软链穿越都会被拒绝。",
+      "st.order":"先后顺序：先过 WAF，再走规则，然后看静态站点（域名精确匹配优先，* 兜底），最后才是路由转发。站点里没这个文件就继续往下走，不会硬塞一个 404 给你。",
+      "st.path":"根目录可以写相对路径（相对配置文件所在目录）。想用 ../ 跳出目录、或拿软链接指到外面，都会被直接拒绝。",
       "st.name.ph":"站点名，如 官网","st.root":"根目录","st.open":"打开站点",
       "st.empty":"还没有站点。点右上角「新增站点」，填域名和根目录即可（例如 optical.zakoflare.com → /srv/www/optical）。",
-      "ap.title":"动态项目","ap.hint":"Go / PHP / Java / Python / .NET / Node：网关负责拉起进程、端口映射、CORS 与启停",
+      "cmd.failed":"操作失败","cmd.timeout":"网关没有回执（8 秒），请检查连接后重试",
+      "gs.title":"全局检索","gs.go":"跳过去","gs.ph":"搜规则、路由、站点、应用、后端…（输入即筛）",
+      "gs.empty":"没有匹配项","gs.hint":"回车跳到第一条；结果可以直接点进对应页面",
+      "gs.kind.rule":"规则","gs.kind.route":"路由","gs.kind.site":"站点","gs.kind.app":"应用","gs.kind.backend":"后端",
+      "rel.chip":"关系","rel.title":"和谁相关",
+      "rel.rules":"条件重叠的规则","rel.targets":"受影响的转发目标","rel.warn":"注意",
+      "rel.overlap":"和「{name}」条件重叠，靠下的规则会盖住靠上的",
+      "rel.same":"和「{name}」条件一模一样，后一条永远生效、前一条等于摆设",
+      "rel.none":"这条规则没和别的规则/站点/应用重叠，删掉只影响它自己",
+      "rel.unnamed":"第 {n} 条规则（未命名）",
+      "ph.ttl0":"0 = 不缓存","ph.maint":"维护中",
+      "ap.cmd.ph":"留空按 kind 推断，例：uvicorn app:app --host 127.0.0.1",
+      "ap.health.ph":"/healthz（可空）",
+      "rel.delete":"删之前想一下：有 {n} 条规则和它条件重叠，删了可能让剩下的变成半套",
+      "ap.title":"动态项目","ap.hint":"Go / PHP / Java / Python / .NET / Node 都能挂：网关帮你启动、自启、崩了拉起来，顺手把跨域配好",
       "ap.add":"+ 新增应用","ap.save":"保存应用","ap.saved":"应用已保存",
-      "ap.order":"映射方式：应用只监听 127.0.0.1:port，网关按 host + path_prefix 把它挂到域名上；启停只影响进程，路由始终存在（停了返回 503，不是 502）。",
+      "ap.order":"怎么挂：应用只监听本机端口（127.0.0.1:端口），网关按「域名 + 路径前缀」转过去。停服务不删映射：访问会得到 503「项目未启动」，而不是让你对着 502 猜是网关坏了还是应用挂了。",
       "ap.name.ph":"应用名，如 api","ap.start":"启动","ap.stop":"停止","ap.restart":"重启","ap.logs":"日志",
       "ap.empty":"还没有动态项目。点右上角「新增应用」，填 kind / port / hosts 即可；command 留空会按 kind 推断。",
       "ap.nolog":"（还没有输出）","ap.noname":"先给应用起个名字再启动",
       "ap.done.start":"已启动","ap.done.stop":"已停止","ap.done.restart":"已重启",
-      "pt.title":"端口放行","pt.hint":"端口是\"包能不能进内核栈\"，和 URL/域名规则（请求进来之后怎么处理）分开管理",
+      "pt.title":"端口放行","pt.hint":"这里只管「外面的包能不能连进来」；进来之后按什么规则处理是「自定义」那页的事，两边分开改不会互相连累",
       "pt.fw":"系统防火墙联动","pt.extra":"额外放行端口（逗号分隔）","pt.list":"将要放行的端口",
       "pt.refresh":"刷新","pt.apply":"立即应用","pt.savecfg":"保存配置",
-      "pt.note":"只做 ACCEPT、不做 DROP：最坏情况是\"没生效\"，不会把 SSH 关在门外。",
+      "pt.note":"只会「放行」，不会「拦截」：最坏结果是没生效，不会把你自己 SSH 关在门外。",
       "pt.applying":"正在应用…","pt.saved":"防火墙配置已保存","pt.none":"没有端口",
       "pt.tls":"HTTPS 证书","pt.resign":"重签自签证书","pt.signed":"已重签：",
       "pt.san":"证书 SAN（逗号分隔；留空用配置里的 tls.san）",
@@ -1062,9 +1117,9 @@
       "an.tile.req":"请求数","an.tile.bw":"带宽","an.tile.cache":"缓存命中率","an.tile.waf":"WAF 拦截",
       "an.cards":"排行榜","an.more":"查看更多","an.click":"点左侧指标切换曲线",
       "rl.title":"自定义规则","rl.add":"+ 新建规则","rl.save":"保存规则",
-      "rl.hint":"按请求特征改写网关行为。规则自上而下评估，所有命中的规则依次合并，后面的覆盖前面的。",
-      "rl.order":"执行顺序：WAF → 规则短路动作（鉴权 / 强制 HTTPS / 重定向 / 自定义响应 / 上传上限 / WS 开关）→ 选路 → 缓存 → 回源改写 → 响应头。",
-      "rl.unsupported":"暂不支持：分片回源、OCSP、下行限速（需要改动数据面结构，不给空开关）。",
+      "rl.hint":"按域名/路径/请求头这些特征改变网关行为。从上往下看，命中的规则会叠加，越靠下优先级越高。",
+      "rl.order":"生效顺序：先过 WAF，再执行能直接给结果的规则（鉴权、强制 HTTPS、跳转、自定义返回、上传上限、WS 开关），然后才是选路、缓存、回源改写、响应头。安全检查在前，所以规则绕不过 WAF。",
+      "rl.unsupported":"暂时没做：分片回源、OCSP、下行限速。这三个要改数据面结构，先不给空开关骗人。",
       "rl.name.ph":"规则名，如 静态资源长缓存","rl.enabled":"启用","rl.remove":"删除",
       "rl.when":"匹配条件（全部满足）","rl.then":"执行动作","rl.add.cond":"添加条件",
       "rl.value":"匹配值","rl.header.name":"头/Cookie 名","rl.keep":"不改","rl.yes":"是","rl.no":"否",
@@ -1231,6 +1286,20 @@
       "st.path":"root may be relative to the config file; traversal and symlink escapes are rejected.",
       "st.name.ph":"Site name","st.root":"Root","st.open":"Open",
       "st.empty":"No sites yet. Click \"New site\", fill host and root (e.g. optical.example.com → /srv/www/optical).",
+      "cmd.failed":"Operation failed","cmd.timeout":"No reply from the gateway (8s) — check the connection",
+      "gs.title":"Search","gs.go":"Go","gs.ph":"Search rules, routes, sites, apps, backends…",
+      "gs.empty":"No matches","gs.hint":"Enter jumps to the first hit",
+      "gs.kind.rule":"Rule","gs.kind.route":"Route","gs.kind.site":"Site","gs.kind.app":"App","gs.kind.backend":"Backend",
+      "rel.chip":"Relations","rel.title":"Related items",
+      "rel.rules":"Rules with overlapping conditions","rel.targets":"Affected targets","rel.warn":"Heads-up",
+      "rel.overlap":"overlaps \"{name}\"; the later rule wins",
+      "rel.same":"has exactly the same conditions as \"{name}\"; one of them is dead weight",
+      "rel.none":"No overlap with other rules, sites or apps — deleting it only affects itself",
+      "rel.unnamed":"rule #{n} (unnamed)",
+      "ph.ttl0":"0 = no cache","ph.maint":"Under maintenance",
+      "ap.cmd.ph":"Leave empty to infer from kind, e.g. uvicorn app:app --host 127.0.0.1",
+      "ap.health.ph":"/healthz (optional)",
+      "rel.delete":"Heads-up: {n} rule(s) overlap; deleting this may leave the rest half-wired",
       "ap.title":"Dynamic apps","ap.hint":"Go / PHP / Java / Python / .NET / Node: the gateway spawns the process, maps the port, handles CORS and start/stop",
       "ap.add":"+ New app","ap.save":"Save apps","ap.saved":"Apps saved",
       "ap.order":"Apps listen on 127.0.0.1:port only; the gateway mounts them on host + path_prefix. Start/stop affects the process, not the route (stopped = 503, not 502).",
@@ -1440,6 +1509,7 @@
     rankLimit:(function(){ var v = localStorage.getItem("optical.rankLimit"); return v === null ? 10 : Number(v); })(),
     filters:[], rank:null, rules:null, cards:null, sites:null, fw:null, tls:null,
     appsDraft:null, appStatus:null,
+    pending:{}, cmdSeq:0, gsHits:[], relOpen:-1,
     editing:false, editTimer:null, pendingRev:null, remoteToastShown:false,
     maskTimer:null, maskShown:false, maskGuard:null
   };
@@ -2136,6 +2206,52 @@
     maskOff();
   }
 
+  // ---------- WebSocket 命令通道 ----------
+  // 所有写操作（保存配置 / 启停应用 / 应用防火墙 / 清缓存 / 热重载）都走这条长连接：
+  // 不必为一次点击再建 TCP+TLS，且写完成后紧接的推送就是新状态。
+  // WS 没连上（首屏、断线重连中）自动回落到原来的 HTTP 接口，功能不受影响。
+  var CMD_TIMEOUT_MS = 8000;
+
+  function settleCmd(d){
+    var p = state.pending[d.id];
+    if (!p) return;
+    delete state.pending[d.id];
+    if (p.timer) clearTimeout(p.timer);
+    if (d.ok) p.resolve(d.data || {ok:true});
+    else p.reject(new Error(d.error || t("cmd.failed")));
+  }
+
+  function canCmd(){
+    return !!(state.ws && state.ws.readyState === 1);
+  }
+
+  // 返回 null 表示"走不了 WS，调用方自己回落 HTTP"
+  function apiCmd(action, payload){
+    if (!canCmd()) return null;
+    var id = "c" + (++state.cmdSeq);
+    return new Promise(function(resolve, reject){
+      var timer = setTimeout(function(){
+        delete state.pending[id];
+        reject(new Error(t("cmd.timeout")));
+      }, CMD_TIMEOUT_MS);
+      state.pending[id] = {resolve: resolve, reject: reject, timer: timer};
+      try {
+        state.ws.send(JSON.stringify({type:"cmd", id:id, action:action, payload:payload || {}}));
+      } catch(e){
+        delete state.pending[id];
+        clearTimeout(timer);
+        reject(e);
+      }
+    });
+  }
+
+  // 统一入口：能走 WS 走 WS，否则回落 HTTP
+  function call(action, fallback){
+    var p = apiCmd(action, fallback && fallback.payload);
+    if (p) return p;
+    return fallback.http();
+  }
+
   // WS 通着就走 WS：把"我现在在看什么"发过去，服务端按这个视角推
   function sendView(){
     if (state.ws && state.ws.readyState === 1){
@@ -2249,7 +2365,7 @@
   function siteCard(site, i){
     var hosts = (site.hosts || []).join(", ");
     var index = (site.index || []).join(", ");
-    return '<div class="card rule-card'+(site.enabled ? "" : " off")+'">'+
+    return '<div class="card rule-card'+(site.enabled ? "" : " off")+'" data-card="site-'+i+'">'+
       '<div class="rule-head">'+
         '<input class="rname" data-si="'+i+'" data-sk="name" value="'+esc(site.name||"")+'" placeholder="'+esc(t("st.name.ph"))+'">'+
         '<label class="rswitch"><input type="checkbox" data-si="'+i+'" data-sk="enabled"'+(site.enabled?" checked":"")+'>'+esc(t("rl.enabled"))+'</label>'+
@@ -2380,7 +2496,7 @@
     var opts = function(list, cur){
       return list.map(function(x){ return '<option value="'+x+'"'+(x===cur?' selected':'')+'>'+x+'</option>'; }).join("");
     };
-    return '<div class="card rule-card'+(app.enabled ? "" : " off")+'">'+
+    return '<div class="card rule-card'+(app.enabled ? "" : " off")+'" data-card="app-'+i+'">'+
       '<div class="rule-head">'+
         '<input class="rname" data-ai="'+i+'" data-ak="name" value="'+esc(app.name||"")+'" placeholder="'+esc(t("ap.name.ph"))+'">'+
         '<span class="sec-hint">'+badge+'</span>'+
@@ -2398,9 +2514,9 @@
         '<label class="af"><span>path_prefix</span><input type="text" data-ai="'+i+'" data-ak="path_prefix" value="'+esc(app.path_prefix||"/")+'" placeholder="/"></label>'+
         '<label class="af"><span>cwd</span><input type="text" data-ai="'+i+'" data-ak="cwd" value="'+esc(app.cwd||"")+'" placeholder="/srv/app/myapp"></label>'+
         '<label class="af"><span>entry</span><input type="text" data-ai="'+i+'" data-ak="entry" value="'+esc(app.entry||"")+'" placeholder="main.py / app.jar"></label>'+
-        '<label class="af" style="grid-column:span 2"><span>command</span><input type="text" data-ai="'+i+'" data-ak="command" value="'+esc(app.command||"")+'" placeholder="留空按 kind 推断，例：uvicorn app:app --host 127.0.0.1"></label>'+
+        '<label class="af" style="grid-column:span 2"><span>command</span><input type="text" data-ai="'+i+'" data-ak="command" value="'+esc(app.command||"")+'" placeholder="'+esc(t("ap.cmd.ph"))+'"></label>'+
         '<label class="af"><span>args</span><input type="text" data-ai="'+i+'" data-ak="args" value="'+esc((app.args||[]).join(" "))+'" placeholder="--workers 2"></label>'+
-        '<label class="af"><span>health_path</span><input type="text" data-ai="'+i+'" data-ak="health_path" value="'+esc(app.health_path||"")+'" placeholder="/healthz（可空）"></label>'+
+        '<label class="af"><span>health_path</span><input type="text" data-ai="'+i+'" data-ak="health_path" value="'+esc(app.health_path||"")+'" placeholder="'+esc(t("ap.health.ph"))+'"></label>'+
         '<label class="af"><span>enabled</span><select data-ai="'+i+'" data-ak="enabled"><option value="1"'+(app.enabled?" selected":"")+'>true</option><option value="0"'+(app.enabled?"":" selected")+'>false</option></select></label>'+
         '<label class="af"><span>autostart</span><select data-ai="'+i+'" data-ak="autostart"><option value="0"'+(app.autostart?"":" selected")+'>false</option><option value="1"'+(app.autostart?" selected":"")+'>true</option></select></label>'+
         '<label class="af"><span>restart</span><select data-ai="'+i+'" data-ak="restart"><option value="0"'+(app.restart===false?" selected":"")+'>false</option><option value="1"'+(app.restart===false?"":" selected")+'>true</option></select></label>'+
@@ -2504,7 +2620,10 @@
       var name = btn.getAttribute("data-an") || "";
       if (!name){ toast(t("ap.noname"), "err"); return; }
       setBusy(btn, true);
-      api("/api/apps/" + encodeURIComponent(name) + "/" + act, {method:"POST"})
+      call("app." + act, {
+        payload: {name: name},
+        http: function(){ return api("/api/apps/" + encodeURIComponent(name) + "/" + act, {method:"POST"}); }
+      })
         .then(function(d){
           if (!d.ok) throw new Error(d.error || "失败");
           toast(t("ap.done." + act) + (d.pid ? " · pid " + d.pid : ""), "ok");
@@ -2561,7 +2680,10 @@
       var btn = this;
       setBusy(btn, true);
       $("fw-result").textContent = t("pt.applying");
-      api("/api/firewall/apply", {method:"POST"}).then(function(d){
+      call("firewall.apply", {
+        payload: {},
+        http: function(){ return api("/api/firewall/apply", {method:"POST"}); }
+      }).then(function(d){
         $("fw-result").textContent = (d.ok ? "✓ " : "✗ ") + (d.backend || "") + " · " +
           (d.ports || []).join(",") + (d.error ? " · " + d.error : "");
         $("fw-result").style.color = d.ok ? "var(--green)" : "var(--red)";
@@ -2674,11 +2796,13 @@
     var custom = a.custom_response || {};
     var token = a.token_auth || {};
 
-    return '<div class="card rule-card'+(r.enabled?"":" off")+'" data-ru="'+i+'">'+
+    return '<div class="card rule-card'+(r.enabled?"":" off")+'" data-card="rule-'+i+'">'+
       '<div class="rule-head">'+
         '<input class="rname" data-ri="'+i+'" data-path="name" data-type="text" value="'+esc(r.name||"")+'" placeholder="'+esc(t("rl.name.ph"))+'">'+
         '<label class="rswitch"><input type="checkbox" data-ri="'+i+'" data-path="enabled" data-type="bool"'+(r.enabled?" checked":"")+'>'+esc(t("rl.enabled"))+'</label>'+
         '<span class="grow"></span>'+
+        '<button class="rel-chip" data-act="rel" data-ri="'+i+'" title="'+esc(t("rel.title"))+'">'+
+          esc(t("rel.chip"))+' '+ruleRelCount(i)+'</button>'+
         '<button class="btn btn-sm" data-act="up" data-ri="'+i+'">↑</button>'+
         '<button class="btn btn-sm" data-act="down" data-ri="'+i+'">↓</button>'+
         '<button class="btn btn-sm danger-btn" data-act="del-rule" data-ri="'+i+'">'+esc(t("rl.remove"))+'</button>'+
@@ -2687,7 +2811,7 @@
         '<button class="btn btn-sm" data-act="add-match" data-ri="'+i+'">+ '+esc(t("rl.add.cond"))+'</button></div>'+
       '<div class="rule-sec"><div class="rule-label">'+esc(t("rl.then"))+'</div>'+
         '<div class="agrid">'+
-          actionField(r, i, "actions.cache_ttl_secs", t("act.cache_ttl"), "num", "0 = 不缓存")+
+          actionField(r, i, "actions.cache_ttl_secs", t("act.cache_ttl"), "num", t("ph.ttl0"))+
           actionField(r, i, "actions.browser_ttl_secs", t("act.browser_ttl"), "num")+
           actionField(r, i, "actions.cache_key", t("act.cache_key"), "text", "{method}:{host}{path}")+
           actionField(r, i, "actions.server_name", t("act.server"), "text")+
@@ -2704,13 +2828,274 @@
             '<input type="text" data-ri="'+i+'" data-path="actions.redirect.to" data-type="text" value="'+esc(redirect.to||"")+'" placeholder="https://{host}{uri}"></div></label>'+
           '<label class="af"><span>'+esc(t("act.custom"))+'</span>'+
             '<div class="pair"><input type="number" data-ri="'+i+'" data-path="actions.custom_response.status" data-type="num" value="'+esc(String(custom.status||""))+'" placeholder="200">'+
-            '<input type="text" data-ri="'+i+'" data-path="actions.custom_response.body" data-type="text" value="'+esc(custom.body||"")+'" placeholder="&lt;h1&gt;维护中&lt;/h1&gt;"></div></label>'+
+            '<input type="text" data-ri="'+i+'" data-path="actions.custom_response.body" data-type="text" value="'+esc(custom.body||"")+'" placeholder="&lt;h1&gt;'+esc(t("ph.maint"))+'&lt;/h1&gt;"></div></label>'+
           '<label class="af"><span>'+esc(t("act.token"))+'</span>'+
             '<div class="pair"><input type="text" data-ri="'+i+'" data-path="actions.token_auth.name" data-type="text" value="'+esc(token.name||"")+'" placeholder="x-token">'+
             '<input type="text" data-ri="'+i+'" data-path="actions.token_auth.value" data-type="text" value="'+esc(token.value||"")+'" placeholder="'+esc(t("rl.value"))+'"></div></label>'+
         '</div>'+
       '</div>'+
+      // 面板展开状态存在 state 里，不是只挂在 DOM 上：
+      // 每秒都有配置推送，卡片会被重建，只挂在 DOM 上会一闪就没。
+      '<div class="rel-panel" id="rel-'+i+'"'+(state.relOpen === i ? '' : ' style="display:none"')+'>'+
+        (state.relOpen === i ? relPanelHtml(i) : '')+
+      '</div>'+
     '</div>';
+  }
+
+  // ---------- 全局检索 ----------
+  // 配置一多就记不住"这条规则挂在哪、这个域名是站点还是应用"。
+  // 这里做成一个入口：输入即筛，点一行直接跳到对应页面并闪一下。
+  function matchBrief(r){
+    return (r.matches || []).map(function(m){
+      var name = m.name ? m.name + " " : "";
+      return t("mk." + m.kind) + " " + name + m.value;
+    }).join(" · ");
+  }
+
+  function searchEntries(){
+    var cfg = state.cfg || {};
+    var out = [];
+    (cfg.rules || []).forEach(function(r, i){
+      out.push({kind:"rule", idx:i, page:"p-rules", title:r.name || ("#" + (i+1)), sub:matchBrief(r)});
+    });
+    (cfg.routes || []).forEach(function(r, i){
+      if (r.synthetic) return;
+      var target = r.backend_group || r.backend || r.upstream || "";
+      out.push({kind:"route", idx:i, page:"p-routes", title:r.name,
+        sub:(r.host || "*") + (r.path_prefix || "/") + " → " + target});
+    });
+    (cfg.sites || []).forEach(function(st, i){
+      out.push({kind:"site", idx:i, page:"p-sites", title:st.name || (st.hosts || [])[0] || ("site#" + i),
+        sub:(st.hosts || []).join(", ") + " → " + (st.root || "")});
+    });
+    (cfg.apps || []).forEach(function(ap, i){
+      out.push({kind:"app", idx:i, page:"p-apps", title:ap.name,
+        sub:ap.kind + " · 127.0.0.1:" + ap.port + " · " + (ap.hosts || []).join(", ")});
+    });
+    (cfg.backends || []).forEach(function(b, i){
+      out.push({kind:"backend", idx:i, page:"p-backends", title:b.name, sub:(b.url || "") + (b.group ? " · " + b.group : "")});
+    });
+    return out;
+  }
+
+  function renderSearch(q){
+    var box = $("gs-list");
+    if (!box) return;
+    q = (q || "").trim().toLowerCase();
+    if (!q){
+      var hint = '<div class="gs-row"><span class="s">'+esc(t("gs.hint"))+'</span></div>';
+      if (box.dataset.html !== hint){ box.dataset.html = hint; box.innerHTML = hint; }
+      $("gs-count").textContent = "";
+      state.gsHits = [];
+      return;
+    }
+    var hits = searchEntries().filter(function(e){
+      return (e.title + " " + e.sub + " " + e.kind).toLowerCase().indexOf(q) >= 0;
+    }).slice(0, 14);
+    state.gsHits = hits;
+    $("gs-count").textContent = hits.length + "";
+    if (!hits.length){
+      var empty = '<div class="gs-row"><span class="s">'+esc(t("gs.empty"))+'</span></div>';
+      if (box.dataset.html !== empty){ box.dataset.html = empty; box.innerHTML = empty; }
+      return;
+    }
+    var html = hits.map(function(e, i){
+      return '<div class="gs-row" data-gs="'+i+'">'+
+        '<span class="k">'+esc(t("gs.kind." + e.kind))+'</span>'+
+        '<span class="t">'+esc(e.title)+'</span>'+
+        '<span class="s">'+esc(e.sub)+'</span>'+
+        '<span class="go">→</span>'+
+      '</div>';
+    }).join("");
+    // 每秒快照都会重算一次，内容没变就别动 DOM：否则点击正好落在被换掉的节点上
+    if (box.dataset.html === html) return;
+    box.dataset.html = html;
+    box.innerHTML = html;
+  }
+
+  function jumpEntry(e){
+    if (!e) return;
+    var rail = document.querySelector('.rail-item[data-page="' + e.page + '"]');
+    if (rail) rail.click();
+    setTimeout(function(){
+      if (e.kind === "route"){
+        var f = $("route-filter");
+        if (f){ f.value = e.title; f.dispatchEvent(new Event("input")); }
+        return;
+      }
+      var el = document.querySelector('[data-card="' + e.kind + '-' + e.idx + '"]');
+      if (el){
+        el.scrollIntoView({block:"center", behavior:"smooth"});
+        el.classList.remove("flash");
+        void el.offsetWidth;
+        el.classList.add("flash");
+        setTimeout(function(){ el.classList.remove("flash"); }, 1300);
+      }
+    }, 80);
+  }
+
+  function bindSearch(){
+    var input = $("gs-input");
+    if (!input) return;
+    input.addEventListener("input", function(){ renderSearch(this.value); });
+    input.addEventListener("keydown", function(ev){
+      if (ev.key === "Enter"){
+        ev.preventDefault();
+        jumpEntry((state.gsHits || [])[0]);
+      }
+    });
+    // 回车有时会被浏览器输入法/自动补全吃掉，给一个明确可点的入口更稳
+    $("gs-go").addEventListener("click", function(){ jumpEntry((state.gsHits || [])[0]); });
+    $("gs-list").addEventListener("click", function(ev){
+      var row = ev.target.closest("[data-gs]");
+      if (!row) return;
+      jumpEntry((state.gsHits || [])[Number(row.getAttribute("data-gs"))]);
+    });
+  }
+
+  // ---------- 规则关系网络 ----------
+  // 解决的是"删一条规则，另一条突然变成半套"：规则是叠加生效的，
+  // 光看单条永远不知道自己依赖谁、又被谁盖住。这里把关系摊开给人看。
+  function ruleScope(r){
+    var hosts = [], paths = [];
+    (r.matches || []).forEach(function(m){
+      var v = String(m.value || "");
+      if (m.kind === "host") hosts.push(v.toLowerCase());
+      else if (m.kind === "path" || m.kind === "full_path") paths.push(v);
+    });
+    return {hosts: hosts, paths: paths};
+  }
+
+  // 路径归属必须按「段」判断，不能裸比较字符串：
+  // /api 和 /apixyz 是两个不相干的位置，裸 indexOf 会判成包含关系，
+  // 于是界面会警告"删了会变成半套"，纯属吓人。
+  function pathUnder(child, parent){
+    var c = String(child || ""), p = String(parent || "");
+    if (!p) return true;
+    if (c === p) return true;
+    if (p === "/") return c.charAt(0) === "/";
+    p = p.replace(/\/+$/, ""); // /api/ 和 /api 是同一个位置
+    if (!p) return true;
+    return c.indexOf(p) === 0 && c.charAt(p.length) === "/";
+  }
+
+  // 域名支持 * 通配（规则里写 *.example.com 是常规做法），
+  // 只做精确匹配会让整类规则看起来"谁也不相关"。
+  function hostMatches(pattern, host){
+    var p = String(pattern || "").toLowerCase();
+    var h = String(host || "").toLowerCase();
+    if (!p || !h) return false;
+    if (p === "*" || h === "*") return true;
+    if (p === h) return true;
+    if (p.indexOf("*.") === 0) {
+      var tail = p.slice(1);
+      return h.length > tail.length && h.slice(-tail.length) === tail;
+    }
+    return false;
+  }
+
+  // 两边都可能是通配：规则常写精确域名、应用常写 *.example.com，
+  // 只按一个方向比就会漏掉"其实相关"的情况。
+  function hostsRelated(a, b){
+    return hostMatches(a, b) || hostMatches(b, a);
+  }
+
+  function scopeOverlap(a, b){
+    var hostHit;
+    if (!a.hosts.length || !b.hosts.length) hostHit = true;
+    else hostHit = a.hosts.some(function(h){
+      return b.hosts.some(function(k){ return hostsRelated(h, k); });
+    });
+    var pathHit;
+    if (!a.paths.length || !b.paths.length) pathHit = true;
+    else pathHit = a.paths.some(function(p){
+      return b.paths.some(function(q){ return pathUnder(p, q) || pathUnder(q, p); });
+    });
+    return hostHit && pathHit;
+  }
+
+  function sameConditions(a, b){
+    var key = function(r){
+      return (r.matches || []).map(function(m){
+        return m.kind + "|" + (m.name || "") + "|" + (m.op || "") + "|" + (m.value || "");
+      }).sort().join(";");
+    };
+    return key(a) === key(b) && key(a) !== "";
+  }
+
+  function ruleRelations(i){
+    // 规则看草稿（编辑中的状态才算得准），目标看已生效配置。
+    // 不整份 clone：每次渲染每条规则都 clone 一次，会让 10 条规则变成 100 次深拷贝。
+    var cfg = state.cfg || {};
+    var list = rulesDraft();
+    var r = list[i];
+    if (!r) return {rules: [], targets: [], same: []};
+    var mine = ruleScope(r);
+    var rules = [], same = [];
+    list.forEach(function(o, j){
+      if (j === i) return;
+      if (!scopeOverlap(mine, ruleScope(o))) return;
+      var isSame = sameConditions(r, o);
+      var label = o.name || t("rel.unnamed", {n: j + 1});
+      rules.push({name: label, same: isSame, order: j});
+      if (isSame) same.push(label);
+    });
+
+    // 受影响的转发目标：路由 / 站点 / 应用（按域名与路径前缀判断）
+    var targets = [];
+    var hitsHost = function(h){ return !mine.hosts.length || mine.hosts.some(function(x){ return hostsRelated(x, h); }); };
+    var hitsPath = function(p){ return !mine.paths.length || mine.paths.some(function(x){ return pathUnder(p, x); }); };
+    (cfg.routes || []).forEach(function(rt){
+      if (hitsHost(rt.host) && hitsPath(rt.path_prefix || "/")) {
+        targets.push({kind: "route", name: rt.name});
+      }
+    });
+    (cfg.sites || []).forEach(function(st){
+      var ok = !mine.hosts.length ||
+        (st.hosts || []).some(function(h){ return mine.hosts.some(function(x){ return hostsRelated(x, h); }); });
+      if (ok) targets.push({kind: "site", name: st.name || (st.hosts || [])[0] || "site"});
+    });
+    (cfg.apps || []).forEach(function(ap){
+      var ok = !mine.hosts.length ||
+        (ap.hosts || []).some(function(h){ return mine.hosts.some(function(x){ return hostsRelated(x, h); }); });
+      if (ok) targets.push({kind: "app", name: ap.name});
+    });
+
+    return {rules: rules, targets: targets, same: same};
+  }
+
+  function ruleRelCount(i){
+    return ruleRelations(i).rules.length;
+  }
+
+  function relPanelHtml(i){
+    var rel = ruleRelations(i);
+    var out = [];
+    if (!rel.rules.length && !rel.same.length){
+      out.push('<div>'+esc(t("rel.none"))+'</div>');
+    }
+    if (rel.same.length){
+      out.push('<h4>'+esc(t("rel.warn"))+'</h4><ul>'+
+        rel.same.map(function(n){ return '<li class="warn">'+esc(t("rel.same", {name: n}))+'</li>'; }).join("")+
+        '</ul>');
+    }
+    if (rel.rules.length){
+      out.push('<h4>'+esc(t("rel.rules"))+'</h4><ul>'+
+        rel.rules.map(function(r){
+          return '<li><b>'+esc(r.name)+'</b>'+(r.same ? "" : " · "+esc(t("rel.overlap", {name: r.name})))+'</li>';
+        }).join("")+'</ul>');
+    }
+    if (rel.targets.length){
+      out.push('<h4>'+esc(t("rel.targets"))+'</h4><ul>'+
+        rel.targets.map(function(x){
+          return '<li>'+esc(t("gs.kind." + (x.kind === "route" ? "route" : x.kind === "site" ? "site" : "app"))) +
+            ' · <b>'+esc(x.name)+'</b></li>';
+        }).join("")+'</ul>');
+    }
+    if (rel.rules.length){
+      out.push('<div class="warn">'+esc(t("rel.delete", {n: rel.rules.length}))+'</div>');
+    }
+    return out.join("");
   }
 
   function renderRules(){
@@ -2727,7 +3112,11 @@
   function bindRules(){
     $("btn-rule-add").addEventListener("click", function(){
       rulesDraft().push(blankRule());
+      state.relOpen = -1; // 新规则插在末尾，旧面板的序号含义已变
       renderRules();
+      // 新建一条多半是要马上填名字，把光标送到名字框比让人自己找更顺手
+      var cards = document.querySelectorAll("#rule-list textarea.rname, #rule-list .rname");
+      if (cards.length) cards[cards.length - 1].focus();
     });
     var box = $("rule-list");
     box.addEventListener("input", function(ev){
@@ -2767,7 +3156,30 @@
       var i = Number(btn.getAttribute("data-ri"));
       var list = rulesDraft();
       var act = btn.getAttribute("data-act");
-      if (act === "del-rule") list.splice(i, 1);
+      if (act === "rel"){
+        var panel = $("rel-" + i);
+        if (state.relOpen === i){
+          state.relOpen = -1;
+          if (panel){ panel.style.display = "none"; panel.innerHTML = ""; }
+        } else {
+          state.relOpen = i;
+          if (panel){
+            panel.innerHTML = relPanelHtml(i);
+            panel.style.display = "block";
+            panel.scrollIntoView({block:"nearest", behavior:"smooth"});
+          }
+        }
+        return;
+      }
+      // 增删和挪位都会改变下标：面板记的是序号，不收起来就会指到别人身上
+      if (act === "del-rule" || act === "up" || act === "down") state.relOpen = -1;
+      if (act === "del-rule"){
+        var rel = ruleRelations(i);
+        if (rel.rules.length){
+          toast(t("rel.delete", {n: rel.rules.length}), "warn");
+        }
+        list.splice(i, 1);
+      }
       else if (act === "add-match") list[i].matches.push({kind:"path", name:"", op:"prefix", value:""});
       else if (act === "del-match") list[i].matches.splice(Number(btn.getAttribute("data-mi")), 1);
       else if (act === "up" && i > 0){ var x = list[i]; list[i] = list[i-1]; list[i-1] = x; }
@@ -3549,7 +3961,8 @@
   });
   $("btn-toml-refresh").addEventListener("click", function(){ loadConfig(); });
   $("btn-cache-purge").addEventListener("click", function(){
-    api("/api/cache/purge", {method:"POST"}).then(function(){ toast(t("cf.cache.purged"),"ok"); refresh(); })
+    call("cache.purge", {payload:{}, http:function(){ return api("/api/cache/purge", {method:"POST"}); }})
+      .then(function(){ toast(t("cf.cache.purged"),"ok"); refresh(); })
       .catch(function(e){ toast(e.message,"err"); });
   });
 
@@ -3620,7 +4033,10 @@
     setBusy(btn, true);
     var headers = {"content-type":"application/json"};
     if (state.rev) headers["x-optical-config-rev"] = String(state.rev);
-    return api("/api/config", {method:"PUT",headers:headers,body:JSON.stringify(cfg)})
+    return call("config.save", {
+        payload: {config: cfg, rev: state.rev},
+        http: function(){ return api("/api/config", {method:"PUT",headers:headers,body:JSON.stringify(cfg)}); }
+      })
       .then(function(d){
         state.editing = false;
         if (state.editTimer) clearTimeout(state.editTimer);
@@ -3644,6 +4060,7 @@
     renderRules();
     renderSites();
     renderApps();
+    renderSearch($("gs-input") ? $("gs-input").value : "");
     renderFirewallForm();
   }
 
@@ -3764,7 +4181,9 @@
     sock.onmessage = function(ev){
       var d = null;
       try { d = JSON.parse(ev.data); } catch(e){ return; }
-      if (!d || d.type !== "snapshot") return;
+      if (!d) return;
+      if (d.type === "reply"){ settleCmd(d); return; }
+      if (d.type !== "snapshot") return;
       applySnapshot(d);
       applyRemoteConfig(d);
       if (d.history) applyHistory(d.history);
@@ -3844,7 +4263,8 @@
     applyLang();
   });
   $("btn-reload").addEventListener("click", function(){
-    api("/api/reload", {method:"POST"}).then(function(){ toast(t("btn.reload"),"ok"); return refreshAll(); })
+    call("config.reload", {payload:{}, http:function(){ return api("/api/reload", {method:"POST"}); }})
+      .then(function(){ toast(t("btn.reload"),"ok"); return refreshAll(); })
       .catch(function(e){ toast(e.message,"err"); });
   });
   $("btn-logout").addEventListener("click", function(){
@@ -3867,6 +4287,7 @@
     bindAnTiles();
     bindSites();
     bindApps();
+    bindSearch();
     bindPorts();
     return checkAuth().then(function(ok){
       if (!ok) return;

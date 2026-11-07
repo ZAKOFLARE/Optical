@@ -316,7 +316,9 @@ async fn status_payload(st: &Arc<AppState>) -> Value {
         "default_upstream": cfg.server.default_upstream,
         "request_timeout_ms": cfg.server.request_timeout_ms,
         "log_level": cfg.server.log_level,
-        "routes": cfg.routes.len(),
+        // 只数用户自己写的路由：`[[apps]]` 展开出来的合成路由属于"应用"那一栏，
+        // 混进路由计数会让人以为配置文件里凭空多了一条。
+        "routes": cfg.routes.iter().filter(|r| !r.synthetic).count(),
         "backends": cfg.backends.len(),
         "backend_groups": cfg.backend_groups.len(),
         "lb": cfg.server.lb,
@@ -424,6 +426,86 @@ impl WsView {
     }
 }
 
+/// WebSocket 上的写操作。
+///
+/// 为什么要有这条通道：浏览器到网关只维持一条长连接就够，
+/// 不用为"点一下保存"再开一轮 TCP+TLS；也让"操作中"和"推送"共享同一份顺序——
+/// 写完成的那一刻，下一帧推送里就是新状态，不会出现"界面说存好了、数据还是旧的"。
+///
+/// 但它**不是**第二套实现：每个动作都调用与 HTTP 处理函数相同的内部函数。
+async fn run_ws_command(st: &Arc<AppState>, action: &str, payload: &Value) -> (bool, Value, String) {
+    let out: Result<Value, ApiError> = match action {
+        "config.save" => {
+            let cfg = payload.get("config").cloned().unwrap_or(Value::Null);
+            if cfg.is_null() {
+                Err(ApiError::bad(anyhow::anyhow!("config.save 缺少 config")))
+            } else {
+                let rev = payload.get("rev").and_then(|v| v.as_u64());
+                match serde_json::to_string(&cfg) {
+                    Ok(text) => apply_config_text(st, rev, "application/json", text).await,
+                    Err(e) => Err(ApiError::bad(anyhow::anyhow!("配置序列化失败: {e}"))),
+                }
+            }
+        }
+        "config.reload" => st
+            .reload_from_disk()
+            .await
+            .map(|_| json!({ "ok": true, "reloaded": true, "rev": st.config_rev() }))
+            .map_err(ApiError::bad),
+        "cache.purge" => {
+            st.cache.purge();
+            Ok(json!({ "ok": true, "purged": true }))
+        }
+        "firewall.apply" => {
+            let cfg = st.snapshot().await;
+            match tokio::task::spawn_blocking(move || crate::firewall::apply(&cfg)).await {
+                Ok(r) => Ok(json!({
+                    "ok": r.ok, "backend": r.backend, "ports": r.ports,
+                    "steps": r.steps, "error": r.error,
+                })),
+                Err(e) => Err(ApiError::bad(anyhow::anyhow!("执行失败: {e}"))),
+            }
+        }
+        "app.start" | "app.stop" | "app.restart" => {
+            let name = payload.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let cfg = st.snapshot().await;
+            match cfg.apps.iter().find(|a| a.name == name).cloned() {
+                None => Err(ApiError::not_found(format!("没有这个应用: {name}"))),
+                Some(app) => {
+                    let base = st.base_dir().to_path_buf();
+                    match action {
+                        "app.stop" => match st.apps.stop(&app.name).await {
+                            Ok(v) => Ok(json!({ "ok": true, "stopped": v })),
+                            Err(e) => Err(ApiError::bad(e)),
+                        },
+                        "app.restart" => {
+                            let _ = st.apps.stop(&app.name).await;
+                            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                            st.apps
+                                .start(&app, &base)
+                                .await
+                                .map(|pid| json!({ "ok": true, "pid": pid }))
+                                .map_err(ApiError::bad)
+                        }
+                        _ => st
+                            .apps
+                            .start(&app, &base)
+                            .await
+                            .map(|pid| json!({ "ok": true, "pid": pid }))
+                            .map_err(ApiError::bad),
+                    }
+                }
+            }
+        }
+        other => Err(ApiError::bad(anyhow::anyhow!("不认识的命令: {other}"))),
+    };
+
+    match out {
+        Ok(v) => (true, v, String::new()),
+        Err(e) => (false, Value::Null, e.1),
+    }
+}
+
 async fn ws_loop(mut socket: WebSocket, st: Arc<AppState>) {
     st.metrics
         .ws_clients
@@ -458,7 +540,42 @@ async fn ws_loop(mut socket: WebSocket, st: Arc<AppState>) {
                     Some(Ok(Message::Close(_))) | None => break,
                     Some(Err(_)) => break,
                     Some(Ok(Message::Text(txt))) => {
-                        // 只有一种入站消息：改视角。解析失败就当没收到，绝不因此断开连接。
+                        // 入站有两类：`cmd`（写操作，要回执）和 `view`（换视角，只改推送内容）。
+                        // 先试 cmd：它有 id，解析失败绝不能影响视角通道。
+                        #[derive(Deserialize)]
+                        struct CmdEnvelope {
+                            #[serde(rename = "type")]
+                            kind: String,
+                            #[serde(default)]
+                            id: String,
+                            #[serde(default)]
+                            action: String,
+                            #[serde(default)]
+                            payload: Value,
+                        }
+                        if let Ok(cmd) = serde_json::from_str::<CmdEnvelope>(&txt) {
+                            if cmd.kind == "cmd" {
+                                let (ok, data, error) =
+                                    run_ws_command(&st, &cmd.action, &cmd.payload).await;
+                                let reply = json!({
+                                    "type": "reply",
+                                    "id": cmd.id,
+                                    "ok": ok,
+                                    "data": data,
+                                    "error": error,
+                                });
+                                if socket
+                                    .send(Message::Text(reply.to_string().into()))
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                                continue;
+                            }
+                        }
+
+                        // 另一种入站消息：改视角。解析失败就当没收到，绝不因此断开连接。
                         #[derive(Deserialize)]
                         struct Envelope {
                             #[serde(rename = "type")]
@@ -959,26 +1076,38 @@ async fn api_put_config(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<Value>, ApiError> {
-    // 乐观锁：客户端带上读取时的版本号；版本不一致说明别的会话已经改过，拒绝覆盖。
-    if let Some(raw) = headers.get("x-optical-config-rev").and_then(|v| v.to_str().ok()) {
-        if let Ok(base) = raw.trim().parse::<u64>() {
-            let current = st.config_rev();
-            if base != current {
-                return Err(ApiError::conflict(format!(
-                    "配置已被其他会话修改（你的版本 {base}，当前 {current}）。请刷新页面后重试，避免覆盖别人的改动。"
-                )));
-            }
-        }
-    }
-
+    let rev = headers
+        .get("x-optical-config-rev")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<u64>().ok());
     let ctype = headers
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_ascii_lowercase();
-
     let text = String::from_utf8(body.to_vec())
         .map_err(|e| ApiError::bad(anyhow::anyhow!("请求体不是合法 UTF-8: {e}")))?;
+    let value = apply_config_text(&st, rev, &ctype, text).await?;
+    Ok(Json(value))
+}
+
+/// 保存配置的唯一实现：HTTP PUT 和 WebSocket 命令都走这里。
+/// 乐观锁、落盘、快照、防火墙联动只写一份，避免两条通道行为分叉。
+async fn apply_config_text(
+    st: &Arc<AppState>,
+    rev: Option<u64>,
+    ctype: &str,
+    text: String,
+) -> Result<Value, ApiError> {
+    // 乐观锁：客户端带上读取时的版本号；版本不一致说明别的会话已经改过，拒绝覆盖。
+    if let Some(base) = rev {
+        let current = st.config_rev();
+        if base != current {
+            return Err(ApiError::conflict(format!(
+                "配置已被其他会话修改（你的版本 {base}，当前 {current}）。请刷新页面后重试，避免覆盖别人的改动。"
+            )));
+        }
+    }
 
     let cfg: Config = if ctype.contains("json") {
         serde_json::from_str(&text).map_err(|e| ApiError::bad(anyhow::anyhow!("JSON 解析失败: {e}")))?
@@ -1020,13 +1149,14 @@ async fn api_put_config(
         }
     }
 
-    Ok(Json(json!({
+    Ok(json!({
         "ok": true,
         "applied": true,
+        "rev": st.config_rev(),
         "restart_required": restart_required,
         "tls_restart_required": tls_restart,
         "firewall": firewall,
-    })))
+    }))
 }
 
 async fn api_restore_snapshot(
