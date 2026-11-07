@@ -119,7 +119,7 @@ def main():
         ),
     )
 
-    got_history = got_stats = got_config = False
+    got_history = got_stats = got_config = got_apps = False
     deadline = 12
     sock.settimeout(1.0)
     for _ in range(deadline * 3):
@@ -143,6 +143,13 @@ def main():
             continue
         if "config" in msg and isinstance(msg.get("rev"), int):
             got_config = True
+        # 应用状态必须走这条通道：前端不再单独 4 秒轮询 /api/apps
+        if isinstance(msg.get("apps"), list):
+            got_apps = True
+            for a in msg["apps"]:
+                if not isinstance(a.get("logs"), list):
+                    print(f"应用状态缺 logs 字段: {a.get('name')}")
+                    return 1
         if "history" in msg:
             got_history = msg["history"].get("gran_secs") == 60
         if "stats" in msg:
@@ -193,6 +200,7 @@ def main():
                     return 1
                 print("CMD_OK")
                 break
+            print("APPS_OK" if got_apps else "APPS_MISSING")
             print("VIEW_OK")
             print(f"  history bucket_ms={msg['history']['bucket_ms']} points={len(msg['history']['points'])}")
             print(f"  stats rows={len(msg['stats']['rows'])} total={msg['stats']['total']}")
@@ -200,7 +208,7 @@ def main():
             if "rev" in msg:
                 print(f"  config rev={msg['rev']} keys={len(msg.get('config') or {})}")
             return 0
-    print(f"没等到完整快照 history={got_history} stats={got_stats} config={got_config}")
+    print(f"没等到完整快照 history={got_history} stats={got_stats} config={got_config} apps={got_apps}")
     return 1
 
 

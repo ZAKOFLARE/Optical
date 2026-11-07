@@ -528,6 +528,10 @@ async fn ws_loop(mut socket: WebSocket, st: Arc<AppState>) {
     let mut sent_stats_rev = u64::MAX;
     // 配置也走这条通道：别的会话改了规则/路由，这边不用刷新页面就能看到
     let mut sent_config_rev = u64::MAX;
+    // 应用状态也走这条通道：之前前端每 4 秒单独 GET /api/apps，
+    // 数据面明明已经有一条常连接，却还要多开一轮 TCP —— 没有任何理由。
+    // 每秒读一次是为了及时发现进程退出；内容没变就不附到包里，免得日志没动静也重发。
+    let mut sent_apps_fp = u64::MAX;
 
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(1));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -607,6 +611,27 @@ async fn ws_loop(mut socket: WebSocket, st: Arc<AppState>) {
             "rules": st.top_rules(cfg.metrics.top_n.max(1)),
         });
         payload["backend_list"] = json!(st.backends.snapshot(&cfg));
+
+        {
+            use std::hash::{Hash, Hasher};
+            let apps = st.apps.status(&cfg.apps).await;
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            for a in &apps {
+                a.name.hash(&mut h);
+                a.running.hash(&mut h);
+                a.pid.hash(&mut h);
+                // 日志长度 + 最新一行就够判断"有没有新输出"：
+                // 逐行比较全文没必要，长度不变时内容也只会被 trim 覆盖，那不叫新消息。
+                a.logs.len().hash(&mut h);
+                a.logs.last().hash(&mut h);
+                a.last_exit.hash(&mut h);
+            }
+            let fp = h.finish();
+            if fp != sent_apps_fp {
+                payload["apps"] = json!(apps);
+                sent_apps_fp = fp;
+            }
+        }
         payload["backend_groups"] = json!(st.backends.groups(&cfg));
 
         let cfg_rev = st.config_rev();

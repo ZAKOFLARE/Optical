@@ -241,6 +241,10 @@
   @keyframes flash{0%{box-shadow:0 0 0 2px var(--blue),0 0 0 6px var(--blue-soft)}100%{box-shadow:0 0 0 0 transparent}}
   .app-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ink-3);margin-right:5px}
   .app-dot.on{background:var(--green);box-shadow:0 0 0 3px rgba(0,168,112,.14)}
+  .app-logbar{margin:8px 0 0;padding:6px 12px;border:1px solid var(--line);border-bottom:none;
+    border-radius:var(--r) var(--r) 0 0;background:var(--bg);color:var(--ink-3);
+    font-size:11px;letter-spacing:.03em}
+  .app-logbar + .app-logs{margin-top:0;border-radius:0 0 var(--r) var(--r)}
   .app-logs{margin:6px 0 0;padding:10px 12px;max-height:220px;overflow:auto;border-radius:var(--r);
     background:var(--bg);border:1px solid var(--line);font:11.5px/1.55 ui-monospace,Menlo,monospace;
     color:var(--ink-2);white-space:pre-wrap;word-break:break-all}
@@ -1094,6 +1098,9 @@
       "ap.name.ph":"应用名，如 api","ap.start":"启动","ap.stop":"停止","ap.restart":"重启","ap.logs":"日志",
       "ap.empty":"还没有动态项目。点右上角「新增应用」，填 kind / port / hosts 即可；command 留空会按 kind 推断。",
       "ap.nolog":"（还没有输出）","ap.noname":"先给应用起个名字再启动",
+      "ap.running":"运行中","ap.stopped":"已停止",
+      "ap.logs.live":"输出 · 最近 40 行 · 有新输出自动跟到底部",
+      "err.failed":"失败","pt.fw.off":"未启用 · ","pt.resign.err":"重签失败",
       "ap.done.start":"已启动","ap.done.stop":"已停止","ap.done.restart":"已重启",
       "pt.title":"端口放行","pt.hint":"这里只管「外面的包能不能连进来」；进来之后按什么规则处理是「自定义」那页的事，两边分开改不会互相连累",
       "pt.fw":"系统防火墙联动","pt.extra":"额外放行端口（逗号分隔）","pt.list":"将要放行的端口",
@@ -1306,6 +1313,9 @@
       "ap.name.ph":"App name, e.g. api","ap.start":"Start","ap.stop":"Stop","ap.restart":"Restart","ap.logs":"Logs",
       "ap.empty":"No apps yet. Click \"New app\", fill kind / port / hosts; leave command empty to infer it from kind.",
       "ap.nolog":"(no output yet)","ap.noname":"Give the app a name before starting",
+      "ap.running":"running","ap.stopped":"stopped",
+      "ap.logs.live":"Output · last 40 lines · follows new output",
+      "err.failed":"failed","pt.fw.off":"off · ","pt.resign.err":"Re-sign failed",
       "ap.done.start":"Started","ap.done.stop":"Stopped","ap.done.restart":"Restarted",
       "pt.title":"Port access","pt.hint":"Ports decide whether a packet reaches the kernel stack; URL/host rules decide what happens after",
       "pt.fw":"System firewall","pt.extra":"Extra ports (comma separated)","pt.list":"Ports to allow",
@@ -1509,7 +1519,7 @@
     rankLimit:(function(){ var v = localStorage.getItem("optical.rankLimit"); return v === null ? 10 : Number(v); })(),
     filters:[], rank:null, rules:null, cards:null, sites:null, fw:null, tls:null,
     appsDraft:null, appStatus:null,
-    pending:{}, cmdSeq:0, gsHits:[], relOpen:-1,
+    pending:{}, cmdSeq:0, gsHits:[], relOpen:-1, openLogs:{},
     editing:false, editTimer:null, pendingRev:null, remoteToastShown:false,
     maskTimer:null, maskShown:false, maskGuard:null
   };
@@ -2490,7 +2500,9 @@
     var st0 = appStatus(app.name) || {};
     var running = !!st0.running;
     var badge = '<span class="app-dot'+(running?" on":"")+'"></span>' +
-      (running ? '<b style="color:var(--green)">运行中</b> pid '+st0.pid : '<b style="color:var(--ink-3)">已停止</b>');
+      (running
+        ? '<b style="color:var(--green)">'+esc(t("ap.running"))+'</b> pid '+st0.pid
+        : '<b style="color:var(--ink-3)">'+esc(t("ap.stopped"))+'</b>');
     var logs = (st0.logs || []).slice(-40).join("\n");
     var c = app.cors || {};
     var opts = function(list, cur){
@@ -2526,8 +2538,36 @@
         '<label class="af"><span>CORS methods</span><input type="text" data-ai="'+i+'" data-ak="cors.methods" value="'+esc((c.methods||[]).join(","))+'" placeholder="GET,POST"></label>'+
         '<label class="af"><span>CORS credentials</span><select data-ai="'+i+'" data-ak="cors.credentials"><option value="0"'+(c.credentials?"":" selected")+'>false</option><option value="1"'+(c.credentials?" selected":"")+'>true</option></select></label>'+
       '</div></div>'+
-      '<pre class="app-logs" id="app-logs-'+i+'" style="display:none">'+esc(logs || t("ap.nolog"))+'</pre>'+
+      '<div class="app-logbar" id="app-logbar-'+i+'"'+(state.openLogs[i]?"":" style=\"display:none\"")+'>'+
+        esc(t("ap.logs.live"))+
+      '</div>'+
+      '<pre class="app-logs" id="app-logs-'+i+'"'+(state.openLogs[i]?"":" style=\"display:none\"")+'>'+
+        esc(logs || t("ap.nolog"))+
+      '</pre>'+
     '</div>';
+  }
+
+  // 日志窗口的滚动位置在重建前记下来：正在看日志的人不希望每秒被弹回顶部，
+  // 而停在底部的人希望继续跟着新输出走——两种意图都要满足。
+  function captureLogScroll(){
+    var out = {};
+    Object.keys(state.openLogs).forEach(function(k){
+      var el = $("app-logs-" + k);
+      if (!el) return;
+      out[k] = {
+        top: el.scrollTop,
+        atBottom: (el.scrollHeight - el.scrollTop - el.clientHeight) < 24
+      };
+    });
+    return out;
+  }
+
+  function restoreLogScroll(snap){
+    Object.keys(snap).forEach(function(k){
+      var el = $("app-logs-" + k);
+      if (!el) return;
+      el.scrollTop = snap[k].atBottom ? el.scrollHeight : snap[k].top;
+    });
   }
 
   function renderApps(){
@@ -2538,7 +2578,9 @@
       box.innerHTML = '<div class="card"><div class="card-body note" style="padding:18px">'+esc(t("ap.empty"))+'</div></div>';
       return;
     }
+    var scroll = captureLogScroll();
     box.innerHTML = list.map(appCard).join("");
+    restoreLogScroll(scroll);
   }
 
   function loadAppStatus(){
@@ -2552,6 +2594,7 @@
   function bindApps(){
     if (!$("btn-app-add")) return;
     $("btn-app-add").addEventListener("click", function(){
+      state.openLogs = {};
       appDraft().push(blankApp());
       renderApps();
       markEditing();
@@ -2559,7 +2602,12 @@
     $("btn-app-save").addEventListener("click", function(){
       var cfg = clone();
       cfg.apps = appDraft().map(function(x){ return JSON.parse(JSON.stringify(x)); });
-      save(cfg, t("ap.saved"), this).then(function(){ state.appsDraft = null; renderApps(); loadAppStatus(); });
+      save(cfg, t("ap.saved"), this).then(function(){
+        state.appsDraft = null;
+        state.openLogs = {};
+        renderApps();
+        loadAppStatus();
+      });
     });
     var box = $("app-list");
     var setPath = function(obj, path, val){
@@ -2609,12 +2657,18 @@
       var i = Number(btn.getAttribute("data-ai"));
       if (act === "del"){
         appDraft().splice(i, 1);
+        state.openLogs = {}; // 下标变了，展开状态跟着作废
         renderApps();
         return;
       }
       if (act === "logs"){
+        // 只改状态，然后走同一条渲染路径：
+        // 手工改 display 会和"卡片重建"打架，两套逻辑迟早分叉。
+        state.openLogs[i] = !state.openLogs[i];
+        renderApps();
         var pre = $("app-logs-" + i);
-        if (pre) pre.style.display = pre.style.display === "none" ? "block" : "none";
+        // 打开时直接跳到最新一行：这是日志，不是文档
+        if (pre && state.openLogs[i]) pre.scrollTop = pre.scrollHeight;
         return;
       }
       var name = btn.getAttribute("data-an") || "";
@@ -2625,7 +2679,7 @@
         http: function(){ return api("/api/apps/" + encodeURIComponent(name) + "/" + act, {method:"POST"}); }
       })
         .then(function(d){
-          if (!d.ok) throw new Error(d.error || "失败");
+          if (!d.ok) throw new Error(d.error || t("err.failed"));
           toast(t("ap.done." + act) + (d.pid ? " · pid " + d.pid : ""), "ok");
           return loadAppStatus();
         })
@@ -2656,7 +2710,7 @@
     return api("/api/firewall").then(function(d){
       state.fw = d;
       var ports = d.ports || [];
-      $("fw-backend").textContent = (d.enabled ? "" : "未启用 · ") + (d.backend || "—");
+      $("fw-backend").textContent = (d.enabled ? "" : t("pt.fw.off")) + (d.backend || "—");
       $("fw-ports").innerHTML = ports.length
         ? ports.map(function(p){ return '<code style="margin-right:10px">'+p+'/tcp</code>'; }).join("")
         : esc(t("pt.none"));
@@ -2702,7 +2756,7 @@
       api("/api/tls/selfsigned", {method:"POST",headers:{"content-type":"application/json"},
         body: JSON.stringify({san: san})})
         .then(function(d){
-          if (!d.ok) throw new Error(d.error || "重签失败");
+          if (!d.ok) throw new Error(d.error || t("pt.resign.err"));
           toast(t("pt.signed") + (d.names || []).join(", "), "ok");
           $("tls-info").textContent = d.note || "";
           return loadTls();
@@ -4104,12 +4158,35 @@
     return api(q).then(applyHistory).catch(function(){});
   }
 
+  // 应用状态已经跟着推送走（见服务端快照的 apps 字段）。
+  // 这个定时器只在 WS 没连上时兜底——否则就是白开一轮 TCP，还让 Network 面板
+  // 每 4 秒冒出一条没人解释得清的请求。
   function startAppTimer(){
     if (state.appTimer) return;
     state.appTimer = setInterval(function(){
+      if (state.ws) return;
       var page = document.getElementById("p-apps");
       if (page && page.classList.contains("active")) loadAppStatus();
     }, 4000);
+  }
+
+  // 每秒都可能来一帧新状态，但不是每一帧都该动 DOM：
+  // 正在填表时重建会把输入框和光标一起换掉，正在选日志文本时重建会把选区清掉。
+  function appsBusy(){
+    var box = $("app-list");
+    if (!box) return false;
+    var a = document.activeElement;
+    if (a && box.contains(a) && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName)) return true;
+    var sel = window.getSelection && window.getSelection();
+    if (sel && !sel.isCollapsed && sel.anchorNode && box.contains(sel.anchorNode)) return true;
+    return false;
+  }
+
+  function refreshAppsLive(){
+    var page = document.getElementById("p-apps");
+    if (!page || !page.classList.contains("active")) return;
+    if (appsBusy()) return;
+    renderApps();
   }
 
   function startHistoryTimer(){
@@ -4154,6 +4231,10 @@
 
   function applySnapshot(s){
     state.status = s;
+    if (s.apps){
+      state.appStatus = { apps: s.apps };
+      refreshAppsLive();
+    }
     state.metrics = s.metrics || {};
     state.metrics.top = s.top || {ua:[],ip:[],rules:[]};
     state.metrics.backends = s.backend_list || [];
@@ -4236,7 +4317,8 @@
     var item = ev.target.closest && ev.target.closest('.rail-item[data-page="p-ports"]');
     if (item){ loadFirewall(); loadTls(); }
     var appItem = ev.target.closest && ev.target.closest('.rail-item[data-page="p-apps"]');
-    if (appItem) loadAppStatus();
+    // 有推送就不为一次翻页再发一轮 HTTP；没连上时才现取
+    if (appItem && !state.ws) loadAppStatus();
   });
 
   document.querySelectorAll(".rail-item").forEach(function(item){
@@ -4280,15 +4362,21 @@
 
   // ---------- 启动 ----------
   function boot(){
-    bindCopy();
-    fillViewSelects();
-    bindRank();
-    bindRules();
-    bindAnTiles();
-    bindSites();
-    bindApps();
-    bindSearch();
-    bindPorts();
+    // 这个函数会跑两次：页面加载时一次（可能是旧会话，checkAuth 直接过），
+    // 登录成功后再一次。事件绑定必须只做一次——绑两遍就是一次点击执行两遍，
+    // 「日志」这种取反开关会开了又关，看起来像点了没反应。
+    if (!boot.bound){
+      boot.bound = true;
+      bindCopy();
+      fillViewSelects();
+      bindRank();
+      bindRules();
+      bindAnTiles();
+      bindSites();
+      bindApps();
+      bindSearch();
+      bindPorts();
+    }
     return checkAuth().then(function(ok){
       if (!ok) return;
       return refreshAll().then(function(){
