@@ -1,0 +1,211 @@
+# Optical 网关配置样例 —— 复制成 optical.toml 即可使用
+# 所有能力都是配置驱动的：每项都有 enabled 开关，存与不存由你按磁盘大小决定。
+
+[server]
+listen = "0.0.0.0:8080"
+admin_listen = "127.0.0.1:9100"
+default_upstream = "http://127.0.0.1:8081"
+request_timeout_ms = 30000
+log_level = "info"
+# 请求体参与 WAF 检查的上限（超出则跳过 body 检查，计入 waf_skipped）
+max_inspect_bytes = 8192
+# 全局负载均衡策略：wrr(加权轮询) | rr | iphash | random
+# 路由可用 lb = "..." 覆盖，分组可用 strategy = "..." 覆盖
+lb = "wrr"
+# 响应 Server 头：非空 = 统一覆盖（含转发响应），空串 = 删除该头
+server_header = "optical"
+
+# ---------- 传输 ----------
+[tls]
+enabled = false
+listen = "0.0.0.0:8443"
+# 留空 = 启动时自动生成自签开发证书（落在配置文件同目录）
+cert = ""
+key = ""
+min_version = "1.2"          # "1.2" | "1.3"
+self_signed_days = 365
+
+# ---------- 管理面认证 ----------
+[admin]
+enabled = true
+username = "admin"
+# argon2 哈希。留空则首次启动生成随机口令并打印；也可 `optical passwd <口令> --write`
+password_hash = ""
+totp_enabled = false
+totp_algorithm = "sha1"      # sha1 | sha256 | sha512；SHA1 是 RFC 6238 默认值，只为兼容验证器
+totp_secret = ""             # Base32；WebUI「安全」页可一键生成
+session_ttl_secs = 3600
+max_failed_attempts = 5
+failed_window_secs = 300
+
+# ---------- 响应缓存 ----------
+[cache]
+enabled = true
+ttl_secs = 30
+max_bytes = 8388608
+max_entries = 512
+cacheable_status = [200]
+cacheable_exts = [".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".woff2"]
+
+# ---------- 存储配额（按磁盘大小收紧） ----------
+[storage]
+config_history_keep = 20             # 保留多少份配置快照
+config_history_max_bytes = 1048576   # 快照总字节上限
+config_history_keep_days = 30        # 快照保留天数（0 = 不限）
+audit_enabled = true
+audit_keep = 2000
+audit_max_bytes = 4194304
+
+[metrics]
+top_n = 8
+history_secs = 300
+
+# ---------- 非固化路径 ----------
+# 空值 = 跟随上一级默认：data_dir 跟配置文件目录，其余跟 <data_dir>/<子目录>。
+# 相对路径按 data_dir 解析，~/ 展开到家目录；容器里挂一个卷就能全部搬走。
+[paths]
+data_dir = ""                # 例如 "/var/lib/optical"
+config_history_dir = ""      # 默认 <data_dir>/conf-history
+audit_file = ""              # 默认 <data_dir>/optical.audit.jsonl
+tls_dir = ""                 # 默认 <data_dir>/tls（自签证书落这里）
+error_pages_dir = ""         # 默认 <data_dir>/error-pages
+
+# ---------- 自定义错误页 ----------
+# 优先级：<dir>/<status>.html > bodies["<status>"] > 内置模板
+[error_pages]
+enabled = true
+dir = ""                     # 空 = 用 paths.error_pages_dir
+content_type = "text/html; charset=utf-8"
+footer = "Optical"
+# TOML 里键必须带引号。占位符：{{status}} {{reason}} {{message}} {{footer}}
+[error_pages.bodies]
+"502" = "<h1>{{status}} {{reason}}</h1><p>{{message}}</p><hr><small>{{footer}}</small>"
+
+# ---------- WAF ----------
+[waf]
+enabled = true
+mode = "block"               # block | monitor（monitor 只记录不拦）
+score_threshold = 4          # 4 = 单条高置信规则即可拦；1~3 的弱信号需叠加
+
+[waf.dos]
+enabled = true
+max_header_count = 64
+max_header_bytes = 16384
+max_cookie_count = 24
+max_cookie_bytes = 8192
+cookie_compression_ratio = 40   # 解压后/原始 低于该比值视为压缩炸弹
+max_cookie_value_bytes = 4096
+max_url_len = 2048
+max_body_bytes = 2097152
+conn_per_ip = 64                # 单 IP 并发连接
+conn_burst_per_sec = 40         # 单 IP 每秒新建连接
+slow_request_ms = 15000
+
+[waf.xml]
+enabled = true
+block_dtd = true
+block_external_entity = true
+block_xinclude = true
+max_depth = 32
+max_entity_refs = 16
+
+[waf.jwt]
+enabled = true
+reject_alg_none = true
+reject_kid_injection = true
+allowed_algs = ["RS256", "RS384", "RS512", "ES256", "HS256", "HS512"]
+max_token_bytes = 4096
+clock_skew_secs = 60
+
+[waf.sql]
+enabled = true
+threshold = 3
+
+[waf.ssrf]
+enabled = true
+allow_private = false
+param_names = ["url", "uri", "next", "target", "redirect", "callback", "image", "fetch"]
+
+[waf.bola]
+enabled = true
+window_secs = 10
+max_distinct_ids = 30
+
+[waf.traversal]
+enabled = true
+block_encoded = true
+block_open_redirect = true
+redirect_params = ["next", "redirect", "redirect_uri", "return", "returnUrl", "continue"]
+
+[waf.cache_deception]
+enabled = true
+static_exts = [".css", ".js", ".png", ".jpg", ".gif", ".ico", ".woff2"]
+max_path_segments = 8
+
+[waf.params]
+enabled = true
+max_duplicates = 1
+max_params = 64
+
+[waf.frame]
+enabled = true
+mode = "deny"                # deny | sameorigin | allow-from
+allow_from = []
+
+# ---------- 头改写 ----------
+[[header_rules]]
+enabled = true
+phase = "response"
+action = "set"
+name = "X-Content-Type-Options"
+value = "nosniff"
+match_path = ""
+match_host = ""
+when_status = 0
+note = "示例：禁止 MIME 嗅探"
+
+# ---------- 后端分组 ----------
+# 声明分组只为了写备注、单独指定负载均衡策略；不声明也能用（成员 group 字段即隐式分组）
+[[backend_groups]]
+name = "app"
+note = "主应用集群"
+strategy = "wrr"             # 覆盖全局 lb
+
+# ---------- 后端服务（命名上游池） ----------
+[[backends]]
+name = "app-1"
+url = "http://127.0.0.1:8081"
+group = "app"
+note = "主节点"
+weight = 2
+enabled = true
+health_path = "/health"
+health_interval_secs = 10
+timeout_ms = 30000
+
+[[backends]]
+name = "app-2"
+url = "http://127.0.0.1:8082"
+group = "app"
+note = "备节点"
+weight = 1
+enabled = true
+health_path = "/health"
+health_interval_secs = 10
+timeout_ms = 30000
+
+# ---------- 路由 ----------
+[[routes]]
+name = "api"
+host = "*"
+path_prefix = "/api"
+upstream = ""
+backend_group = "app"        # 引用分组：组内按策略负载均衡
+# backend = "app-1"          # 或引用单个后端；与 backend_group 二选一
+# lb = "iphash"              # 覆盖分组/全局策略
+strip_prefix = true
+rewrite_host = true
+
+[extensions]
+filters = []
+enable_firewall = false
