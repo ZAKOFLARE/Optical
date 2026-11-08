@@ -192,8 +192,11 @@
     align-items:center;justify-content:center;gap:10px;border-radius:var(--r);
     background:color-mix(in srgb, var(--bg) 72%, transparent);backdrop-filter:blur(1.5px)}
   .an-mask.on{display:flex}
-  .an-mask .pbar{width:180px;height:3px;border-radius:2px;background:var(--line-2);overflow:hidden}
-  .an-mask .pbar i{display:block;height:100%;width:0;background:var(--blue);transition:width .18s ease}
+  /* 不确定态进度：等待期间它一直在跑，不会像"确定态"那样停在半路装死 */
+  .an-mask .pbar{position:relative;width:180px;height:3px;border-radius:2px;background:var(--line-2);overflow:hidden}
+  .an-mask .pbar i{position:absolute;top:0;left:0;display:block;height:100%;width:38%;border-radius:2px;
+    background:var(--blue);animation:pbar 1.15s cubic-bezier(.4,0,.6,1) infinite}
+  @keyframes pbar{0%{left:-38%}100%{left:100%}}
 
   .an-mask-t{font-size:11.5px;color:var(--ink-2)}
   .spin{width:22px;height:22px;border-radius:50%;border:2px solid var(--line-2);
@@ -571,6 +574,7 @@
           <div class="chart-head">
             <div class="tabs" id="chart-tabs">
               <button class="tab active" data-k="requests" data-i18n="ov.tab.req">请求 / 秒</button>
+              <button class="tab" data-k="traffic" data-i18n="ov.tab.traffic">流量</button>
               <button class="tab" data-k="bytes" data-i18n="ov.tab.bw">带宽</button>
               <button class="tab" data-k="cache" data-i18n="ov.tab.cache">缓存</button>
               <button class="tab" data-k="blocks" data-i18n="ov.tab.block">拦截</button>
@@ -1204,7 +1208,8 @@
       "lock.suffix":"（本次进程内不可改）",
       "empty.generic":"暂无数据",
       "ov.title":"运行概览",
-      "ov.tab.req":"请求 / 采样","ov.tab.bw":"带宽","ov.tab.cache":"缓存","ov.tab.block":"拦截",
+      "ov.tab.req":"请求 / 采样","ov.tab.traffic":"流量","ov.tab.bw":"带宽","ov.tab.cache":"缓存","ov.tab.block":"拦截",
+      "an.per.sec":"每秒",
       "nav.acl":"访问控制",
       "acl.title":"访问控制","acl.hint":"按来源地址放行或拒绝，只作用于数据面；管理面不经过这里，写错了也不会把自己锁在外面",
       "acl.mode":"策略","acl.enabled":"启用","acl.default":"名单未命中时",
@@ -1283,6 +1288,7 @@
       "pt.up.adopted":"配置已指向新证书（原本是自签模式，现在改为使用你上传的这张）",
       "pt.up.restart":"TLS 监听在进程启动时装载：重启后生效（systemctl restart optical）",
       "pt.up.until":"到期 {d}","pt.tls.expired.short":"已过期","gs.kind.cert":"证书",
+      "an.title":"流量分析",
       "an.tile.traffic":"流量","an.hint":"粒度/范围/筛选都是查询参数，不写配置；数据经 WebSocket 实时推送。",
       "ov.toanalytics":"流量曲线、排行榜与筛选已经挪到左侧「分析」页。","ov.goto":"去看看 →",
       "ov.rank":"排行榜","ov.rank.all":"全部",
@@ -1457,7 +1463,8 @@
       "lock.suffix":" (cannot change in this process)",
       "empty.generic":"No data",
       "ov.title":"Overview",
-      "ov.tab.req":"Requests / sample","ov.tab.bw":"Bandwidth","ov.tab.cache":"Cache","ov.tab.block":"Blocks",
+      "ov.tab.req":"Requests / sample","ov.tab.traffic":"Traffic","ov.tab.bw":"Bandwidth","ov.tab.cache":"Cache","ov.tab.block":"Blocks",
+      "an.per.sec":"per second",
       "nav.acl":"Access control",
       "acl.title":"Access control","acl.hint":"Allow or deny by source address. Data plane only — the admin console does not pass through here, so a bad rule cannot lock you out",
       "acl.mode":"Policy","acl.enabled":"Enabled","acl.default":"When no rule matches",
@@ -1536,6 +1543,7 @@
       "pt.up.adopted":"Config now points at the uploaded certificate (was self-signed mode)",
       "pt.up.restart":"TLS is loaded at process start: restart to apply (systemctl restart optical)",
       "pt.up.until":"expires {d}","pt.tls.expired.short":"EXPIRED","gs.kind.cert":"Certificate",
+      "an.title":"Traffic analytics",
       "an.tile.traffic":"Traffic","an.hint":"Bucket/range/filters are query params, never written to config; data streams over WebSocket.",
       "ov.toanalytics":"Traffic chart, leaderboard and filters moved to the Analytics page.","ov.goto":"Open →",
       "ov.rank":"Leaderboard","ov.rank.all":"All",
@@ -1823,6 +1831,25 @@
   };
 
   var pendingApi = 0;
+  // 顶部那条细条的保险丝：pendingApi 只要因为任何原因没减回去（回调丢了、
+  // 请求悬着），条子就会永远挂着"在加载"。15 秒还没动静就强制收掉——
+  // 宁可少显示一次加载，也不能让用户以为页面卡死了。
+  var pendingWatch = null;
+  function progressBump(delta){
+    pendingApi = Math.max(0, pendingApi + delta);
+    if (pendingApi > 0){
+      $("progress").className = "on";
+      if (pendingWatch) clearTimeout(pendingWatch);
+      pendingWatch = setTimeout(function(){
+        pendingApi = 0;
+        pendingWatch = null;
+        $("progress").className = "";
+      }, 15000);
+    } else {
+      if (pendingWatch){ clearTimeout(pendingWatch); pendingWatch = null; }
+      $("progress").className = "";
+    }
+  }
   function api(path, opts){
     opts = opts || {};
     var method = (opts.method || "GET").toUpperCase();
@@ -1838,12 +1865,8 @@
   function httpApi(path, opts){
     opts = opts || {};
     opts.credentials = "same-origin";
-    pendingApi++;
-    $("progress").className = "on";
-    var done = function(){
-      pendingApi = Math.max(0, pendingApi - 1);
-      if (!pendingApi) $("progress").className = "";
-    };
+    progressBump(1);
+    var done = function(){ progressBump(-1); };
     return fetch(path, opts).then(function(r){
       return r.text().then(function(txt){
         var data=null;
@@ -1938,16 +1961,35 @@
     return spanText(Math.round(bucketMs() / 1000));
   }
 
+  // 哪些图是"字节"单位：决定 Y 轴与图例怎么格式化
+  function isByteChart(){
+    return state.chart === "bytes" || state.chart === "traffic";
+  }
+  // 带宽图是每秒速率，数字后面得跟 /s，否则会被读成"总共这么多"
+  function byteSuffix(){
+    return state.chart === "bytes" ? "/s" : "";
+  }
+
   function series(){
     var h = pointsOf();
     if (state.chart === "requests") return [
       {k:"requests", label:t("lg.requests") + " / " + bucketLabel(), color:"#0052d9", data:h.map(function(x){return x.requests})},
       {k:"errors", label:t("lg.errors") + " / " + bucketLabel(), color:"#e34d59", data:h.map(function(x){return x.errors})}
     ];
-    if (state.chart === "bytes") return [
-      {k:"bytes_in", label:t("lg.in") + " / " + bucketLabel(), color:"#00a870", data:h.map(function(x){return x.bytes_in})},
-      {k:"bytes_out", label:t("lg.out") + " / " + bucketLabel(), color:"#0052d9", data:h.map(function(x){return x.bytes_out})}
+    if (state.chart === "traffic") return [
+      {k:"traffic", label:t("ov.tab.traffic") + " / " + bucketLabel(), color:"#7b61ff",
+        data:h.map(function(x){ return (x.bytes_in || 0) + (x.bytes_out || 0); })}
     ];
+    if (state.chart === "bytes") {
+      // 带宽 = 速率（B/s），不是"每个桶多少字节"。后者是流量，容易和总流量混淆。
+      var secs = Math.max(1, bucketMs() / 1000);
+      return [
+        {k:"bytes_in", label:t("lg.in") + " / " + t("an.per.sec"), color:"#00a870",
+          data:h.map(function(x){ return (x.bytes_in || 0) / secs; })},
+        {k:"bytes_out", label:t("lg.out") + " / " + t("an.per.sec"), color:"#0052d9",
+          data:h.map(function(x){ return (x.bytes_out || 0) / secs; })}
+      ];
+    }
     if (state.chart === "cache") return [
       {k:"cache_hit", label:t("lg.hit"), color:"#00a870", data:h.map(function(x){return x.cache_hit})},
       {k:"cache_miss", label:t("lg.miss"), color:"#ed7b2f", data:h.map(function(x){return x.cache_miss})}
@@ -1994,7 +2036,8 @@
     var W = Math.max(360, plot.clientWidth || 800);
     var H = Math.max(120, plot.clientHeight || 172);
     var x0 = 56, x1 = W - 12, y0 = 10, y1 = H - 26;
-    var isBytes = state.chart === "bytes";
+    var isBytes = isByteChart();
+    var bsuffix = byteSuffix();
 
     var peak = 0;
     ss.forEach(function(s){ s.data.forEach(function(v){ if (v > peak) peak = v; }); });
@@ -2013,7 +2056,7 @@
       var val = sc.step * k, y = yOf(val);
       out += '<line class="grid" x1="'+x0+'" y1="'+y.toFixed(1)+'" x2="'+x1+'" y2="'+y.toFixed(1)+'"/>';
       out += '<text class="yl" x="'+(x0-8)+'" y="'+(y+3.5).toFixed(1)+'" text-anchor="end">'+
-             esc(isBytes ? fmtBytes(val) : compact(val))+'</text>';
+             esc(isBytes ? fmtBytes(val) + bsuffix : compact(val))+'</text>';
     }
     var ticks = 5;
     // 点比刻度还少时，多个刻度会落到同一个索引上，文字叠在一起糊成一片。先去重。
@@ -2059,12 +2102,12 @@
     var li = (hi != null && hi < n) ? hi : (n ? n-1 : -1);
     $("legend").innerHTML = ss.map(function(s){
       var v = li >= 0 ? (s.data[li] == null ? 0 : s.data[li]) : 0;
-      var txt = isBytes ? fmtBytes(v) : String(v);
+      var txt = isBytes ? fmtBytes(v) + bsuffix : String(v);
       return '<span><i style="background:'+s.color+'"></i>'+esc(s.label)+
              ' <b class="lv">'+esc(txt)+'</b></span>';
     }).join("");
 
-    $("chart-note").textContent = (peak ? (t("ov.chart.peak") + " " + (isBytes ? fmtBytes(peak) : peak)) : "—") +
+    $("chart-note").textContent = (peak ? (t("ov.chart.peak") + " " + (isBytes ? fmtBytes(peak) + bsuffix : peak)) : "—") +
       (hi != null && n ? (" · " + xLabel(pts[hi].t)) : "") + (state.histNote || "") +
       (n > 0 && n < 3 ? t("ov.toofew") : "");
   }
@@ -2072,7 +2115,8 @@
   function showTip(ev, idx, n){
     var ss = series();
     var plot = $("plot"), tip = $("tip");
-    var isBytes = state.chart === "bytes";
+    var isBytes = isByteChart();
+    var bsuffix = byteSuffix();
     var pts = pointsOf();
     var at = pts[idx] ? pts[idx].t : Date.now();
     var rows = ss.map(function(s){
@@ -2232,7 +2276,7 @@
   var AN_TILES = [
     {k:"requests", label:"an.tile.req", color:"#0052d9", chart:"requests",
       pick:function(p){ return p.requests; }, val:function(m){ return m.requests; }},
-    {k:"traffic", label:"an.tile.traffic", color:"#7b61ff", chart:"bytes", bytes:true,
+    {k:"traffic", label:"an.tile.traffic", color:"#7b61ff", chart:"traffic", bytes:true,
       pick:bytesPerPoint,
       val:function(){ return pointsOf().reduce(function(a, p){ return a + bytesPerPoint(p); }, 0); }},
     {k:"bandwidth", label:"an.tile.bw", color:"#00a68a", chart:"bytes", bytes:true, suffix:"/s",
@@ -2476,7 +2520,6 @@
 
   function applyStats(d){
     if (!d) return;
-    partArrived("stats");
     state.rank = d;
     // 服务端会回显 by：点"查看更多"或别的会话改了维度后，下拉框必须跟着走，
     // 否则就是"表格按路由、下拉写着 IP"这种对不上的状态。
@@ -2568,56 +2611,6 @@
 
   // 取数遮罩：只等 150ms 才真正显示，避免本地秒回时闪一下；
   // 8 秒兜底隐藏——宁可露出旧数据，也不能让页面永远卡在"正在取"。
-  // ---------- 加载进度 ----------
-  // 只按"真实完成的步骤数"推进：这些数字对应真的请求/推送有没有回来。
-  // 不按时间自动爬——那是装样子，卡住的时候正好骗人最深。
-  var prog = { total: 0, done: 0, timer: null };
-
-  // 顶部那条不确定态细条是 #progress（api() 在管），这里只驱动遮罩里的确定态进度条，
-  // 两条各管一段：谁也别去改对方的 className / width，否则就会互相打架卡死。
-  function progressSet(pct){
-    var bar = $("an-pbar");
-    if (bar && bar.firstElementChild) bar.firstElementChild.style.width = pct + "%";
-  }
-
-  function progressStart(total){
-    prog.total = Math.max(1, total | 0);
-    prog.done = 0;
-    prog.gen = (prog.gen || 0) + 1;
-    if (prog.timer){ clearTimeout(prog.timer); }
-    // 兜底：6 秒还没凑齐就当作完成。宁可少显示一会儿，也不能让进度条卡在半路——
-    // 用户看到的"卡住"比"没进度条"更糟。
-    prog.timer = setTimeout(function(){ progressFinish(); }, 6000);
-    progressSet(6);
-  }
-
-  function progressStep(){
-    if (!prog.total) return;
-    prog.done = Math.min(prog.done + 1, prog.total);
-    progressSet(6 + Math.round(92 * prog.done / prog.total));
-    if (prog.done >= prog.total) progressFinish();
-  }
-
-  function progressFinish(){
-    if (prog.timer){ clearTimeout(prog.timer); prog.timer = null; }
-    progressSet(100);
-    // 用代号防串场：收尾动画还在跑的时候来了新的一批，旧回调不能把新进度清零
-    var gen = prog.gen;
-    setTimeout(function(){
-      if (gen !== prog.gen) return;
-      progressSet(0);
-      prog.total = 0; prog.done = 0;
-    }, 320);
-  }
-
-  function partArrived(name){
-    var p = state.viewParts;
-    if (!p || p[name]) return;
-    p[name] = true;
-    progressStep();
-    if (p.history && p.stats) state.viewParts = null;
-  }
-
   function maskOn(){
     if (state.maskTimer || state.maskShown) return;
     state.maskTimer = setTimeout(function(){
@@ -2638,13 +2631,8 @@
   }
 
   // 换视角/换筛选统一走这里：WS 在就推，不在才回落到 HTTP
-  var VIEW_PARTS = 2;
-
   function refreshAnalytics(){
     maskOn();
-    // 两条数据各有各的到达时刻，进度条要按"到了几条"走，不能靠猜
-    state.viewParts = { history: false, stats: false };
-    progressStart(VIEW_PARTS);
     if (!sendView()){
       // 没有 WS 时两条兜底请求都可能失败，失败也要把遮罩收掉
       loadHistory();
@@ -4855,7 +4843,6 @@
   // 失败时保留上一帧，不要把图清空——网络抖一下不该看起来像"网关挂了"。
   function applyHistory(d){
     if (!d) return;
-    partArrived("history");
     state.history = d;
     // 服务端存的分辨率比请求粗时，如实提示，别假装时间对得上
     state.histNote = (d.exact === false && d.bucket_ms > view.gran * 1000)
@@ -4938,12 +4925,7 @@
 
   function refreshAll(){
     // 证书也一起取：它是检索的条目之一，等到用户点进「端口」页才加载就等于搜不到
-    var jobs = [refresh(), loadConfig(), loadSnapshots(), loadAudit(), loadTls()];
-    progressStart(jobs.length);
-    jobs.forEach(function(p){
-      Promise.resolve(p).then(progressStep, progressStep);
-    });
-    return Promise.all(jobs);
+    return Promise.all([refresh(), loadConfig(), loadSnapshots(), loadAudit(), loadTls()]);
   }
 
   // ---------- 实时通道（WebSocket，轮询仅作兜底） ----------
@@ -5037,11 +5019,7 @@
 
   document.addEventListener("click", function(ev){
     var item = ev.target.closest && ev.target.closest('.rail-item[data-page="p-ports"]');
-    if (item){
-      var pj = [loadFirewall(), loadTls()];
-      progressStart(pj.length);
-      pj.forEach(function(p){ Promise.resolve(p).then(progressStep, progressStep); });
-    }
+    if (item){ loadFirewall(); loadTls(); }
     var appItem = ev.target.closest && ev.target.closest('.rail-item[data-page="p-apps"]');
     // 有推送就不为一次翻页再发一轮 HTTP；没连上时才现取
     if (appItem && !state.ws) loadAppStatus();
