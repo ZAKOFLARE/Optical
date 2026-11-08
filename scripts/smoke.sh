@@ -74,6 +74,14 @@ enabled = true
 listen = "$TLS"
 min_version = "1.2"
 
+# 自定义规则：命中后要能出现在分析里（by=rule）
+[[rules]]
+name = "smoke-rule"
+[[rules.matches]]
+kind = "path"
+op = "prefix"
+value = "/rule-hit"
+
 [admin]
 enabled = true
 username = "admin"
@@ -323,6 +331,15 @@ check "上传回执带 SHA-256 指纹" '"fingerprint"' "$UP_OK"
 check "上传后配置指向外部证书" '"self_signed":false' "$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/tls")"
 NEWKEY="$(printf '%s' "$UP_OK" | python3 -c 'import sys,json;print(json.load(sys.stdin)["key_path"])')"
 check "私钥落盘 0600" '^600$' "$(stat -c %a "$NEWKEY" 2>/dev/null || echo unknown)"
+
+echo "-- 自定义规则命中计入分析 --"
+curl -s -o /dev/null -m 6 "http://$GW/rule-hit/one"
+curl -s -o /dev/null -m 6 "http://$GW/rule-hit/two"
+# 规则的命中记录在规则求值那一刻，与路由决策无关，所以单独一张表
+RULE_RANK="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/stats?by=rule&range=3600&limit=20")"
+check "自定义规则出现在 by=rule 排行榜" 'smoke-rule' "$RULE_RANK"
+# grep 用 BRE，方括号要转义，否则会被当成字符类
+check "规则维度可单独筛选" '"filter_fields":\["rule"\]' "$RULE_RANK"
 
 echo "-- WebSocket / TOTP 二维码 / 采样间隔 --"
 WS_CODE="$(curl -s -o /dev/null -w '%{http_code}' -m 2   -H 'Connection: Upgrade' -H 'Upgrade: websocket'   -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw=='   -b "$COOKIE" "http://$ADM/api/ws" 2>/dev/null || true)"

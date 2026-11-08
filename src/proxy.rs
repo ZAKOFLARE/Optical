@@ -209,6 +209,10 @@ pub async fn handle(
         };
         crate::rules::resolve(&cfg.rules, &facts)
     };
+    // 命中的自定义规则要计进分析里那份「规则」维度。
+    // 不计的话，这一栏永远只有内置的 dos-body-size —— 用户自己写的规则
+    // 明明在改行为，却在流量分析里一条都看不到。
+    state.record_rule_hits(&rule_hit.hit);
     let vars = crate::rules::Vars {
         host: &host_str,
         path: &path,
