@@ -104,6 +104,9 @@ cargo build --release --target x86_64-pc-windows-gnu       # 需要 mingw-w64
 > 在 mac 上或在 CI 里用 macOS runner 构建即可，不是代码问题。
 > 已验证：`x86_64-unknown-linux-gnu`（本机）、`x86_64-unknown-linux-musl`、`x86_64-pc-windows-gnu`。
 
+推 tag（`v*`）或手动触发 `build` 工作流时，CI 会为 Linux / Windows / macOS 的 x64 与
+arm64 各出一个压缩包：在 Actions 页面的 Artifacts 里下载，打 tag 时还会自动挂到 Release。
+
 ---
 
 ## 启动

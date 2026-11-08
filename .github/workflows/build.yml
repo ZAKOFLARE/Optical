@@ -1,0 +1,111 @@
+name: build
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux：x64 本机编译；arm64 用 cross（容器里带 aarch64 交叉工具链）
+          - { runner: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { runner: ubuntu-latest, target: aarch64-unknown-linux-gnu, cross: true }
+
+          # Windows：两个架构都在 windows runner 上原生编译
+          - { runner: windows-latest, target: x86_64-pc-windows-msvc, ext: .exe }
+          - { runner: windows-latest, target: aarch64-pc-windows-msvc, ext: .exe }
+
+          # macOS：Intel 用 macos-15-intel，Apple Silicon 用 macos-15（macos-14 已于 2026-11 退役）
+          - { runner: macos-15-intel, target: x86_64-apple-darwin }
+          - { runner: macos-15, target: aarch64-apple-darwin }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        shell: bash
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release --locked --target ${{ matrix.target }}
+          else
+            cargo build --release --locked --target ${{ matrix.target }}
+          fi
+
+      - name: Stage files
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+          NAME="optical-${VERSION}-${{ matrix.target }}"
+          echo "NAME=$NAME" >> "$GITHUB_ENV"
+          mkdir -p "dist/$NAME"
+          cp "target/${{ matrix.target }}/release/optical${{ matrix.ext }}" "dist/$NAME/"
+          cp README.md LICENSE config.example.toml "dist/$NAME/"
+
+      - name: Package tar.gz
+        if: matrix.ext != '.exe'
+        shell: bash
+        run: tar -C dist -czf "dist/${{ env.NAME }}.tar.gz" "${{ env.NAME }}"
+
+      - name: Package zip
+        if: matrix.ext == '.exe'
+        shell: pwsh
+        run: Compress-Archive -Path "dist/${{ env.NAME }}/*" -DestinationPath "dist/${{ env.NAME }}.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.NAME }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+
+  release:
+    name: Attach binaries to release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+          generate_release_notes: true
