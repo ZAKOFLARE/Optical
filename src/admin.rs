@@ -434,6 +434,27 @@ impl WsView {
 /// 写完成的那一刻，下一帧推送里就是新状态，不会出现"界面说存好了、数据还是旧的"。
 ///
 /// 但它**不是**第二套实现：每个动作都调用与 HTTP 处理函数相同的内部函数。
+/// WS 查询通道：把只读接口也搬到长连接上。
+///
+/// 之前只有历史/统计/应用状态走推送，防火墙、证书、快照、审计仍然是每次翻页
+/// 发一轮 HTTP —— 同一条连接明明已经在，还要为读一次数据再握手，纯属多余。
+/// 这里直接复用各自的处理器，保证 WS 和 HTTP 拿到的是**同一份**结构。
+async fn run_ws_query(st: &Arc<AppState>, action: &str) -> (bool, Value, String) {
+    let v = match action {
+        "status" => api_status(State(st.clone())).await.0,
+        "metrics" => api_metrics(State(st.clone())).await.0,
+        "config" => api_get_config(State(st.clone())).await.0,
+        "backends" => api_backends(State(st.clone())).await.0,
+        "apps" => api_apps(State(st.clone())).await.0,
+        "firewall" => api_firewall(State(st.clone())).await.0,
+        "tls" => api_tls_info(State(st.clone())).await.0,
+        "snapshots" => api_snapshots(State(st.clone())).await.0,
+        "audit" => api_audit(State(st.clone()), HeaderMap::new()).await.0,
+        other => return (false, Value::Null, format!("未知查询: {other}")),
+    };
+    (true, v, String::new())
+}
+
 async fn run_ws_command(st: &Arc<AppState>, action: &str, payload: &Value) -> (bool, Value, String) {
     let out: Result<Value, ApiError> = match action {
         "config.save" => {
@@ -559,6 +580,25 @@ async fn ws_loop(mut socket: WebSocket, st: Arc<AppState>) {
                             payload: Value,
                         }
                         if let Ok(cmd) = serde_json::from_str::<CmdEnvelope>(&txt) {
+                            // 只读查询：和命令共用信封与回执格式，前端一个封装就够
+                            if cmd.kind == "query" {
+                                let (ok, data, error) = run_ws_query(&st, &cmd.action).await;
+                                let reply = json!({
+                                    "type": "reply",
+                                    "id": cmd.id,
+                                    "ok": ok,
+                                    "data": data,
+                                    "error": error,
+                                });
+                                if socket
+                                    .send(Message::Text(reply.to_string().into()))
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                                continue;
+                            }
                             if cmd.kind == "cmd" {
                                 let (ok, data, error) =
                                     run_ws_command(&st, &cmd.action, &cmd.payload).await;

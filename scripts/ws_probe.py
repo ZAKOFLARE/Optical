@@ -200,6 +200,28 @@ def main():
                     return 1
                 print("CMD_OK")
                 break
+            # 第四轮：只读接口也得走这条通道，不能有的页在 WS、有的页还在 HTTP
+            send_text(sock, json.dumps({"type": "query", "id": "q1", "action": "tls"}))
+            sock.settimeout(2.0)
+            for _ in range(20):
+                try:
+                    opcode, data = read_frame(sock)
+                except socket.timeout:
+                    continue
+                if opcode != 0x1:
+                    continue
+                mq = json.loads(data)
+                if mq.get("type") != "reply" or mq.get("id") != "q1":
+                    continue
+                if not mq.get("ok"):
+                    print(f"WS 查询回执失败: {mq.get('error')}")
+                    return 1
+                if "cert_path" not in (mq.get("data") or {}):
+                    print("WS 查询 tls 返回结构不对")
+                    return 1
+                print("QUERY_OK")
+                break
+
             print("APPS_OK" if got_apps else "APPS_MISSING")
             print("VIEW_OK")
             print(f"  history bucket_ms={msg['history']['bucket_ms']} points={len(msg['history']['points'])}")
