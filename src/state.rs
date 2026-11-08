@@ -487,13 +487,26 @@ impl AppState {
         if rule.is_empty() {
             return;
         }
-        let mut g = self.metrics.rules.lock().unwrap_or_else(|e| e.into_inner());
-        *g.entry(rule.to_string()).or_insert(0) += 1;
-        drop(g);
+        self.record_rule_hits(std::slice::from_ref(&rule.to_string()));
+    }
+
+    /// 一次请求可能同时命中多条自定义规则。逐条调用会反复抢同一把锁，
+    /// 所以合并成一次：一次加锁、一次写统计表。
+    pub fn record_rule_hits(&self, rules: &[String]) {
+        let rules: Vec<String> = rules.iter().filter(|r| !r.is_empty()).cloned().collect();
+        if rules.is_empty() {
+            return;
+        }
+        {
+            let mut g = self.metrics.rules.lock().unwrap_or_else(|e| e.into_inner());
+            for r in &rules {
+                *g.entry(r.clone()).or_insert(0) += 1;
+            }
+        }
         self.stats
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .record_rules(now_ms() / 60_000, &[rule.to_string()]);
+            .record_rules(now_ms() / 60_000, &rules);
         self.stats_rev.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -846,5 +859,16 @@ mod tests {
         let top = s.top_rules(5);
         assert!(top.iter().any(|(k, c)| k == "sql-union-select" && *c == 2));
         assert!(top.iter().any(|(k, c)| k == "family:sql" && *c == 2));
+    }
+
+    #[test]
+    fn custom_rule_hits_are_counted_together() {
+        // 一条请求命中多条自定义规则时，每条都要计数，空名字不能算成一条规则
+        let s = state();
+        s.record_rule_hits(&["a".to_string(), "b".to_string(), String::new()]);
+        let top = s.top_rules(10);
+        assert!(top.iter().any(|(k, c)| k == "a" && *c == 1), "{top:?}");
+        assert!(top.iter().any(|(k, c)| k == "b" && *c == 1), "{top:?}");
+        assert!(!top.iter().any(|(k, _)| k.is_empty()), "{top:?}");
     }
 }
