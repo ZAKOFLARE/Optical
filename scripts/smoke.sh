@@ -512,6 +512,54 @@ else
   echo "  SKIP 未安装 node，跳过关系判断"
 fi
 
+echo "-- IP 黑白名单 --"
+# 用「白名单模式」测闸门：只放行 127.0.0.1，其它全拒。
+# 这样既验证了 deny 真的在拦，又不会把本机冒烟流量一起打死。
+curl -s -m 6 "${AUTH[@]}" -X POST -H 'content-type: application/json' \
+  -d '{"text":"allow 127.0.0.1/32\ndeny 0.0.0.0/0\ndeny 2001:db8::/32","mode":"replace"}' \
+  "http://$ADM/api/ipfilter/import" >/dev/null
+IPF="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/ipfilter")"
+check "名单导入后有 3 条" '"cidr":"2001:db8::/32"' "$IPF"
+check "IPv6 网段也能导入" '2001:db8::/32' "$IPF"
+
+# 打开白名单模式
+CFGJSON="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config")"
+REV="$(printf '%s' "$CFGJSON" | python3 -c 'import sys,json;print(json.load(sys.stdin)["rev"])')"
+BODY="$(printf '%s' "$CFGJSON" | python3 -c '
+import sys, json
+d = json.load(sys.stdin)["config"]
+f = d.setdefault("ip_filter", {})
+f["enabled"] = True
+f["default_action"] = "deny"
+f["status_code"] = 403
+print(json.dumps(d))
+')"
+curl -s -m 8 "${AUTH[@]}" -X PUT -H 'content-type: application/json' \
+  -H "x-optical-config-rev: $REV" --data-binary "$BODY" "http://$ADM/api/config" >/dev/null
+
+check "白名单里的地址照常通过" '200' "$(code "http://$GW/hello")"
+check "白名单外的地址被拒" 'deny' "$(curl -s -m 6 "${AUTH[@]}" -X POST -H 'content-type: application/json' -d '{"ip":"8.8.8.8"}' "http://$ADM/api/ipfilter/check")"
+check "命中规则能报出来" '"rule":"0.0.0.0/0"' "$(curl -s -m 6 "${AUTH[@]}" -X POST -H 'content-type: application/json' -d '{"ip":"8.8.8.8"}' "http://$ADM/api/ipfilter/check")"
+check "先命中先算（allow 压住后面的 deny）" '"action":"allow"' "$(curl -s -m 6 "${AUTH[@]}" -X POST -H 'content-type: application/json' -d '{"ip":"127.0.0.1"}' "http://$ADM/api/ipfilter/check")"
+check "IPv6 命中独立网段" '"rule":"2001:db8::/32"' "$(curl -s -m 6 "${AUTH[@]}" -X POST -H 'content-type: application/json' -d '{"ip":"2001:db8::5"}' "http://$ADM/api/ipfilter/check")"
+
+# 导出格式与导入对称，能原样贴回去
+EXP="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/ipfilter/export")"
+check "导出包含 allow 行" 'allow 127.0.0.1/32' "$EXP"
+check "导出包含 IPv6 行" 'deny 2001:db8::/32' "$EXP"
+
+# 关掉，别影响后面的用例
+IDX="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/ipfilter")"
+REV2="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config" | python3 -c 'import sys,json;print(json.load(sys.stdin)["rev"])')"
+BODY2="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config" | python3 -c '
+import sys, json
+d = json.load(sys.stdin)["config"]
+d.setdefault("ip_filter", {})["enabled"] = False
+print(json.dumps(d))
+')"
+curl -s -m 8 "${AUTH[@]}" -X PUT -H 'content-type: application/json' \
+  -H "x-optical-config-rev: $REV2" --data-binary "$BODY2" "http://$ADM/api/config" >/dev/null
+
 echo
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[32m全部通过：%d 项\033[0m\n' "$PASS"

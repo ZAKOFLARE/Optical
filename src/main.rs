@@ -19,6 +19,7 @@ mod config;
 mod echo;
 mod errors;
 mod history;
+mod ipfilter;
 mod proxy;
 mod route;
 mod rules;

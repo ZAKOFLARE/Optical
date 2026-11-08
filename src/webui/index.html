@@ -247,6 +247,12 @@
   @keyframes flash{0%{box-shadow:0 0 0 2px var(--blue),0 0 0 6px var(--blue-soft)}100%{box-shadow:0 0 0 0 transparent}}
   .app-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ink-3);margin-right:5px}
   .app-dot.on{background:var(--green);box-shadow:0 0 0 3px rgba(0,168,112,.14)}
+  .acl-row{display:grid;grid-template-columns:92px minmax(180px,1.1fr) minmax(120px,1fr) 76px 32px;
+    gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid var(--line)}
+  .acl-row select,.acl-row input{width:100%;height:28px;padding:0 7px;border:1px solid var(--line-2);
+    border-radius:var(--r);font-family:var(--mono);font-size:12px;color:var(--ink);background:var(--panel);outline:none}
+  .acl-row select{font-family:var(--sans)}
+  .acl-row input:focus,.acl-row select:focus{border-color:var(--blue)}
   .tls-up{margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
   .tls-up-head{display:flex;align-items:center;gap:10px;margin-bottom:8px}
   textarea.pem{width:100%;border:1px solid var(--line-2);border-radius:var(--r);background:var(--panel);
@@ -459,6 +465,10 @@
       <button class="rail-item" data-page="p-waf">
         <svg viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4.4-3 8-7 9-4-1-7-4.6-7-9V6z"/></svg>
         <span data-i18n="nav.waf">WAF</span>
+      </button>
+      <button class="rail-item" data-page="p-acl">
+        <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h7"/><circle cx="18" cy="15" r="3"/></svg>
+        <span data-i18n="nav.acl">访问控制</span>
       </button>
       <button class="rail-item" data-page="p-rules">
         <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h13"/><circle cx="19" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg>
@@ -819,6 +829,81 @@
       </section>
 
       <!-- ================= 自定义规则 ================= -->
+      <section class="page" id="p-acl">
+        <div class="sec-head">
+          <h2 data-i18n="acl.title">访问控制</h2>
+          <span class="sec-hint" data-i18n="acl.hint">按来源地址放行或拒绝，只作用于数据面；管理面不经过这里，写错了也不会把自己锁在外面</span>
+          <span style="flex:1"></span>
+          <button class="btn btn-primary btn-sm" id="btn-acl-save" data-i18n="btn.save">保存</button>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3 data-i18n="acl.mode">策略</h3><span class="sec-hint" id="acl-stat">—</span></div>
+          <div class="card-body">
+            <div class="fields" style="max-width:760px">
+              <div class="field"><label data-i18n="acl.enabled">启用</label>
+                <select id="f-acl-enabled"><option value="0">false</option><option value="1">true</option></select></div>
+              <div class="field"><label data-i18n="acl.default">名单未命中时</label>
+                <select id="f-acl-default">
+                  <option value="allow" data-i18n="acl.default.allow">allow（黑名单模式）</option>
+                  <option value="deny" data-i18n="acl.default.deny">deny（白名单模式）</option>
+                </select></div>
+              <div class="field"><label data-i18n="acl.status">拒绝时返回</label>
+                <input type="number" id="f-acl-status" min="400" max="599" value="403"></div>
+            </div>
+            <p class="note" data-i18n="acl.order">先命中先算：allow 条目写在 deny 之前就是例外；本地条目永远排在远程订阅之前，自己写的规则不会被订阅列表盖掉。</p>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <div class="card-head"><h3 data-i18n="acl.entries">名单</h3>
+            <span class="sec-hint" id="acl-count">—</span>
+            <span class="spacer"></span>
+            <button class="btn btn-sm" id="btn-acl-add" data-i18n="acl.add">+ 新增一行</button></div>
+          <div class="card-body" id="acl-list"></div>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <div class="card-head"><h3 data-i18n="acl.remote">远程订阅</h3>
+            <span class="spacer"></span>
+            <button class="btn btn-sm" id="btn-acl-refresh" data-i18n="acl.refresh">立即刷新</button></div>
+          <div class="card-body">
+            <div class="fields">
+              <div class="field wide"><label data-i18n="acl.remote.urls">名单地址（每行一个，支持 http / https）</label>
+                <textarea id="f-acl-remote" rows="3" class="pem" spellcheck="false" placeholder="https://example.com/blocklist.txt"></textarea></div>
+              <div class="field"><label data-i18n="acl.remote.every">刷新间隔（秒，最小 60）</label>
+                <input type="number" id="f-acl-every" min="60" value="3600"></div>
+            </div>
+            <p class="note" data-i18n="acl.remote.note">拉到就换、拉不到就用上一次的结果并落盘缓存——订阅源挂了不代表该把门全打开。</p>
+            <div id="acl-remote-status" class="note" style="margin-top:8px"></div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <div class="card-head"><h3 data-i18n="acl.tools">导入 / 导出 / 试算</h3></div>
+          <div class="card-body">
+            <div class="fields">
+              <div class="field wide"><label data-i18n="acl.import">导入文本（每行 allow|deny CIDR # 备注）</label>
+                <textarea id="f-acl-import" rows="4" class="pem" spellcheck="false" placeholder="deny 203.0.113.0/24  # 扫描器段&#10;allow 10.0.0.7"></textarea></div>
+            </div>
+            <div class="formfoot">
+              <span class="note" id="acl-import-note"></span>
+              <span class="spacer"></span>
+              <button class="btn btn-sm" id="btn-acl-export" data-i18n="acl.export">导出</button>
+              <button class="btn btn-sm" id="btn-acl-merge" data-i18n="acl.merge">追加导入</button>
+              <button class="btn btn-primary btn-sm" id="btn-acl-replace" data-i18n="acl.replace">替换导入</button>
+            </div>
+            <div class="formfoot" style="margin-top:10px">
+              <span class="note" data-i18n="acl.test.hint">填一个地址，看它现在会被怎么处理</span>
+              <span class="spacer"></span>
+              <input type="text" id="f-acl-test" placeholder="1.2.3.4" style="width:180px">
+              <button class="btn btn-sm" id="btn-acl-test" data-i18n="acl.test">试一下</button>
+              <span class="note" id="acl-test-out"></span>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section class="page" id="p-rules">
         <div class="sec-head">
           <h2 data-i18n="rl.title">自定义规则</h2>
@@ -1120,6 +1205,28 @@
       "empty.generic":"暂无数据",
       "ov.title":"运行概览",
       "ov.tab.req":"请求 / 采样","ov.tab.bw":"带宽","ov.tab.cache":"缓存","ov.tab.block":"拦截",
+      "nav.acl":"访问控制",
+      "acl.title":"访问控制","acl.hint":"按来源地址放行或拒绝，只作用于数据面；管理面不经过这里，写错了也不会把自己锁在外面",
+      "acl.mode":"策略","acl.enabled":"启用","acl.default":"名单未命中时",
+      "acl.default.allow":"allow（黑名单模式：只拦名单里的）","acl.default.deny":"deny（白名单模式：只放行名单里的）",
+      "acl.status":"拒绝时返回",
+      "acl.order":"先命中先算：allow 条目写在 deny 之前就是例外；本地条目永远排在远程订阅之前，自己写的规则不会被订阅列表盖掉。",
+      "acl.entries":"名单","acl.add":"+ 新增一行","acl.empty":"还没有条目。可以手工加，也可以在下面用文本批量导入。",
+      "acl.note.ph":"备注（只给人看）","acl.bad":"这一行不像合法的 IP / 网段，保存后不会生效",
+      "acl.on":"已启用","acl.off":"未启用","acl.blocks":"已拦截",
+      "acl.saved":"访问控制已保存",
+      "acl.remote":"远程订阅","acl.refresh":"立即刷新","acl.remote.urls":"名单地址（每行一个，支持 http / https）",
+      "acl.remote.every":"刷新间隔（秒，最小 60）",
+      "acl.remote.note":"拉到就换、拉不到就用上一次的结果并落盘缓存——订阅源挂了不代表该把门全打开。",
+      "acl.remote.none":"还没有远程名单","acl.remote.rules":"条规则",
+      "acl.refresh.ok":"已刷新，共 {n} 条规则","acl.refresh.failed":"刷新失败",
+      "acl.tools":"导入 / 导出 / 试算","acl.import":"导入文本（每行 allow|deny CIDR # 备注）",
+      "acl.export":"导出","acl.merge":"追加导入","acl.replace":"替换导入",
+      "acl.import.empty":"先贴点内容进来","acl.import.failed":"导入失败",
+      "acl.import.ok":"已导入，共 {n} 条","acl.import.bad":"{n} 行无法解析",
+      "acl.test":"试一下","acl.test.hint":"填一个地址，看它现在会被怎么处理",
+      "acl.allow":"放行","acl.deny":"拒绝","acl.hit":"命中 {r}（来自 {from}）","acl.nomatch":"名单未命中，走默认策略",
+      "acl.local":"本地条目","acl.disabled.now":"（当前未启用）",
       "nav.analytics":"分析","nav.rules":"自定义","nav.sites":"站点","nav.ports":"端口","nav.apps":"应用",
       "st.title":"静态站点","st.hint":"把域名指到一个目录，网关自己发文件；这个域名下没找到文件，就继续交给路由/应用处理",
       "st.add":"+ 新增站点","st.save":"保存站点","st.saved":"站点已保存",
@@ -1176,7 +1283,7 @@
       "pt.up.adopted":"配置已指向新证书（原本是自签模式，现在改为使用你上传的这张）",
       "pt.up.restart":"TLS 监听在进程启动时装载：重启后生效（systemctl restart optical）",
       "pt.up.until":"到期 {d}","pt.tls.expired.short":"已过期","gs.kind.cert":"证书",
-      "an.title":"流量分析","an.hint":"粒度/范围/筛选都是查询参数，不写配置；数据经 WebSocket 实时推送。",
+      "an.tile.traffic":"流量","an.hint":"粒度/范围/筛选都是查询参数，不写配置；数据经 WebSocket 实时推送。",
       "ov.toanalytics":"流量曲线、排行榜与筛选已经挪到左侧「分析」页。","ov.goto":"去看看 →",
       "ov.rank":"排行榜","ov.rank.all":"全部",
       "ov.geo":"归属地查询",
@@ -1186,7 +1293,7 @@
       "ov.pie.status":"状态码分布","ov.pie.nodata":"暂无数据（该范围内没有对应请求）","ov.pie.status.hint":"按响应状态码归类",
       "ov.pie.cache":"缓存命中","ov.sys":"系统占用","ov.sys.hint":"本进程",
       "ov.sys.mem":"内存","ov.sys.cpu":"CPU","ov.sys.threads":"线程","ov.sys.up":"运行时长",
-      "an.tile.req":"请求数","an.tile.bw":"带宽","an.tile.cache":"缓存命中率","an.tile.waf":"WAF 拦截",
+      "an.tile.req":"请求数","an.tile.bw":"带宽峰值","an.tile.cache":"缓存命中率","an.tile.waf":"WAF 拦截",
       "an.cards":"排行榜","an.more":"查看更多","an.click":"点左侧指标切换曲线",
       "rl.title":"自定义规则","rl.add":"+ 新建规则","rl.save":"保存规则",
       "rl.hint":"按域名/路径/请求头这些特征改变网关行为。从上往下看，命中的规则会叠加，越靠下优先级越高。",
@@ -1351,6 +1458,28 @@
       "empty.generic":"No data",
       "ov.title":"Overview",
       "ov.tab.req":"Requests / sample","ov.tab.bw":"Bandwidth","ov.tab.cache":"Cache","ov.tab.block":"Blocks",
+      "nav.acl":"Access control",
+      "acl.title":"Access control","acl.hint":"Allow or deny by source address. Data plane only — the admin console does not pass through here, so a bad rule cannot lock you out",
+      "acl.mode":"Policy","acl.enabled":"Enabled","acl.default":"When no rule matches",
+      "acl.default.allow":"allow (blocklist: deny only what is listed)","acl.default.deny":"deny (allowlist: permit only what is listed)",
+      "acl.status":"Reject with status",
+      "acl.order":"First match wins: an allow entry above a deny range carves out an exception. Local entries always precede remote subscriptions, so your own rules are never overridden by a feed.",
+      "acl.entries":"Entries","acl.add":"+ Add row","acl.empty":"No entries yet. Add one by hand, or bulk import below.",
+      "acl.note.ph":"Note (for humans)","acl.bad":"Not a valid IP / prefix — this row will not take effect",
+      "acl.on":"enabled","acl.off":"disabled","acl.blocks":"blocked",
+      "acl.saved":"Access control saved",
+      "acl.remote":"Remote subscriptions","acl.refresh":"Refresh now","acl.remote.urls":"List URLs (one per line, http / https)",
+      "acl.remote.every":"Refresh interval (seconds, min 60)",
+      "acl.remote.note":"Fetched lists replace the old ones; a failed fetch keeps the previous result (cached on disk) — a dead feed is not a reason to open the gate.",
+      "acl.remote.none":"No remote lists yet","acl.remote.rules":"rules",
+      "acl.refresh.ok":"Refreshed: {n} rules","acl.refresh.failed":"Refresh failed",
+      "acl.tools":"Import / export / test","acl.import":"Import text (allow|deny CIDR # note per line)",
+      "acl.export":"Export","acl.merge":"Import (merge)","acl.replace":"Import (replace)",
+      "acl.import.empty":"Nothing to import","acl.import.failed":"Import failed",
+      "acl.import.ok":"Imported {n} entries","acl.import.bad":"{n} line(s) rejected",
+      "acl.test":"Test","acl.test.hint":"Check what a given address would get",
+      "acl.allow":"allow","acl.deny":"deny","acl.hit":"matched {r} (from {from})","acl.nomatch":"no match, default policy applies",
+      "acl.local":"local entry","acl.disabled.now":"(currently disabled)",
       "nav.analytics":"Analytics","nav.rules":"Rules","nav.sites":"Sites","nav.ports":"Ports","nav.apps":"Apps",
       "st.title":"Static sites","st.hint":"Bind a host → point at a directory → the gateway serves files itself",
       "st.add":"+ New site","st.save":"Save sites","st.saved":"Sites saved",
@@ -1407,7 +1536,7 @@
       "pt.up.adopted":"Config now points at the uploaded certificate (was self-signed mode)",
       "pt.up.restart":"TLS is loaded at process start: restart to apply (systemctl restart optical)",
       "pt.up.until":"expires {d}","pt.tls.expired.short":"EXPIRED","gs.kind.cert":"Certificate",
-      "an.title":"Traffic analytics","an.hint":"Bucket/range/filters are query params, never written to config; data streams over WebSocket.",
+      "an.tile.traffic":"Traffic","an.hint":"Bucket/range/filters are query params, never written to config; data streams over WebSocket.",
       "ov.toanalytics":"Traffic chart, leaderboard and filters moved to the Analytics page.","ov.goto":"Open →",
       "ov.rank":"Leaderboard","ov.rank.all":"All",
       "ov.geo":"IP location",
@@ -1417,7 +1546,7 @@
       "ov.pie.status":"Status codes","ov.pie.nodata":"No data in this range","ov.pie.status.hint":"grouped by class",
       "ov.pie.cache":"Cache","ov.sys":"Process","ov.sys.hint":"this process",
       "ov.sys.mem":"Memory","ov.sys.cpu":"CPU","ov.sys.threads":"Threads","ov.sys.up":"Uptime",
-      "an.tile.req":"Requests","an.tile.bw":"Bandwidth","an.tile.cache":"Cache hit","an.tile.waf":"WAF blocks",
+      "an.tile.req":"Requests","an.tile.bw":"Peak rate","an.tile.cache":"Cache hit","an.tile.waf":"WAF blocks",
       "an.cards":"Leaderboards","an.more":"More","an.click":"Click a tile to switch the chart",
       "rl.title":"Custom rules","rl.add":"+ New rule","rl.save":"Save rules",
       "rl.hint":"Rewrite gateway behaviour by request traits. Rules are evaluated top-down; all matches merge, later ones win.",
@@ -1689,7 +1818,8 @@
   var WS_QUERY = {
     "/api/status":"status", "/api/metrics":"metrics", "/api/config":"config",
     "/api/backends":"backends", "/api/apps":"apps", "/api/firewall":"firewall",
-    "/api/tls":"tls", "/api/snapshots":"snapshots", "/api/audit":"audit"
+    "/api/tls":"tls", "/api/snapshots":"snapshots", "/api/audit":"audit",
+    "/api/ipfilter":"ipfilter"
   };
 
   var pendingApi = 0;
@@ -2087,14 +2217,35 @@
   }
 
   // ---------- 分析页：左侧指标条（带 sparkline）----------
+  // 带宽和流量是两个口径，别混在一个数字里：
+  //   流量 = 这段范围一共搬了多少字节（累计量，看成本）
+  //   带宽 = 单个采样窗口内的速率峰值（B/s，看链路扛不扛得住）
+  // 以前一个字节 tile 既当累计又当速率，谁看都得猜。
+  function bytesPerPoint(p){
+    return (p.bytes_in || 0) + (p.bytes_out || 0);
+  }
+  function bandwidthAt(p){
+    var secs = Math.max(1, bucketMs() / 1000);
+    return bytesPerPoint(p) / secs;
+  }
+
   var AN_TILES = [
-    {k:"requests", label:"an.tile.req", color:"#0052d9", pick:function(p){ return p.requests; }, val:function(m){ return m.requests; }},
-    {k:"bytes", label:"an.tile.bw", color:"#7b61ff", pick:function(p){ return (p.bytes_in || 0) + (p.bytes_out || 0); },
-      val:function(m){ return (m.bytes_in || 0) + (m.bytes_out || 0); }, bytes:true},
-    {k:"cache", label:"an.tile.cache", color:"#00a870",
+    {k:"requests", label:"an.tile.req", color:"#0052d9", chart:"requests",
+      pick:function(p){ return p.requests; }, val:function(m){ return m.requests; }},
+    {k:"traffic", label:"an.tile.traffic", color:"#7b61ff", chart:"bytes", bytes:true,
+      pick:bytesPerPoint,
+      val:function(){ return pointsOf().reduce(function(a, p){ return a + bytesPerPoint(p); }, 0); }},
+    {k:"bandwidth", label:"an.tile.bw", color:"#00a68a", chart:"bytes", bytes:true, suffix:"/s",
+      pick:bandwidthAt,
+      val:function(){
+        var xs = pointsOf().map(bandwidthAt);
+        return xs.length ? Math.max.apply(null, xs) : 0;
+      }},
+    {k:"cache", label:"an.tile.cache", color:"#00a870", chart:"cache",
       pick:function(p){ var tot = (p.cache_hit||0)+(p.cache_miss||0); return tot ? p.cache_hit / tot * 100 : 0; },
       val:function(m){ return m.cache_hit_rate || 0; }, pct:true},
-    {k:"blocks", label:"an.tile.waf", color:"#e34d59", pick:function(p){ return p.waf_blocks; }, val:function(m){ return m.waf_blocks; }}
+    {k:"blocks", label:"an.tile.waf", color:"#e34d59", chart:"blocks",
+      pick:function(p){ return p.waf_blocks; }, val:function(m){ return m.waf_blocks; }}
   ];
 
   function sparkline(vals, color){
@@ -2120,7 +2271,7 @@
     box.addEventListener("click", function(ev){
       var tile = ev.target.closest("[data-tile]");
       if (!tile) return;
-      state.chart = tile.getAttribute("data-tile");
+      state.chart = tile.getAttribute("data-chart") || tile.getAttribute("data-tile");
       var tab = document.querySelector('#chart-tabs .tab[data-k="'+state.chart+'"]');
       if (tab) tab.click(); else drawChart();
       renderAnTiles();
@@ -2147,7 +2298,7 @@
     var m = state.metrics || {};
     if (box.children.length !== AN_TILES.length){
       box.innerHTML = AN_TILES.map(function(tile){
-        return '<div class="an-tile" data-tile="'+tile.k+'">'+
+        return '<div class="an-tile" data-tile="'+tile.k+'" data-chart="'+(tile.chart || tile.k)+'">'+
           '<div class="t"><span class="lab"></span></div>'+
           '<div class="v"></div>'+
           '<span class="spark"></span>'+
@@ -2157,12 +2308,14 @@
     AN_TILES.forEach(function(tile, i){
       var el = box.children[i];
       if (!el) return;
-      var cls = "an-tile" + (state.chart === tile.k ? " on" : "");
+      // 高亮跟着图表走：流量/带宽两个 tile 都对应 bytes 那张图
+      var cls = "an-tile" + (state.chart === (tile.chart || tile.k) ? " on" : "");
       if (el.className !== cls) el.className = cls;
       var lab = el.querySelector(".lab");
       if (lab && lab.textContent !== t(tile.label)) lab.textContent = t(tile.label);
       var raw = tile.val(m);
-      var shown = tile.bytes ? fmtBytes(raw) : (tile.pct ? (raw || 0).toFixed(1) + "%" : compact(raw || 0));
+      var shown = tile.bytes ? fmtBytes(raw) + (tile.suffix || "")
+        : (tile.pct ? (raw || 0).toFixed(1) + "%" : compact(raw || 0));
       var v = el.querySelector(".v");
       if (v && v.textContent !== shown) v.textContent = shown;
       var sp = el.querySelector(".spark");
@@ -3208,6 +3361,205 @@
         (state.relOpen === i ? relPanelHtml(i) : '')+
       '</div>'+
     '</div>';
+  }
+
+  // ---------- 访问控制（IP 黑白名单）----------
+  function aclRows(){
+    if (!state.aclRows) state.aclRows = [];
+    return state.aclRows;
+  }
+
+  // 只做"明显写错"的提示；真正的判定在服务端，别在前端假装权威
+  function validCidr(v){
+    var x = (v || "").trim();
+    if (!x) return false;
+    var parts = x.split("/");
+    if (parts.length > 2) return false;
+    if (!asIp(parts[0])) return false;
+    if (parts.length === 2){
+      if (!/^\d+$/.test(parts[1])) return false;
+      var n = Number(parts[1]);
+      var max = parts[0].indexOf(":") >= 0 ? 128 : 32;
+      if (n > max) return false;
+    }
+    return true;
+  }
+
+  function renderAcl(){
+    var box = $("acl-list");
+    if (!box) return;
+    var rows = aclRows();
+    if (!rows.length){
+      box.innerHTML = '<div class="note" style="padding:6px 0">' + esc(t("acl.empty")) + '</div>';
+      $("acl-count").textContent = "0";
+      return;
+    }
+    box.innerHTML = rows.map(function(r, i){
+      var bad = !r.cidr || !validCidr(r.cidr);
+      return '<div class="acl-row" data-ai="'+i+'">'+
+        '<select data-ak="action">'+
+          '<option value="deny"'+(r.action==="deny"?" selected":"")+'>deny</option>'+
+          '<option value="allow"'+(r.action==="allow"?" selected":"")+'>allow</option>'+
+        '</select>'+
+        '<input data-ak="cidr" value="'+esc(r.cidr||"")+'" placeholder="10.0.0.0/8  或  2001:db8::/32"'+
+          (bad ? ' style="border-color:var(--red)"' : '')+'>'+
+        '<input data-ak="note" value="'+esc(r.note||"")+'" placeholder="'+esc(t("acl.note.ph"))+'">'+
+        '<select data-ak="enabled">'+
+          '<option value="1"'+((r.enabled===false)?"":" selected")+'>on</option>'+
+          '<option value="0"'+((r.enabled===false)?" selected":"")+'>off</option>'+
+        '</select>'+
+        '<button class="btn btn-sm danger-btn" data-acl-del="'+i+'">×</button>'+
+      '</div>' + (bad ? '<div class="note" style="color:var(--red);margin:-4px 0 6px 4px">'+esc(t("acl.bad"))+'</div>' : '');
+    }).join("");
+    $("acl-count").textContent = rows.length + "";
+  }
+
+  function renderAclRemote(lists){
+    var box = $("acl-remote-status");
+    if (!box) return;
+    if (!lists || !lists.length){
+      box.innerHTML = '<span class="note">' + esc(t("acl.remote.none")) + '</span>';
+      return;
+    }
+    box.innerHTML = lists.map(function(l){
+      var when = l.fetched_at ? new Date(l.fetched_at * 1000).toLocaleString() : "—";
+      var head = l.error
+        ? '<span style="color:var(--red)">' + esc(l.error) + '</span>'
+        : '<span>' + esc(String((l.cidrs||[]).length)) + ' ' + esc(t("acl.remote.rules")) + '</span>';
+      return '<div style="display:flex;gap:10px;padding:2px 0;align-items:baseline">'+
+        '<span class="mono" style="flex:1;word-break:break-all">'+esc(l.url)+'</span>'+ head +
+        '<span class="note" style="flex:0 0 auto">'+esc(when)+'</span></div>';
+    }).join("");
+  }
+
+  function loadAcl(){
+    return api("/api/ipfilter").then(function(d){
+      if (!d || !d.ok) return;
+      state.aclInfo = d;
+      state.aclRows = (d.entries || []).map(function(e){
+        return {action: e.action || "deny", cidr: e.cidr || "", note: e.note || "", enabled: e.enabled !== false};
+      });
+      $("f-acl-enabled").value = d.enabled ? "1" : "0";
+      $("f-acl-default").value = d.default_action === "deny" ? "deny" : "allow";
+      $("f-acl-status").value = d.status_code || 403;
+      $("f-acl-remote").value = (d.remote || []).join("\n");
+      $("f-acl-every").value = d.remote_refresh_secs || 3600;
+      $("acl-stat").textContent = (d.enabled ? t("acl.on") : t("acl.off")) +
+        " · " + t("acl.blocks") + " " + (d.blocks || 0);
+      renderAcl();
+      renderAclRemote(d.remote_lists || []);
+    }).catch(function(){});
+  }
+
+  function collectAcl(cfg){
+    cfg.ip_filter = cfg.ip_filter || {};
+    cfg.ip_filter.enabled = $("f-acl-enabled").value === "1";
+    cfg.ip_filter.default_action = $("f-acl-default").value;
+    cfg.ip_filter.status_code = Math.min(599, Math.max(400, Number($("f-acl-status").value) || 403));
+    cfg.ip_filter.remote = ($("f-acl-remote").value || "").split("\n")
+      .map(function(x){ return x.trim(); }).filter(Boolean);
+    cfg.ip_filter.remote_refresh_secs = Math.max(60, Number($("f-acl-every").value) || 3600);
+    cfg.ip_filter.entries = aclRows().filter(function(r){ return (r.cidr || "").trim(); })
+      .map(function(r){
+        return {action: r.action, cidr: r.cidr.trim(), note: r.note || "", enabled: r.enabled !== false};
+      });
+  }
+
+  function bindAcl(){
+    if (!$("acl-list")) return;
+    $("btn-acl-add").addEventListener("click", function(){
+      aclRows().push({action:"deny", cidr:"", note:"", enabled:true});
+      renderAcl();
+    });
+    $("acl-list").addEventListener("input", function(ev){
+      var el = ev.target.closest("[data-ak]");
+      if (!el) return;
+      var row = el.closest("[data-ai]");
+      var i = Number(row.getAttribute("data-ai"));
+      var r = aclRows()[i];
+      if (!r) return;
+      r[el.getAttribute("data-ak")] = el.value;
+    });
+    $("acl-list").addEventListener("change", function(ev){
+      var el = ev.target.closest("[data-ak]");
+      if (!el) return;
+      var row = el.closest("[data-ai]");
+      var i = Number(row.getAttribute("data-ai"));
+      var r = aclRows()[i];
+      if (!r) return;
+      var k = el.getAttribute("data-ak");
+      r[k] = (k === "enabled") ? el.value === "1" : el.value;
+      if (k === "action" || k === "enabled") return;
+      renderAcl();
+    });
+    $("acl-list").addEventListener("click", function(ev){
+      var del = ev.target.closest("[data-acl-del]");
+      if (!del) return;
+      aclRows().splice(Number(del.getAttribute("data-acl-del")), 1);
+      renderAcl();
+    });
+    $("btn-acl-save").addEventListener("click", function(){
+      var cfg = clone();
+      collectAcl(cfg);
+      save(cfg, t("acl.saved"), this).then(loadAcl);
+    });
+    $("btn-acl-refresh").addEventListener("click", function(){
+      var btn = this;
+      setBusy(btn, true);
+      api("/api/ipfilter/refresh", {method:"POST"})
+        .then(function(d){
+          if (!d.ok) throw new Error(d.error || t("acl.refresh.failed"));
+          toast(t("acl.refresh.ok", {n: d.rules || 0}), "ok");
+          return loadAcl();
+        })
+        .catch(function(e){ toast(e.message, "err"); })
+        .finally(function(){ setBusy(btn, false); });
+    });
+    $("btn-acl-export").addEventListener("click", function(){
+      // 走 HTTP 直链：这是文件下载，不该塞进 WS 回执里
+      window.open("/api/ipfilter/export", "_blank");
+    });
+    ["btn-acl-merge", "btn-acl-replace"].forEach(function(id){
+      $(id).addEventListener("click", function(){
+        var text = ($("f-acl-import").value || "").trim();
+        if (!text){ toast(t("acl.import.empty"), "err"); return; }
+        var mode = id === "btn-acl-merge" ? "merge" : "replace";
+        var btn = this;
+        setBusy(btn, true);
+        api("/api/ipfilter/import", {
+          method: "POST", headers: {"content-type":"application/json"},
+          body: JSON.stringify({text: text, mode: mode})
+        }).then(function(d){
+          if (!d.ok) throw new Error(d.error || t("acl.import.failed"));
+          $("acl-import-note").textContent = t("acl.import.ok", {n: d.entries || 0}) +
+            ((d.bad && d.bad.length) ? " · " + t("acl.import.bad", {n: d.bad.length}) : "");
+          $("f-acl-import").value = "";
+          toast(t("acl.import.ok", {n: d.entries || 0}), "ok");
+          return loadAcl();
+        }).catch(function(e){
+          $("acl-import-note").textContent = e.message;
+          toast(e.message, "err");
+        }).finally(function(){ setBusy(btn, false); });
+      });
+    });
+    $("btn-acl-test").addEventListener("click", function(){
+      var ip = ($("f-acl-test").value || "").trim();
+      if (!ip) return;
+      $("acl-test-out").textContent = "…";
+      api("/api/ipfilter/check", {
+        method: "POST", headers: {"content-type":"application/json"},
+        body: JSON.stringify({ip: ip})
+      }).then(function(d){
+        if (!d.ok) throw new Error(d.error || "");
+        var verdict = d.action === "deny" ? t("acl.deny") : t("acl.allow");
+        var via = d.matched
+          ? t("acl.hit", {r: d.rule, from: d.from || t("acl.local")})
+          : t("acl.nomatch");
+        $("acl-test-out").textContent = verdict + " · " + via + (d.enabled ? "" : " · " + t("acl.disabled.now"));
+      }).catch(function(e){
+        $("acl-test-out").textContent = e.message;
+      });
+    });
   }
 
   // ---------- 全局检索 ----------
@@ -4703,6 +5055,7 @@
       var label = item.querySelector("span");
       $("crumb-now").textContent = label ? label.textContent : "";
       if (id==="p-history"){ loadSnapshots(); loadAudit(); }
+      if (id==="p-acl"){ loadAcl(); }
       if (id==="p-backends"){ loadConfig(); }
     });
   });
@@ -4750,6 +5103,7 @@
       bindApps();
       bindSearch();
       bindPorts();
+      bindAcl();
     }
     return checkAuth().then(function(ok){
       if (!ok) return;

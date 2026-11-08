@@ -164,6 +164,48 @@ pub async fn handle(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
+    // ---- IP 黑白名单：数据面最前面的闸 ----
+    // 放在这里是为了"被拒的请求什么都不发生"：不进 WAF、不选路、不占后端连接，
+    // 但要留一条审计——谁被挡了、被哪条规则挡的，事后必须能查。
+    // 管理面不走这条路径，所以再狠的规则也不会把人锁在控制台外面。
+    if cfg.ip_filter.enabled {
+        let decision = state.ip_check(&cfg, client_ip);
+        if decision.action == crate::ipfilter::IpAction::Deny {
+            state.metrics.ip_blocks.fetch_add(1, Ordering::Relaxed);
+            let detail = match &decision.rule {
+                Some(rule) => format!(
+                    "命中 {rule}{}",
+                    if decision.from.is_empty() {
+                        String::new()
+                    } else {
+                        format!("（来自 {}）", decision.from)
+                    }
+                ),
+                None => "名单未命中，按默认策略拒绝".to_string(),
+            };
+            state.audit.push(
+                &cfg.storage,
+                crate::storage::AuditEntry {
+                    ts_ms: crate::storage::now_ms(),
+                    kind: "ip.block".into(),
+                    detail,
+                    identity: ip_str.clone(),
+                    path: path.clone(),
+                    rule: decision.rule.clone().unwrap_or_else(|| "ip-filter".into()),
+                },
+            );
+            let status = http::StatusCode::from_u16(state.ip_filter.status_code())
+                .unwrap_or(http::StatusCode::FORBIDDEN);
+            return error_response(
+                &state,
+                &cfg,
+                status,
+                &format!("来源地址 {ip_str} 被访问控制规则拒绝"),
+                decision.rule.as_deref(),
+            );
+        }
+    }
+
     let content_type = parts
         .headers
         .get(CONTENT_TYPE)
@@ -1352,7 +1394,7 @@ fn error_response(
     cfg: &Config,
     status: StatusCode,
     msg: &str,
-    rule: Option<&'static str>,
+    rule: Option<&str>,
 ) -> Response<ProxyBody> {
     let paths = cfg.resolve_paths(&state.config_path);
     let (text, ct) = crate::errors::render(cfg, &paths, status, msg);
