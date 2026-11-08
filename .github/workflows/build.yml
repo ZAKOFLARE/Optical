@@ -28,10 +28,6 @@ jobs:
           - { runner: windows-latest, target: x86_64-pc-windows-msvc, ext: .exe }
           - { runner: windows-latest, target: aarch64-pc-windows-msvc, ext: .exe }
 
-          # macOS：Intel 用 macos-15-intel，Apple Silicon 用 macos-15（macos-14 已于 2026-11 退役）
-          - { runner: macos-15-intel, target: x86_64-apple-darwin }
-          - { runner: macos-15, target: aarch64-apple-darwin }
-
     steps:
       - uses: actions/checkout@v4
 
