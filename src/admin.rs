@@ -59,6 +59,11 @@ pub async fn serve(state: Arc<AppState>, listener: TcpListener) -> anyhow::Resul
         .route("/api/tls", get(api_tls_info))
         .route("/api/tls/selfsigned", post(api_tls_selfsigned))
         .route("/api/tls/upload", post(api_tls_upload))
+        .route("/api/ipfilter", get(api_ipfilter))
+        .route("/api/ipfilter/check", post(api_ipfilter_check))
+        .route("/api/ipfilter/import", post(api_ipfilter_import))
+        .route("/api/ipfilter/export", get(api_ipfilter_export))
+        .route("/api/ipfilter/refresh", post(api_ipfilter_refresh))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     let app = public.merge(protected).fallback(not_found).with_state(state);
@@ -324,6 +329,15 @@ async fn status_payload(st: &Arc<AppState>) -> Value {
         "backend_groups": cfg.backend_groups.len(),
         "lb": cfg.server.lb,
         "header_rules": cfg.header_rules.len(),
+        "ip_filter": {
+            "enabled": cfg.ip_filter.enabled,
+            "default_action": cfg.ip_filter.default_action,
+            // 本地条目 + 远程订阅展开后的规则条数，运维一眼能看出"到底装进去多少"
+            "entries": cfg.ip_filter.entries.len(),
+            "remote": cfg.ip_filter.remote.len(),
+            "remote_rules": st.ip_remote_snapshot().lists.iter().map(|l| l.cidrs.len()).sum::<usize>(),
+            "blocks": st.metrics.ip_blocks.load(std::sync::atomic::Ordering::Relaxed),
+        },
         "waf": {
             "enabled": cfg.waf.enabled,
             "mode": cfg.waf.mode,
@@ -448,6 +462,7 @@ async fn run_ws_query(st: &Arc<AppState>, action: &str) -> (bool, Value, String)
         "apps" => api_apps(State(st.clone())).await.0,
         "firewall" => api_firewall(State(st.clone())).await.0,
         "tls" => api_tls_info(State(st.clone())).await.0,
+        "ipfilter" => api_ipfilter(State(st.clone())).await.0,
         "snapshots" => api_snapshots(State(st.clone())).await.0,
         "audit" => api_audit(State(st.clone()), HeaderMap::new()).await.0,
         other => return (false, Value::Null, format!("未知查询: {other}")),
@@ -1265,6 +1280,217 @@ fn fmt_ts(secs: i64) -> String {
             )
         })
         .unwrap_or_else(|_| secs.to_string())
+}
+
+/// IP 黑白名单现状：本地条目、远程订阅状态、拦截计数。
+async fn api_ipfilter(State(st): State<Arc<AppState>>) -> Json<Value> {
+    let cfg = st.snapshot().await;
+    let remote = st.ip_remote_snapshot();
+    let entries: Vec<Value> = cfg
+        .ip_filter
+        .entries
+        .iter()
+        .map(|e| {
+            json!({
+                "action": e.action,
+                "cidr": e.cidr,
+                "note": e.note,
+                "enabled": e.enabled,
+                // 写错的 CIDR 不静默忽略：页面上要能红出来，否则规则看着生效其实没装进去
+                "valid": crate::ipfilter::parse_cidr(&e.cidr).is_some(),
+            })
+        })
+        .collect();
+    Json(json!({
+        "ok": true,
+        "enabled": cfg.ip_filter.enabled,
+        "default_action": cfg.ip_filter.default_action,
+        "status_code": cfg.ip_filter.status_code,
+        "remote": cfg.ip_filter.remote,
+        "remote_refresh_secs": cfg.ip_filter.remote_refresh_secs,
+        "entries": entries,
+        "remote_lists": remote.lists,
+        "blocks": st.metrics.ip_blocks.load(std::sync::atomic::Ordering::Relaxed),
+        "rev": st.config_rev(),
+    }))
+}
+
+#[derive(Deserialize)]
+struct IpCheckReq {
+    ip: String,
+}
+
+/// 「这条 IP 会被怎么处理」——配规则最容易犯的错是顺序，光看列表看不出来，
+/// 这里直接给判定结果和命中的那一条。
+async fn api_ipfilter_check(
+    State(st): State<Arc<AppState>>,
+    Json(req): Json<IpCheckReq>,
+) -> Json<Value> {
+    let cfg = st.snapshot().await;
+    let ip: std::net::IpAddr = match req.ip.trim().parse() {
+        Ok(v) => v,
+        Err(_) => return Json(json!({ "ok": false, "error": format!("不是合法 IP: {}", req.ip) })),
+    };
+    let d = st.ip_explain(&cfg, ip);
+    Json(json!({
+        "ok": true,
+        "ip": ip.to_string(),
+        "action": d.action,
+        "rule": d.rule,
+        "from": d.from,
+        "matched": d.rule.is_some(),
+        "enabled": cfg.ip_filter.enabled,
+    }))
+}
+
+#[derive(Deserialize)]
+struct IpImportReq {
+    text: String,
+    /// merge = 追加（同 CIDR 覆盖动作），replace = 整份替换
+    #[serde(default)]
+    mode: String,
+}
+
+/// 导入名单：每行 `allow|deny CIDR [# 备注]`，也接受只有 CIDR（默认 deny）。
+/// 与导出格式对称，导出再导入能原样还原。
+async fn api_ipfilter_import(
+    State(st): State<Arc<AppState>>,
+    Json(req): Json<IpImportReq>,
+) -> Json<Value> {
+    let mut cfg = st.snapshot().await;
+    let mut parsed: Vec<crate::ipfilter::IpEntry> = Vec::new();
+    let mut bad: Vec<String> = Vec::new();
+
+    for raw in req.text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (head, note) = match line.find('#') {
+            Some(i) => (line[..i].trim(), line[i + 1..].trim().to_string()),
+            None => (line, String::new()),
+        };
+        let mut it = head.split_whitespace();
+        let first = it.next().unwrap_or("");
+        let (action, cidr) = match first.to_ascii_lowercase().as_str() {
+            "allow" | "deny" => (
+                if first.eq_ignore_ascii_case("allow") {
+                    crate::ipfilter::IpAction::Allow
+                } else {
+                    crate::ipfilter::IpAction::Deny
+                },
+                it.next().unwrap_or("").to_string(),
+            ),
+            _ => (crate::ipfilter::IpAction::Deny, first.to_string()),
+        };
+        if cidr.is_empty() {
+            bad.push(raw.to_string());
+            continue;
+        }
+        if crate::ipfilter::parse_cidr(&cidr).is_none() {
+            bad.push(raw.to_string());
+            continue;
+        }
+        parsed.push(crate::ipfilter::IpEntry {
+            action,
+            cidr,
+            note,
+            enabled: true,
+        });
+    }
+
+    if parsed.is_empty() {
+        return Json(json!({
+            "ok": false,
+            "error": "没有解析出任何有效条目",
+            "bad": bad,
+        }));
+    }
+
+    if req.mode == "merge" {
+        for e in parsed {
+            match cfg
+                .ip_filter
+                .entries
+                .iter_mut()
+                .find(|x| x.cidr == e.cidr)
+            {
+                // 同 CIDR 以新导入的动作为准，备注保留旧的（如果有）
+                Some(old) => {
+                    old.action = e.action;
+                    old.enabled = true;
+                    if !e.note.is_empty() {
+                        old.note = e.note;
+                    }
+                }
+                None => cfg.ip_filter.entries.push(e),
+            }
+        }
+    } else {
+        cfg.ip_filter.entries = parsed;
+    }
+
+    let added = cfg.ip_filter.entries.len();
+    match st.apply(cfg).await {
+        Ok(_) => Json(json!({
+            "ok": true,
+            "entries": added,
+            "bad": bad,
+            "rev": st.config_rev(),
+        })),
+        Err(e) => Json(json!({ "ok": false, "error": format!("保存配置失败: {e:#}") })),
+    }
+}
+
+/// 导出：与导入格式一致，纯文本，方便贴进工单或交给别的机器。
+async fn api_ipfilter_export(State(st): State<Arc<AppState>>) -> Response {
+    let cfg = st.snapshot().await;
+    let mut out = String::new();
+    out.push_str("# Optical IP 名单导出\n");
+    out.push_str(&format!(
+        "# default_action = {}, status_code = {}\n",
+        match cfg.ip_filter.default_action {
+            crate::ipfilter::IpAction::Allow => "allow",
+            crate::ipfilter::IpAction::Deny => "deny",
+        },
+        cfg.ip_filter.status_code
+    ));
+    for e in &cfg.ip_filter.entries {
+        let act = match e.action {
+            crate::ipfilter::IpAction::Allow => "allow",
+            crate::ipfilter::IpAction::Deny => "deny",
+        };
+        let note = if e.note.trim().is_empty() {
+            String::new()
+        } else {
+            format!("  # {}", e.note.trim())
+        };
+        let off = if e.enabled { "" } else { "  # disabled" };
+        out.push_str(&format!("{act} {}{note}{off}\n", e.cidr));
+    }
+    (
+        [
+            (header::CONTENT_TYPE, "text/plain; charset=utf-8"),
+            (
+                header::CONTENT_DISPOSITION,
+                "attachment; filename=\"optical-ipfilter.txt\"",
+            ),
+        ],
+        out,
+    )
+        .into_response()
+}
+
+/// 立刻重拉远程名单（不必等下一个周期）
+async fn api_ipfilter_refresh(State(st): State<Arc<AppState>>) -> Json<Value> {
+    match st.refresh_ip_remote().await {
+        Ok(list) => Json(json!({
+            "ok": true,
+            "sources": list.lists,
+            "rules": list.lists.iter().map(|l| l.cidrs.len()).sum::<usize>(),
+        })),
+        Err(e) => Json(json!({ "ok": false, "error": format!("{e:#}") })),
+    }
 }
 
 async fn api_backends(State(st): State<Arc<AppState>>) -> Json<Value> {

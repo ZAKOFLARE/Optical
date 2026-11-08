@@ -107,6 +107,26 @@ audit_max_bytes = 4194304
 # credentials = false      # true 时不能用 "*"（浏览器禁止）
 # max_age = 600
 
+# ---------- IP 黑白名单 ----------
+# 数据面入口的第一道闸：在 WAF、规则、选路之前就决定"这个请求要不要继续"。
+# 只作用于数据面；管理面（REST + WebUI）不经过这里——写错规则也不会把你自己
+# 锁在控制台外面，这是刻意的。
+#
+# 匹配规则：先命中先算。allow 写在 deny 前面就是例外；
+# 本地 [[ip_filter.entries]] 永远排在远程订阅之前，自己写的规则不会被订阅盖掉。
+[ip_filter]
+enabled = false
+default_action = "allow"   # allow = 黑名单模式（只拦名单里的）；deny = 白名单模式（只放行名单里的）
+status_code = 403          # 被拒时返回的状态码
+remote = []                # 远程名单地址，每行一个 CIDR，# 起头是注释；支持 http / https
+remote_refresh_secs = 3600 # 拉不到就用上一次的结果（落盘缓存），不会因为订阅源挂了就全放开
+
+# [[ip_filter.entries]]
+# action = "deny"          # deny / allow
+# cidr = "203.0.113.0/24"  # 网段或单个地址；IPv6 写 2001:db8::/32
+# note = "扫描器段"
+# enabled = true
+
 # ---------- 系统防火墙联动（端口放行） ----------
 # 和 [rules] 分开：端口决定"包能不能进内核栈"，规则决定"进来之后怎么处理"。
 # 只做 ACCEPT、不做 DROP，最坏情况是没生效，不会把 SSH 锁在门外。

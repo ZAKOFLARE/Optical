@@ -39,6 +39,8 @@ pub struct Metrics {
     pub waf_hits: AtomicU64,
     pub waf_blocks: AtomicU64,
     pub waf_skipped: AtomicU64,
+    /// 被 IP 名单挡掉的请求数（与 WAF 拦截分开算，混在一起就说不清查的是什么）
+    pub ip_blocks: AtomicU64,
     pub ws_upgrades: AtomicU64,
     /// 当前管理面 WebSocket 连接数（0 = 前端已回退到轮询）
     pub ws_clients: AtomicU64,
@@ -156,6 +158,12 @@ pub struct AppState {
     pub audit: AuditLog,
     pub bola: BolaTracker,
     conns: Mutex<HashMap<IpAddr, ConnStat>>,
+    /// IP 黑白名单的编译结果（本地条目 + 远程订阅）
+    pub ip_filter: crate::ipfilter::Runtime,
+    /// 远程名单缓存；拉失败时沿用上一次成功的，别让订阅源故障变成"全放开"
+    ip_remote: std::sync::RwLock<Arc<crate::ipfilter::RemoteList>>,
+    /// 远程名单版本号：换了一份就 +1，编译结果据此重建
+    ip_remote_gen: AtomicU64,
 }
 
 #[derive(Default)]
@@ -196,6 +204,8 @@ impl AppState {
         config.expand_apps();
         // 所有落盘位置统一由 resolve_paths 算，绝不在各处拼 "conf-history" / ".audit.jsonl"
         let paths = config.resolve_paths(&config_path);
+        // paths 会被移进结构体，缓存加载要先留一份目录
+        let data_dir = paths.data_dir.clone();
         let (sample_ms, history_points) = (
             config.metrics.sample_interval_ms,
             config.metrics.history_points,
@@ -222,6 +232,10 @@ impl AppState {
             auth: AuthState::new(),
             bola: BolaTracker::default(),
             conns: Mutex::new(HashMap::new()),
+            ip_filter: crate::ipfilter::Runtime::new(),
+            // 启动先吃落盘缓存：订阅源一时拉不到，也不能让白名单模式直接全拒或全放
+            ip_remote: std::sync::RwLock::new(Arc::new(crate::ipfilter::load_cache(&data_dir))),
+            ip_remote_gen: AtomicU64::new(1),
         }
     }
 
@@ -480,6 +494,74 @@ impl AppState {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .query(range_secs, by, filters, limit)
+    }
+
+    /// 数据面入口的 IP 判定。配置版本或远程名单版本变了会自动重编译。
+    pub fn ip_check(&self, cfg: &Config, ip: IpAddr) -> crate::ipfilter::Decision {
+        let remote = self
+            .ip_remote
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let gen = self.ip_remote_gen.load(Ordering::Relaxed);
+        self.ip_filter
+            .check(&cfg.ip_filter, self.config_rev(), &remote, gen, ip)
+    }
+
+    /// 诊断用：这条 IP 命中了哪条规则（管理面「测一下」按钮）
+    pub fn ip_explain(&self, cfg: &Config, ip: IpAddr) -> crate::ipfilter::Decision {
+        let remote = self
+            .ip_remote
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let gen = self.ip_remote_gen.load(Ordering::Relaxed);
+        self.ip_filter
+            .explain(&cfg.ip_filter, self.config_rev(), &remote, gen, ip)
+    }
+
+    pub fn ip_remote_snapshot(&self) -> Arc<crate::ipfilter::RemoteList> {
+        self.ip_remote
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// 重新拉取远程名单。单个源失败时沿用上一次成功的结果——
+    /// 订阅源崩了不代表内网该全放开，白名单模式下尤其致命。
+    pub async fn refresh_ip_remote(&self) -> anyhow::Result<Arc<crate::ipfilter::RemoteList>> {
+        let cfg = self.snapshot().await;
+        let urls = cfg.ip_filter.remote.clone();
+        if urls.is_empty() {
+            let empty = Arc::new(crate::ipfilter::RemoteList::default());
+            *self.ip_remote.write().unwrap_or_else(|e| e.into_inner()) = empty.clone();
+            self.ip_remote_gen.fetch_add(1, Ordering::Relaxed);
+            return Ok(empty);
+        }
+        let fetched = crate::ipfilter::refresh_remote(&urls, cfg.ip_filter.default_action).await;
+        let prev = self.ip_remote_snapshot();
+
+        let mut merged = crate::ipfilter::RemoteList::default();
+        for src in fetched.lists {
+            if src.error.is_empty() {
+                merged.lists.push(src);
+                continue;
+            }
+            match prev.lists.iter().find(|p| p.url == src.url && p.error.is_empty()) {
+                Some(old) => {
+                    let mut kept = old.clone();
+                    kept.error = src.error.clone();
+                    merged.lists.push(kept);
+                }
+                None => merged.lists.push(src),
+            }
+        }
+
+        crate::ipfilter::save_cache(&self.paths.data_dir, &merged);
+        let shared = Arc::new(merged);
+        *self.ip_remote.write().unwrap_or_else(|e| e.into_inner()) = shared.clone();
+        self.ip_remote_gen.fetch_add(1, Ordering::Relaxed);
+        Ok(shared)
     }
 
     /// 单条规则计数（体积闸门、帧策略这类不走 Finding 的路径用它）。

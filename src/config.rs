@@ -53,6 +53,8 @@ pub struct Config {
     pub apps: Vec<crate::apps::AppConfig>,
     /// 系统防火墙联动（端口放行），和 rules 刻意分开
     pub firewall: crate::firewall::FirewallConfig,
+    /// IP 黑白名单：数据面入口的第一道闸
+    pub ip_filter: crate::ipfilter::IpFilterConfig,
     pub extensions: ExtensionsConfig,
 }
 

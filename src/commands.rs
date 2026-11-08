@@ -172,6 +172,35 @@ pub async fn run_gateway(config_opt: Option<PathBuf>, args: crate::cli::RunArgs)
         });
     }
 
+    // IP 名单的远程订阅：启动先拉一次（不阻塞监听），之后按配置的间隔周期刷新。
+    // 拉失败不清空——state 里会沿用上一次成功的结果。
+    if !cfg.ip_filter.remote.is_empty() {
+        let st = state.clone();
+        tokio::spawn(async move {
+            loop {
+                match st.refresh_ip_remote().await {
+                    Ok(list) => {
+                        let ok: usize = list.lists.iter().filter(|l| l.error.is_empty()).map(|l| l.cidrs.len()).sum();
+                        let bad: Vec<&str> = list.lists.iter().filter(|l| !l.error.is_empty()).map(|l| l.url.as_str()).collect();
+                        if bad.is_empty() {
+                            tracing::info!(rules = ok, "IP 名单已更新");
+                        } else {
+                            tracing::warn!(rules = ok, failed = ?bad, "部分 IP 名单拉取失败，沿用上次结果");
+                        }
+                    }
+                    Err(e) => tracing::warn!(error = %e, "IP 名单刷新失败"),
+                }
+                let secs = st
+                    .snapshot()
+                    .await
+                    .ip_filter
+                    .remote_refresh_secs
+                    .max(60);
+                tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
+            }
+        });
+    }
+
     if !cfg.extensions.filters.is_empty() {
         tracing::warn!(
             filters = ?cfg.extensions.filters,
