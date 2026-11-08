@@ -55,6 +55,8 @@ pub struct Config {
     pub firewall: crate::firewall::FirewallConfig,
     /// IP 黑白名单：数据面入口的第一道闸
     pub ip_filter: crate::ipfilter::IpFilterConfig,
+    /// 外观：主题色、图表样式、背景与图标
+    pub appearance: crate::appearance::AppearanceConfig,
     pub extensions: ExtensionsConfig,
 }
 
@@ -170,6 +172,9 @@ pub struct AdminConfig {
     pub max_failed_attempts: u32,
     /// 失败计数窗口（秒）
     pub failed_window_secs: u64,
+    /// 单点登录：新登录成功后，其它设备上的会话立即作废。
+    /// 想让"换个浏览器看看"也互不影响时保持 false。
+    pub single_session: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -693,6 +698,7 @@ impl Default for AdminConfig {
             session_ttl_secs: 3600,
             max_failed_attempts: 5,
             failed_window_secs: 300,
+            single_session: false,
         }
     }
 }

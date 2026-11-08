@@ -14,7 +14,7 @@ use axum::extract::{Path as AxumPath, Query, Request, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -31,7 +31,11 @@ pub async fn serve(state: Arc<AppState>, listener: TcpListener) -> anyhow::Resul
         .route("/api/health", get(api_health))
         .route("/api/auth/me", get(api_me))
         .route("/api/auth/login", post(api_login))
-        .route("/api/auth/logout", post(api_logout));
+        .route("/api/auth/logout", post(api_logout))
+        // 外观与品牌图是公开的：登录页本身就要显示自定义图标，
+        // 还没登录时拿不到它们等于白配。
+        .route("/api/appearance", get(api_appearance))
+        .route("/api/branding/{kind}", get(api_branding));
 
     let protected = Router::new()
         .route("/api/status", get(api_status))
@@ -64,11 +68,29 @@ pub async fn serve(state: Arc<AppState>, listener: TcpListener) -> anyhow::Resul
         .route("/api/ipfilter/import", post(api_ipfilter_import))
         .route("/api/ipfilter/export", get(api_ipfilter_export))
         .route("/api/ipfilter/refresh", post(api_ipfilter_refresh))
+        .route("/api/sessions", get(api_sessions))
+        .route("/api/sessions/others", delete(api_sessions_revoke_others))
+        .route("/api/sessions/{id}", delete(api_sessions_revoke))
+        .route("/api/appearance", put(api_set_appearance))
+        .route(
+            "/api/appearance/upload",
+            post(api_appearance_upload).layer(axum::extract::DefaultBodyLimit::max(
+                // 图片按 base64 传，体积会是原始文件的 4/3，留足余量
+                8 * 1024 * 1024,
+            )),
+        )
+        .route("/api/appearance/asset/{kind}", delete(api_appearance_drop))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     let app = public.merge(protected).fallback(not_found).with_state(state);
 
-    axum::serve(listener, app).await?;
+    // 带连接信息启动，否则 ConnectInfo 取不到对端地址，
+    // 登录记录里所有直连都会变成"未知来源"。
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 
@@ -128,6 +150,7 @@ async fn api_me(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Json<Val
 
 async fn api_login(
     State(st): State<Arc<AppState>>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
     headers: HeaderMap,
     Json(req): Json<LoginReq>,
 ) -> Response {
@@ -138,12 +161,18 @@ async fn api_login(
     let ip = headers
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("local")
-        .to_string();
+        .map(|v| v.split(',').next().unwrap_or("").trim().to_string())
+        .filter(|v| !v.is_empty())
+        // 没有 XFF 就用 TCP 对端地址：直连进来时这才是真实来源
+        .unwrap_or_else(|| peer.ip().to_string());
+    let ua = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
 
     match st
         .auth
-        .login(&cfg.admin, &req.username, &req.password, &req.totp, &ip)
+        .login(&cfg.admin, &req.username, &req.password, &req.totp, &ip, ua)
     {
         Ok(token) => {
             let ttl = cfg.admin.session_ttl_secs;
@@ -389,8 +418,15 @@ async fn status_payload(st: &Arc<AppState>) -> Value {
 
 /// WebSocket 实时通道：每秒推一份与 REST 同构的快照，前端不用再轮询。
 /// 鉴权由 require_auth 中间件在升级前完成（Cookie 无效直接 401，不会进入升级）。
-async fn api_ws(ws: WebSocketUpgrade, State(st): State<Arc<AppState>>) -> Response {
-    ws.on_upgrade(move |socket| ws_loop(socket, st))
+async fn api_ws(
+    ws: WebSocketUpgrade,
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Response {
+    // 令牌在升级请求的 Cookie 里，握完手就拿不到了，先留住。
+    // 会话列表要用它标出"当前这条"，否则每条都得靠猜。
+    let token = cookie_value(&headers, COOKIE_NAME).unwrap_or_default();
+    ws.on_upgrade(move |socket| ws_loop(socket, st, token))
 }
 
 #[derive(Deserialize)]
@@ -453,7 +489,7 @@ impl WsView {
 /// 之前只有历史/统计/应用状态走推送，防火墙、证书、快照、审计仍然是每次翻页
 /// 发一轮 HTTP —— 同一条连接明明已经在，还要为读一次数据再握手，纯属多余。
 /// 这里直接复用各自的处理器，保证 WS 和 HTTP 拿到的是**同一份**结构。
-async fn run_ws_query(st: &Arc<AppState>, action: &str) -> (bool, Value, String) {
+async fn run_ws_query(st: &Arc<AppState>, action: &str, token: &str) -> (bool, Value, String) {
     let v = match action {
         "status" => api_status(State(st.clone())).await.0,
         "metrics" => api_metrics(State(st.clone())).await.0,
@@ -463,6 +499,15 @@ async fn run_ws_query(st: &Arc<AppState>, action: &str) -> (bool, Value, String)
         "firewall" => api_firewall(State(st.clone())).await.0,
         "tls" => api_tls_info(State(st.clone())).await.0,
         "ipfilter" => api_ipfilter(State(st.clone())).await.0,
+        "sessions" => {
+            let cfg = st.snapshot().await;
+            json!({
+                "ok": true,
+                "single_session": cfg.admin.single_session,
+                "ttl_secs": cfg.admin.session_ttl_secs,
+                "sessions": st.auth.list(&token),
+            })
+        }
         "snapshots" => api_snapshots(State(st.clone())).await.0,
         "audit" => api_audit(State(st.clone()), HeaderMap::new()).await.0,
         other => return (false, Value::Null, format!("未知查询: {other}")),
@@ -543,7 +588,7 @@ async fn run_ws_command(st: &Arc<AppState>, action: &str, payload: &Value) -> (b
     }
 }
 
-async fn ws_loop(mut socket: WebSocket, st: Arc<AppState>) {
+async fn ws_loop(mut socket: WebSocket, st: Arc<AppState>, token: String) {
     st.metrics
         .ws_clients
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -597,7 +642,7 @@ async fn ws_loop(mut socket: WebSocket, st: Arc<AppState>) {
                         if let Ok(cmd) = serde_json::from_str::<CmdEnvelope>(&txt) {
                             // 只读查询：和命令共用信封与回执格式，前端一个封装就够
                             if cmd.kind == "query" {
-                                let (ok, data, error) = run_ws_query(&st, &cmd.action).await;
+                                let (ok, data, error) = run_ws_query(&st, &cmd.action, &token).await;
                                 let reply = json!({
                                     "type": "reply",
                                     "id": cmd.id,
@@ -1003,11 +1048,9 @@ async fn api_app_action(
             let stopped = st.apps.stop(&app.name).await.map_err(ApiError::bad)?;
             return Ok(Json(json!({ "ok": true, "stopped": stopped })));
         }
-        "restart" => {
-            let _ = st.apps.stop(&app.name).await;
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-            st.apps.start(&app, &base).await
-        }
+        // 停→等→起 只有一份实现（AppManager::restart）：这里再写一遍，
+        // 将来改了等待时长或优雅停止的语义，两条路就会各走各的。
+        "restart" => st.apps.restart(&app, &base).await,
         other => return Err(ApiError::bad(anyhow::anyhow!("不认识的动作: {other}"))),
     };
 
@@ -1491,6 +1534,162 @@ async fn api_ipfilter_refresh(State(st): State<Arc<AppState>>) -> Json<Value> {
         })),
         Err(e) => Json(json!({ "ok": false, "error": format!("{e:#}") })),
     }
+}
+
+/// 在线设备列表。`current` 标出请求者自己那条，前端据此不给"踢自己"按钮。
+async fn api_sessions(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Json<Value> {
+    let cfg = st.snapshot().await;
+    let token = cookie_value(&headers, COOKIE_NAME).unwrap_or_default();
+    let list = st.auth.list(&token);
+    Json(json!({
+        "ok": true,
+        "single_session": cfg.admin.single_session,
+        "ttl_secs": cfg.admin.session_ttl_secs,
+        "sessions": list,
+    }))
+}
+
+async fn api_sessions_revoke(
+    State(st): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Json<Value> {
+    let removed = st.auth.revoke(&id);
+    Json(json!({ "ok": true, "removed": removed }))
+}
+
+async fn api_sessions_revoke_others(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Json<Value> {
+    let token = cookie_value(&headers, COOKIE_NAME).unwrap_or_default();
+    let n = st.auth.revoke_others(&token);
+    Json(json!({ "ok": true, "removed": n }))
+}
+
+/// 外观现状。公开可读：登录页要用里面的图标和主题色。
+async fn api_appearance(State(st): State<Arc<AppState>>) -> Json<Value> {
+    let cfg = st.snapshot().await;
+    Json(crate::appearance::payload(&cfg.appearance, &st.paths.data_dir))
+}
+
+/// 品牌图。`?v=` 只是给浏览器做缓存键，路径里不参与查找。
+async fn api_branding(State(st): State<Arc<AppState>>, AxumPath(kind): AxumPath<String>) -> Response {
+    match crate::appearance::read_asset(&st.paths.data_dir, &kind) {
+        Some((bytes, mime)) => (
+            [
+                (header::CONTENT_TYPE, mime),
+                // 地址带 mtime 版本号，内容变了地址就变，可以放心长期缓存
+                (
+                    header::CACHE_CONTROL,
+                    "public, max-age=31536000, immutable".to_string(),
+                ),
+                // SVG 能带脚本。这里只当图片用，但直接打开这个地址也是一条路，
+                // 加个 sandbox 把脚本和同源权限一起掐掉。
+                (
+                    header::CONTENT_SECURITY_POLICY,
+                    "sandbox; default-src 'none'; style-src 'unsafe-inline'".to_string(),
+                ),
+                (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),
+            ],
+            bytes,
+        )
+            .into_response(),
+        None => (StatusCode::NOT_FOUND, "not found").into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct AppearanceReq {
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    accent: Option<String>,
+    #[serde(default)]
+    chart_style: Option<String>,
+}
+
+async fn api_set_appearance(
+    State(st): State<Arc<AppState>>,
+    Json(req): Json<AppearanceReq>,
+) -> Json<Value> {
+    let mut cfg = st.snapshot().await;
+    if let Some(v) = req.enabled {
+        cfg.appearance.enabled = v;
+    }
+    if let Some(v) = req.accent {
+        cfg.appearance.accent = v;
+    }
+    if let Some(v) = req.chart_style {
+        cfg.appearance.chart_style = v;
+    }
+    cfg.appearance.normalize();
+    let accent = cfg.appearance.accent.clone();
+    match st.apply(cfg).await {
+        Ok(_) => Json(json!({ "ok": true, "accent": accent, "rev": st.config_rev() })),
+        Err(e) => Json(json!({ "ok": false, "error": format!("保存配置失败: {e:#}") })),
+    }
+}
+
+#[derive(Deserialize)]
+struct UploadAssetReq {
+    kind: String,
+    /// data URL（`data:image/png;base64,...`）。用 base64 而不是 multipart：
+    /// 这里只传一张图，多解析一层协议不划算。
+    data: String,
+}
+
+async fn api_appearance_upload(
+    State(st): State<Arc<AppState>>,
+    Json(req): Json<UploadAssetReq>,
+) -> Json<Value> {
+    use base64::Engine;
+    let raw = req.data.trim();
+    let (mime, b64) = match raw.split_once(',') {
+        Some((head, body)) if head.starts_with("data:") => {
+            let mime = head
+                .trim_start_matches("data:")
+                .split(';')
+                .next()
+                .unwrap_or("")
+                .to_string();
+            (mime, body)
+        }
+        _ => return Json(json!({ "ok": false, "error": "不是合法的图片数据" })),
+    };
+    let bytes = match base64::engine::general_purpose::STANDARD.decode(b64.trim()) {
+        Ok(b) => b,
+        Err(e) => return Json(json!({ "ok": false, "error": format!("解码失败: {e}") })),
+    };
+    match crate::appearance::save_asset(&st.paths.data_dir, &req.kind, &mime, &bytes) {
+        Ok(a) => {
+            let cfg = st.snapshot().await;
+            st.audit.push(
+                &cfg.storage,
+                crate::storage::AuditEntry {
+                    ts_ms: crate::storage::now_ms(),
+                    kind: "appearance.upload".into(),
+                    detail: format!("替换外观图片 {}（{} KB）", a.kind, a.bytes / 1024),
+                    identity: String::new(),
+                    path: "/api/appearance/upload".into(),
+                    rule: "appearance".into(),
+                },
+            );
+            Json(json!({ "ok": true, "asset": a }))
+        }
+        Err(e) => Json(json!({ "ok": false, "error": format!("{e:#}") })),
+    }
+}
+
+/// 删掉自定义图，回落到内置。配置里的开关不动——用户可能只是想换一张。
+async fn api_appearance_drop(
+    State(st): State<Arc<AppState>>,
+    AxumPath(kind): AxumPath<String>,
+) -> Json<Value> {
+    if !crate::appearance::KINDS.contains(&kind.as_str()) {
+        return Json(json!({ "ok": false, "error": format!("不认识的图片类型: {kind}") }));
+    }
+    let removed = crate::appearance::delete_asset(&st.paths.data_dir, &kind);
+    Json(json!({ "ok": true, "removed": removed }))
 }
 
 async fn api_backends(State(st): State<Arc<AppState>>) -> Json<Value> {

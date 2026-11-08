@@ -60,13 +60,6 @@ impl SiteConfig {
         }
     }
 
-    fn matches_host(&self, host: &str) -> bool {
-        let h = strip_port(host).to_ascii_lowercase();
-        self.hosts.iter().any(|p| {
-            let p = strip_port(p).to_ascii_lowercase();
-            p == "*" || p == h
-        })
-    }
 }
 
 fn strip_port(host: &str) -> &str {
@@ -349,19 +342,6 @@ pub async fn serve_site(
             .insert(http::header::CONTENT_LENGTH, HeaderValue::from_str(&meta.len().to_string()).ok()?);
     }
     Some(resp)
-}
-
-/// 命中站点但没文件 → 该站点自己的 404（不要再往上游转，否则掩盖配置错误）
-pub fn not_found() -> Response<ProxyBody> {
-    Response::builder()
-        .status(StatusCode::NOT_FOUND)
-        .header(CONTENT_TYPE, "text/plain; charset=utf-8")
-        .body(
-            Full::new(bytes::Bytes::from_static(b"404 site file not found"))
-                .map_err(|n| match n {})
-                .boxed(),
-        )
-        .expect("404 响应构造失败")
 }
 
 /// 条件请求：If-None-Match / If-Modified-Since 命中就 304。

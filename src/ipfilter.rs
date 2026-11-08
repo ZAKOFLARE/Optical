@@ -391,7 +391,6 @@ pub async fn fetch_text(url: &str) -> anyhow::Result<String> {
     use hyper_util::client::legacy::Client;
     use hyper_util::rt::TokioExecutor;
     use http_body_util::{BodyExt, Empty};
-    use hyper_util::client::legacy::connect::HttpConnector;
 
     let https = hyper_rustls::HttpsConnectorBuilder::new()
         .with_webpki_roots()

@@ -560,6 +560,118 @@ print(json.dumps(d))
 curl -s -m 8 "${AUTH[@]}" -X PUT -H 'content-type: application/json' \
   -H "x-optical-config-rev: $REV2" --data-binary "$BODY2" "http://$ADM/api/config" >/dev/null
 
+echo "-- 外观（主题色 / 图片上传）--"
+# 1x1 透明 PNG：只验证链路，不关心好不好看
+PNG1="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+check "外观接口不登录也能读（登录页要用）" '"ok":true' "$(curl -s -m 6 "http://$ADM/api/appearance")"
+
+UP="$(curl -s -m 8 "${AUTH[@]}" -H 'content-type: application/json' \
+  -d "{\"kind\":\"rail\",\"data\":\"data:image/png;base64,$PNG1\"}" \
+  "http://$ADM/api/appearance/upload")"
+check "图标上传成功" '"kind":"rail"' "$UP"
+check "返回的地址带版本号（换图即换缓存键）" '/api/branding/rail?v=' "$UP"
+check "图片落到 data_dir/branding" 'rail.png' "$(ls "$TMP/data/branding" 2>/dev/null)"
+check "品牌图公开可取" '200' "$(code "http://$ADM/api/branding/rail")"
+check "品牌图禁止嗅探（防把坏文件当脚本执行）" 'nosniff' \
+  "$(curl -s -D - -o /dev/null -m 6 "http://$ADM/api/branding/rail" | tr -d '\r')"
+
+# 谎报 mime 必须被拒：魔数说了才算
+BADUP="$(curl -s -m 8 "${AUTH[@]}" -H 'content-type: application/json' \
+  -d '{"kind":"rail","data":"data:image/png;base64,aGVsbG8="}' \
+  "http://$ADM/api/appearance/upload")"
+check "内容不是图片就拒绝" '"ok":false' "$BADUP"
+check "不认识的图片位被拒绝" '"ok":false' \
+  "$(curl -s -m 8 "${AUTH[@]}" -H 'content-type: application/json' -d "{\"kind\":\"favicon\",\"data\":\"data:image/png;base64,$PNG1\"}" "http://$ADM/api/appearance/upload")"
+
+# 主题色：保存后读回，非法值要回落而不是原样存下来
+curl -s -m 6 "${AUTH[@]}" -X PUT -H 'content-type: application/json' \
+  -d '{"enabled":true,"accent":"#7C5CFF","chart_style":"bar"}' "http://$ADM/api/appearance" >/dev/null
+AP="$(curl -s -m 6 "http://$ADM/api/appearance")"
+check "主题色保存并按小写读回" '"accent":"#7c5cff"' "$AP"
+check "图表样式保存为柱状" '"chart_style":"bar"' "$AP"
+check "上传的图标出现在外观数据里" '/api/branding/rail?v=' "$AP"
+
+curl -s -m 6 "${AUTH[@]}" -X PUT -H 'content-type: application/json' \
+  -d '{"accent":"red","chart_style":"pie"}' "http://$ADM/api/appearance" >/dev/null
+AP2="$(curl -s -m 6 "http://$ADM/api/appearance")"
+check "非法主题色回落到默认蓝" '"accent":"#0052d9"' "$AP2"
+check "非法图表样式回落到折线" '"chart_style":"line"' "$AP2"
+
+check "移除图标" '"removed":true' \
+  "$(curl -s -m 6 "${AUTH[@]}" -X DELETE "http://$ADM/api/appearance/asset/rail")"
+check "移除后回到内置" '"rail":""' "$(curl -s -m 6 "http://$ADM/api/appearance")"
+
+# 收尾：关掉自定义外观，别影响后续用例的视觉断言
+curl -s -m 6 "${AUTH[@]}" -X PUT -H 'content-type: application/json' \
+  -d '{"enabled":false}' "http://$ADM/api/appearance" >/dev/null
+
+echo "-- 登录设备 / 单点登录 --"
+CJ1="$TMP/c1.txt"
+CJ2="$TMP/c2.txt"
+login_as() {  # login_as <cookie-jar> <ua>
+  curl -s -c "$1" -A "$2" -m 6 -H 'content-type: application/json' \
+    -d "{\"username\":\"admin\",\"password\":\"$PASSWD\"}" "http://$ADM/api/auth/login" >/dev/null
+}
+login_as "$CJ1" 'Mozilla/5.0 (Windows NT 10.0) AppleWebKit Chrome/120 Safari/537.36'
+login_as "$CJ2" 'Mozilla/5.0 (Macintosh; Intel Mac OS X) Firefox/121'
+SESS="$(curl -s -b "$CJ1" -m 6 "http://$ADM/api/sessions")"
+check "会话列表认得出客户端" 'Chrome · Windows' "$SESS"
+check "会话列表带来源地址" '127.0.0.1' "$SESS"
+check "能标出当前会话" '"current":true' "$SESS"
+check "只给短 id，不泄露令牌" '"id":"[0-9a-f]\{12\}"' "$SESS"
+# 不能断言"正好 2 条"：脚本自己的会话也在列表里，数量随前面的用例浮动。
+# 要断言的是"这两条确实都在"。
+check "两条会话都在" 'yes' "$(printf '%s' "$SESS" | python3 -c '
+import sys, json
+rows = json.load(sys.stdin)["sessions"]
+uas = [r["ua"] for r in rows]
+print("yes" if "Chrome · Windows" in uas and "Firefox · macOS" in uas and len(rows) >= 2 else "no")
+')"
+
+OTHER="$(printf '%s' "$SESS" | python3 -c 'import sys,json
+d=json.load(sys.stdin)
+print(next(s["id"] for s in d["sessions"] if not s["current"]))')"
+check "按 id 下线指定设备" '"removed":true' \
+  "$(curl -s -b "$CJ1" -m 6 -X DELETE "http://$ADM/api/sessions/$OTHER")"
+check "被踢掉的会话立刻失效" '401' "$(code -b "$CJ2" "http://$ADM/api/status")"
+
+# 单点登录：新登录必须顶掉旧会话。这一步会清掉本脚本自己的会话，
+# 所以放在最后，跑完再重新登录一次收尾。
+login_as "$CJ2" 'curl/8.0'
+CFGJ="$(curl -s -b "$CJ1" -m 6 "http://$ADM/api/config")"
+REV3="$(printf '%s' "$CFGJ" | python3 -c 'import sys,json;print(json.load(sys.stdin)["rev"])')"
+BODY3="$(printf '%s' "$CFGJ" | python3 -c '
+import sys, json
+d = json.load(sys.stdin)["config"]
+d["admin"]["session_ttl_secs"] = d["admin"].get("session_ttl_secs", 3600)
+d["admin"]["single_session"] = True
+print(json.dumps(d))
+')"
+curl -s -b "$CJ1" -m 8 -X PUT -H 'content-type: application/json' \
+  -H "x-optical-config-rev: $REV3" --data-binary "$BODY3" "http://$ADM/api/config" >/dev/null
+check "单点登录开关写进配置" '"single_session":true' \
+  "$(curl -s -b "$CJ1" -m 6 "http://$ADM/api/config")"
+
+login_as "$CJ2" 'Mozilla/5.0 (X11; Linux) Chrome/121'
+check "新登录顶掉旧会话（单点登录生效）" '401' "$(code -b "$CJ1" "http://$ADM/api/status")"
+check "新会话本身可用" '200' "$(code -b "$CJ2" "http://$ADM/api/status")"
+check "只剩一条会话" '1' \
+  "$(curl -s -b "$CJ2" -m 6 "http://$ADM/api/sessions" | python3 -c 'import sys,json;print(len(json.load(sys.stdin)["sessions"]))')"
+
+# 关掉单点登录，别把演示机留在"开一个浏览器就顶掉另一个"的状态
+CFGJ2="$(curl -s -b "$CJ2" -m 6 "http://$ADM/api/config")"
+REV4="$(printf '%s' "$CFGJ2" | python3 -c 'import sys,json;print(json.load(sys.stdin)["rev"])')"
+BODY4="$(printf '%s' "$CFGJ2" | python3 -c '
+import sys, json
+d = json.load(sys.stdin)["config"]
+d["admin"]["single_session"] = False
+print(json.dumps(d))
+')"
+curl -s -b "$CJ2" -m 8 -X PUT -H 'content-type: application/json' \
+  -H "x-optical-config-rev: $REV4" --data-binary "$BODY4" "http://$ADM/api/config" >/dev/null
+check "单点登录可关回去" '"single_session":false' \
+  "$(curl -s -b "$CJ2" -m 6 "http://$ADM/api/config")"
+
 echo
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[32m全部通过：%d 项\033[0m\n' "$PASS"
