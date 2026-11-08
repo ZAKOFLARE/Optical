@@ -12,13 +12,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-
-fn is_false(b: &bool) -> bool {
-    !*b
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -309,15 +304,12 @@ const RESTART_MAX_IN_WINDOW: u64 = 3;
 
 pub struct AppManager {
     inner: Mutex<HashMap<String, Runtime>>,
-    /// 每次有状态变化 +1，WS 据此决定要不要重推应用列表
-    pub rev: AtomicU64,
 }
 
 impl Default for AppManager {
     fn default() -> Self {
         Self {
             inner: Mutex::new(HashMap::new()),
-            rev: AtomicU64::new(0),
         }
     }
 }
@@ -327,10 +319,6 @@ fn now_ms() -> i64 {
 }
 
 impl AppManager {
-    pub fn rev(&self) -> u64 {
-        self.rev.load(Ordering::Relaxed)
-    }
-
     /// 启动一个应用。已经在跑就直接返回原 pid（幂等，按钮点两下不会起两个进程）。
     pub async fn start(self: &Arc<Self>, app: &AppConfig, base_dir: &std::path::Path) -> anyhow::Result<u32> {
         let mut g = self.inner.lock().await;
@@ -392,7 +380,6 @@ impl AppManager {
         trim_logs(&mut rt.logs);
         drop(g);
 
-        self.rev.fetch_add(1, Ordering::Relaxed);
         tracing::info!(app = %app.name, pid, cmd = %cmd_line, "应用已启动");
         Ok(pid)
     }
@@ -438,7 +425,6 @@ impl AppManager {
             .push_back(format!("[{}] 已停止", short_time(now_ms())));
         trim_logs(&mut rt.logs);
         drop(g);
-        self.rev.fetch_add(1, Ordering::Relaxed);
         Ok(true)
     }
 

@@ -9,7 +9,14 @@
 <style>
   :root{
     /* 品牌图内嵌为 data URI：网关只有这一个 HTML，不该为一张 1.8KB 的图标再开一个请求 */
-    --logo:url("data:image/png;base64,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");
+    --brand:url("data:image/png;base64,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");
+    /* 三个图标默认都指向内置品牌图；上传自定义的就覆盖对应的那一个。
+       共用一份 data URI，不在 HTML 里复制三遍。 */
+    --logo-rail:var(--brand);
+    --logo-login:var(--brand);
+    --loading:none;
+    /* 主按钮上的文字色：主题色偏浅时白字看不清，由脚本按亮度切换 */
+    --on-accent:#fff;
     /* 必须显式声明 color-scheme：否则原生控件（checkbox/select）会跟随系统偏好，
        在浅色页面上被画成暗色方块 */
     color-scheme: light;
@@ -36,6 +43,15 @@
   }
   *{box-sizing:border-box}
   html,body{margin:0;padding:0;height:100%;overflow:hidden}
+  /* 背景图铺在 body 上，再压一层半透明底色：
+     纯图片会让 --bg 区域上的说明文字直接糊掉，加层纱既看得见图又看得清字。 */
+  body.custom-bg{
+    background-image:linear-gradient(rgba(244,246,249,.76),rgba(244,246,249,.76)), var(--bg-img);
+    background-position:center, center;
+    background-size:cover, cover;
+    background-attachment:fixed, fixed;
+    background-repeat:no-repeat, no-repeat;
+  }
   body{
     background:var(--bg);color:var(--ink);
     font-family:var(--sans);font-size:14px;line-height:1.5;
@@ -49,17 +65,22 @@
   .rail{width:76px;flex:0 0 76px;background:var(--panel);border-right:1px solid var(--line);
     display:flex;flex-direction:column;align-items:center;height:100%}
   .rail-logo{width:34px;height:34px;margin:14px 0 14px;
-    background:var(--logo) center/contain no-repeat}
-  .rail-nav{display:flex;flex-direction:column;width:100%;gap:1px}
-  .rail-item{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;
-    padding:9px 0;color:var(--ink-2);font-size:10.5px;cursor:pointer;border:0;background:none;font-family:inherit}
+    background:var(--logo-rail) center/contain no-repeat}
+  /* 导航项多起来之后会超出视口：只让菜单区滚动，品牌位和版本号钉住。
+     否则最后一项会被裁掉一半——点了也点不到。 */
+  .rail-nav{display:flex;flex-direction:column;width:100%;gap:1px;
+    flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;scrollbar-width:none}
+  .rail-nav::-webkit-scrollbar{width:0;height:0}
+  .rail-item{position:relative;display:flex;flex-direction:column;align-items:center;gap:3px;
+    padding:8px 0;color:var(--ink-2);font-size:10.5px;cursor:pointer;border:0;background:none;font-family:inherit;
+    flex:0 0 auto}
   .rail-item svg{width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fill:none}
   .rail-item{transition:background .14s,color .14s,transform .06s}
   .rail-item:hover{background:var(--hover);color:var(--ink)}
   .rail-item:active{transform:scale(.96)}
   .rail-item.active{color:var(--blue);background:var(--blue-soft);font-weight:600}
   .rail-item.active::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--blue)}
-  .rail-foot{margin:auto 0 12px;font:400 10px/1 var(--mono);color:var(--ink-3);writing-mode:vertical-rl}
+  .rail-foot{margin:8px 0 12px;font:400 10px/1 var(--mono);color:var(--ink-3);writing-mode:vertical-rl}
   .main{flex:1;min-width:0;display:flex;flex-direction:column;height:100%}
   .topbar{height:48px;flex:0 0 48px;background:var(--panel);border-bottom:1px solid var(--line);
     display:flex;align-items:center;justify-content:space-between;padding:0 20px;z-index:30}
@@ -114,8 +135,8 @@
   .danger-btn{color:var(--red)}
   .danger-btn:hover{color:var(--red);border-color:var(--red);background:var(--red-soft)}
   .btn:hover{border-color:var(--blue);color:var(--blue)}
-  .btn-primary{background:var(--blue);border-color:var(--blue);color:#fff}
-  .btn-primary:hover{background:var(--blue-d);border-color:var(--blue-d);color:#fff}
+  .btn-primary{background:var(--blue);border-color:var(--blue);color:var(--on-accent)}
+  .btn-primary:hover{background:var(--blue-d);border-color:var(--blue-d);color:var(--on-accent)}
   .btn-sm{height:26px;padding:0 9px;font-size:12px}
   .link{border:0;background:none;padding:0;cursor:pointer;font-family:inherit;font-size:12.5px;color:var(--blue)}
   .link:hover{text-decoration:underline}
@@ -201,6 +222,9 @@
   .an-mask-t{font-size:11.5px;color:var(--ink-2)}
   .spin{width:22px;height:22px;border-radius:50%;border:2px solid var(--line-2);
     border-top-color:var(--blue);animation:spin .7s linear infinite}
+  /* 自定义加载图标：把转圈换成图，仍然转——不转的话用户不知道是在加载还是卡住了 */
+  body.custom-loading .spin{border:0;border-radius:0;background:var(--loading) center/contain no-repeat;
+    animation:spin .9s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
   .an-tile{border:1px solid var(--line);border-radius:var(--r);background:var(--panel);padding:10px 12px;cursor:pointer}
   .an-tile:hover{border-color:var(--blue)}
@@ -250,6 +274,31 @@
   @keyframes flash{0%{box-shadow:0 0 0 2px var(--blue),0 0 0 6px var(--blue-soft)}100%{box-shadow:0 0 0 0 transparent}}
   .app-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ink-3);margin-right:5px}
   .app-dot.on{background:var(--green);box-shadow:0 0 0 3px rgba(0,168,112,.14)}
+  .dev-row{display:grid;grid-template-columns:minmax(140px,380px) 150px 110px 100px 96px;
+    gap:12px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line);font-size:12.5px;
+    justify-content:start}
+  .dev-head{color:var(--ink-3);font-size:11px;letter-spacing:.03em;padding-bottom:5px}
+  .dev-row:last-child{border-bottom:0}
+  .dev-ua{color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dev-cur{font-size:10.5px;font-weight:600;color:var(--blue);background:var(--blue-soft);
+    border-radius:var(--r);padding:1px 5px;margin-left:4px}
+  .brand-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px}
+  .brand-cell{border:1px solid var(--line);border-radius:var(--r);padding:10px;background:var(--panel)}
+  .brand-cell .bt{font-size:12px;font-weight:600;color:var(--ink);margin-bottom:2px}
+  .brand-cell .bd{font-size:11px;color:var(--ink-3);margin-bottom:8px;min-height:28px}
+  .brand-prev{display:flex;align-items:center;justify-content:center;height:72px;border-radius:var(--r);
+    border:1px dashed var(--line-2);background:var(--bg);margin-bottom:8px;overflow:hidden}
+  .brand-prev img{max-width:100%;max-height:100%;object-fit:contain}
+  .brand-prev .none{font-size:11px;color:var(--ink-3)}
+  .brand-acts{display:flex;gap:6px}
+  .swatches{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+  .swatch{width:20px;height:20px;border-radius:50%;border:1px solid rgba(0,0,0,.12);cursor:pointer;padding:0}
+  .swatch.on{box-shadow:0 0 0 2px var(--panel),0 0 0 4px var(--blue)}
+  .seg{display:inline-flex;border:1px solid var(--line-2);border-radius:var(--r);overflow:hidden}
+  .seg button{border:0;background:var(--panel);color:var(--ink-2);font:inherit;font-size:12px;
+    padding:5px 12px;cursor:pointer}
+  .seg button + button{border-left:1px solid var(--line-2)}
+  .seg button.on{background:var(--blue-soft);color:var(--blue);font-weight:600}
   .acl-row{display:grid;grid-template-columns:92px minmax(180px,1.1fr) minmax(120px,1fr) 76px 32px;
     gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid var(--line)}
   .acl-row select,.acl-row input{width:100%;height:28px;padding:0 7px;border:1px solid var(--line-2);
@@ -412,11 +461,21 @@
 
   /* 登录 */
   #login{position:fixed;inset:0;z-index:100;background:var(--bg);display:none;align-items:center;justify-content:center}
+  /* 这层遮罩要把自定义背景一起画出来，但不能只是透明——
+     透明会让登录框浮在"已经渲染了一半的控制台"上面，比不显示背景更难看。
+     所以这里复制 body 的那两层背景，保持它是不透明的。 */
+  body.custom-bg #login{
+    background-image:linear-gradient(rgba(244,246,249,.76),rgba(244,246,249,.76)), var(--bg-img);
+    background-position:center, center;
+    background-size:cover, cover;
+    background-attachment:fixed, fixed;
+    background-repeat:no-repeat, no-repeat;
+  }
   #login.show{display:flex}
   .loginbox{width:340px;background:var(--panel);border:1px solid var(--line);padding:24px}
   .loginbox .logo{display:flex;align-items:center;gap:9px;margin-bottom:18px}
   .loginbox .logo i{width:30px;height:30px;font-style:normal;
-    background:var(--logo) center/contain no-repeat}
+    background:var(--logo-login) center/contain no-repeat}
   .loginbox h1{margin:0;font-size:15px;font-weight:600}
   .loginbox .sub{font-size:11.5px;color:var(--ink-3);margin:2px 0 0}
   .loginbox .field{margin-bottom:10px}
@@ -492,6 +551,10 @@
       <button class="rail-item" data-page="p-security">
         <svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="10"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
         <span data-i18n="nav.security">安全</span>
+      </button>
+      <button class="rail-item" data-page="p-look">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="8.6" r="1.4"/><circle cx="8.4" cy="13" r="1.4"/><circle cx="15.6" cy="13" r="1.4"/></svg>
+        <span data-i18n="nav.look">外观</span>
       </button>
     </nav>
     <div class="rail-foot" id="rail-ver">v0.2.0</div>
@@ -1118,6 +1181,50 @@
       </section>
 
       <!-- ================= 安全 ================= -->
+      <section class="page" id="p-look">
+        <div class="sec-head">
+          <h2 data-i18n="look.title">外观</h2>
+          <span class="sec-hint" data-i18n="look.hint">全部存在服务端，换台设备打开也是这一套</span>
+          <span style="flex:1"></span>
+          <button class="btn btn-sm" id="btn-look-reset" data-i18n="look.reset">恢复默认</button>
+          <button class="btn btn-primary btn-sm" id="btn-look-save" data-i18n="btn.save">保存</button>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3 data-i18n="look.theme">主题</h3><span class="sec-hint" id="look-stat">—</span></div>
+          <div class="card-body">
+            <div class="fields" style="max-width:860px">
+              <div class="field"><label data-i18n="look.accent">主题色</label>
+                <div style="display:flex;gap:8px;align-items:center">
+                  <input type="color" id="f-look-accent" value="#0052d9"
+                    style="width:40px;height:28px;padding:0;border:1px solid var(--line-2);border-radius:var(--r);background:var(--panel);cursor:pointer">
+                  <input type="text" id="f-look-hex" class="mono" maxlength="7" value="#0052d9" style="width:110px">
+                </div>
+                <div class="swatches" id="look-swatches"></div>
+              </div>
+              <div class="field"><label data-i18n="look.chart">统计图样式</label>
+                <div class="seg" id="look-seg">
+                  <button type="button" data-style="line" data-i18n="look.chart.line">折线</button>
+                  <button type="button" data-style="bar" data-i18n="look.chart.bar">柱状</button>
+                </div>
+              </div>
+            </div>
+            <p class="note" id="look-note" style="margin-top:8px"></p>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <div class="card-head"><h3 data-i18n="look.images">图片</h3>
+            <span class="sec-hint" data-i18n="look.imm">上传即生效，不用点保存</span></div>
+          <div class="card-body">
+            <div class="brand-grid" id="look-assets"></div>
+            <input type="file" id="look-file" style="display:none"
+              accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml,image/x-icon,image/vnd.microsoft.icon">
+            <p class="note" data-i18n="look.img.note">图标建议 64×64 左右的透明 PNG；背景图会铺满并压一层浅色蒙版，保证文字仍然看得清。单张上限 4 MB。</p>
+          </div>
+        </div>
+      </section>
+
       <section class="page" id="p-security">
         <div class="sec-head">
           <h2 data-i18n="sc.title">管理面安全</h2>
@@ -1181,6 +1288,35 @@
             </div>
           </div>
         </div>
+
+        <div class="card" style="margin-top:12px">
+          <div class="card-head">
+            <h3 data-i18n="sc.devices">登录设备</h3>
+            <span class="sec-hint" id="dev-hint">—</span>
+            <span class="spacer"></span>
+            <button class="btn btn-sm" id="btn-dev-reload" data-i18n="sc.dev.reload">刷新</button>
+            <button class="btn btn-sm" id="btn-dev-others" data-i18n="sc.dev.kickothers">其它设备全部下线</button>
+          </div>
+          <div class="card-body">
+            <div class="dev-row dev-head">
+              <span data-i18n="sc.dev.h.device">设备</span>
+              <span data-i18n="sc.dev.h.ip">来源</span>
+              <span data-i18n="sc.dev.h.seen">最近活跃</span>
+              <span data-i18n="sc.dev.h.exp">到期</span>
+              <span></span>
+            </div>
+            <div id="dev-list"></div>
+            <div class="formfoot" style="margin-top:10px">
+              <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-2);cursor:pointer">
+                <input type="checkbox" id="f-single-session">
+                <span data-i18n="sc.dev.single">单点登录：新登录顶掉其它设备上的会话</span>
+              </label>
+              <span class="spacer"></span>
+              <button class="btn btn-sm" id="btn-dev-save" data-i18n="btn.save">保存</button>
+            </div>
+            <p class="note" data-i18n="sc.dev.note">会话存在内存里，进程重启即全部失效。列表只显示 IP 与客户端类型——完整令牌不会出现在任何响应里。</p>
+          </div>
+        </div>
       </section>
     </main>
   </div>
@@ -1201,6 +1337,25 @@
       "login.submit":"登录","login.failed":"登录失败",
       "nav.overview":"概览","nav.routes":"路由","nav.waf":"WAF","nav.backends":"后端","nav.config":"配置",
       "nav.history":"历史","nav.security":"安全",
+      "nav.look":"外观",
+      "look.title":"外观","look.hint":"全部存在服务端，换台设备打开也是这一套",
+      "look.reset":"恢复默认","look.theme":"主题","look.accent":"主题色","look.chart":"统计图样式",
+      "look.chart.line":"折线","look.chart.bar":"柱状",
+      "look.accent.note":"深浅两档由主色自动推出来，不用另外配。",
+      "look.warn.light":"这个颜色太浅（或太深），文字和按钮的对比度会不够——能看清就继续用，看不清就换一个。",
+      "look.images":"图片","look.imm":"上传即生效，不用点保存",
+      "look.img.note":"图标建议 64×64 左右的透明 PNG；背景图会铺满并压一层浅色蒙版，保证文字仍然看得清。单张上限 4 MB。",
+      "look.k.bg":"背景图","look.k.bg.d":"铺满整个控制台，带一层浅色蒙版",
+      "look.k.loading":"加载图标","look.k.loading.d":"等待数据时旋转的那一个",
+      "look.k.login":"登录页图标","look.k.login.d":"登录框左上角，未登录时也要能显示",
+      "look.k.rail":"左上角图标","look.k.rail.d":"侧边栏顶部，登录后的品牌位",
+      "look.builtin":"内置","look.pick":"选择图片","look.drop":"移除",
+      "look.on":"已启用自定义外观","look.off":"当前是内置外观",
+      "look.saved":"外观已保存","look.save.failed":"保存失败","look.badhex":"主题色要写成 #rrggbb",
+      "look.reset.ok":"已恢复默认外观","look.toobig":"图片超过 4 MB",
+      "look.up.ok":"图片已更新","look.up.failed":"上传失败","look.up.readerr":"读取文件失败",
+      "look.dropped":"已移除，回到内置图标","look.drop.failed":"移除失败",
+
       "btn.reload":"热重载","btn.logout":"退出","btn.save":"保存","btn.write":"写入",
       "btn.restore":"恢复","btn.preview":"预览","btn.cancel":"取消","btn.saving":"保存中",
       "status.live":"在线","status.offline":"离线",
@@ -1374,6 +1529,15 @@
       "hs.empty.snapshots":"还没有快照","hs.empty.audit":"还没有事件",
       "hs.restored":"已回溯到快照","hs.deleted":"快照已删除","hs.cleared":"审计日志已清空",
       "hs.confirm.restore":"确认回溯到 {id} ？当前配置会被覆盖。",
+      "sc.devices":"登录设备","sc.dev.reload":"刷新","sc.dev.kickothers":"其它设备全部下线",
+      "sc.dev.h.device":"设备","sc.dev.h.ip":"来源地址","sc.dev.h.seen":"最近活跃","sc.dev.h.exp":"到期",
+      "sc.dev.single":"单点登录：新登录顶掉其它设备上的会话",
+      "sc.dev.note":"会话存在内存里，进程重启即全部失效。列表只显示 IP 与客户端类型——完整令牌不会出现在任何响应里。",
+      "sc.dev.count":"{n} 台在线","sc.dev.empty":"还没有在线会话","sc.dev.current":"当前","sc.dev.thisone":"就是这里",
+      "sc.dev.seen":"最近 {t}","sc.dev.exp":"剩余 {t}","sc.dev.kick":"下线",
+      "sc.dev.kicked":"已下线该设备","sc.dev.gone":"该会话已经不存在了",
+      "sc.dev.kickedothers":"已下线 {n} 个会话","sc.dev.saved":"单点登录设置已保存","sc.dev.fail":"操作失败",
+      "dev.now":"刚刚","dev.min":"{n} 分钟前","dev.hour":"{n} 小时前","dev.day":"{n} 天前",
       "sc.title":"管理面安全","sc.auth":"登录与口令","sc.newpass":"新口令（≥8 位）",
       "sc.newpass.note":"落盘只存 argon2 哈希，明文不落任何地方。","sc.changepass":"改口令",
       "sc.totp":"二次验证 (TOTP)","sc.gen":"生成密钥","sc.totp.note":"用 Google Authenticator / 1Password 扫码或手输 Base32。",
@@ -1456,6 +1620,25 @@
       "login.submit":"Sign in","login.failed":"Sign-in failed",
       "nav.overview":"Overview","nav.routes":"Routes","nav.waf":"WAF","nav.backends":"Backends","nav.config":"Config",
       "nav.history":"History","nav.security":"Security",
+      "nav.look":"Appearance",
+      "look.title":"Appearance","look.hint":"Stored on the server — the same look on every device you open it from",
+      "look.reset":"Reset","look.theme":"Theme","look.accent":"Accent color","look.chart":"Chart style",
+      "look.chart.line":"Line","look.chart.bar":"Bar",
+      "look.accent.note":"The darker and lighter shades are derived from the accent — nothing else to configure.",
+      "look.warn.light":"This color is very light (or very dark); text and button contrast may suffer. Keep it if it reads fine, otherwise pick another.",
+      "look.images":"Images","look.imm":"Applies immediately — no need to save",
+      "look.img.note":"Icons work best as ~64×64 transparent PNGs. Backgrounds are cover-fitted with a light wash so text stays readable. 4 MB per file.",
+      "look.k.bg":"Background","look.k.bg.d":"Covers the console, under a light wash",
+      "look.k.loading":"Loading spinner","look.k.loading.d":"Shown while waiting for data",
+      "look.k.login":"Login logo","look.k.login.d":"Top-left of the login box, visible before sign-in",
+      "look.k.rail":"Rail logo","look.k.rail.d":"Top of the sidebar after sign-in",
+      "look.builtin":"built-in","look.pick":"Choose image","look.drop":"Remove",
+      "look.on":"Custom appearance enabled","look.off":"Using the built-in appearance",
+      "look.saved":"Appearance saved","look.save.failed":"Save failed","look.badhex":"Accent must be #rrggbb",
+      "look.reset.ok":"Reverted to the built-in appearance","look.toobig":"Image exceeds 4 MB",
+      "look.up.ok":"Image updated","look.up.failed":"Upload failed","look.up.readerr":"Could not read the file",
+      "look.dropped":"Removed, back to the built-in icon","look.drop.failed":"Remove failed",
+
       "btn.reload":"Reload","btn.logout":"Sign out","btn.save":"Save","btn.write":"Write",
       "btn.restore":"Restore","btn.preview":"Preview","btn.cancel":"Cancel","btn.saving":"Saving",
       "status.live":"Live","status.offline":"Offline",
@@ -1629,6 +1812,15 @@
       "hs.empty.snapshots":"No snapshots yet","hs.empty.audit":"No events yet",
       "hs.restored":"Restored","hs.deleted":"Snapshot deleted","hs.cleared":"Audit log cleared",
       "hs.confirm.restore":"Restore {id}? Current config will be overwritten.",
+      "sc.devices":"Signed-in devices","sc.dev.reload":"Refresh","sc.dev.kickothers":"Sign out everywhere else",
+      "sc.dev.h.device":"Device","sc.dev.h.ip":"From","sc.dev.h.seen":"Last active","sc.dev.h.exp":"Expires",
+      "sc.dev.single":"Single session: a new sign-in drops sessions on other devices",
+      "sc.dev.note":"Sessions live in memory and vanish on restart. Only IP and client type are shown — the token itself never appears in any response.",
+      "sc.dev.count":"{n} online","sc.dev.empty":"No active sessions","sc.dev.current":"current","sc.dev.thisone":"this one",
+      "sc.dev.seen":"active {t}","sc.dev.exp":"{t} left","sc.dev.kick":"Sign out",
+      "sc.dev.kicked":"Device signed out","sc.dev.gone":"That session no longer exists",
+      "sc.dev.kickedothers":"Signed out {n} session(s)","sc.dev.saved":"Single-session setting saved","sc.dev.fail":"Action failed",
+      "dev.now":"just now","dev.min":"{n} min ago","dev.hour":"{n} h ago","dev.day":"{n} d ago",
       "sc.title":"Admin Security","sc.auth":"Login & Password","sc.newpass":"New password (≥8)",
       "sc.newpass.note":"Only the argon2 hash is stored; plaintext never touches disk.","sc.changepass":"Change",
       "sc.totp":"Two-factor (TOTP)","sc.gen":"Generate secret","sc.totp.note":"Import the Base32 secret into any TOTP app.",
@@ -1737,7 +1929,7 @@
     rankLimit:(function(){ var v = localStorage.getItem("optical.rankLimit"); return v === null ? 10 : Number(v); })(),
     filters:[], rank:null, rules:null, cards:null, sites:null, fw:null, tls:null,
     appsDraft:null, appStatus:null,
-    pending:{}, cmdSeq:0, gsHits:[], relOpen:-1, openLogs:{},
+    pending:{}, cmdSeq:0, gsHits:[], relOpen:-1, openLogs:{}, chartStyle:"line", look:null,
     editing:false, editTimer:null, pendingRev:null, remoteToastShown:false,
     maskTimer:null, maskShown:false, maskGuard:null
   };
@@ -1827,7 +2019,7 @@
     "/api/status":"status", "/api/metrics":"metrics", "/api/config":"config",
     "/api/backends":"backends", "/api/apps":"apps", "/api/firewall":"firewall",
     "/api/tls":"tls", "/api/snapshots":"snapshots", "/api/audit":"audit",
-    "/api/ipfilter":"ipfilter"
+    "/api/ipfilter":"ipfilter", "/api/sessions":"sessions"
   };
 
   var pendingApi = 0;
@@ -1919,7 +2111,13 @@
     if (!n) return "0 B";
     var u=["B","KiB","MiB","GiB","TiB"], i=0, v=n;
     while (v>=1024 && i<u.length-1){ v/=1024; i++; }
-    return (i===0? v : v.toFixed(2)) + " " + u[i];
+    // 字节这一档以前直接吐原值：带宽是速率，天然带小数，
+    // 于是出现 256.06666666666666 B/s 这种东西。一律取整：
+    // 个位数保留两位（0.53 B/s 有意义），其余全进整数。
+    var shown;
+    if (i === 0) shown = v < 10 ? Math.round(v * 100) / 100 : Math.round(v);
+    else shown = v.toFixed(2);
+    return shown + " " + u[i];
   }
   function fmtUptime(s){
     s=Math.max(0,s|0);
@@ -2076,14 +2274,32 @@
       var label = n > 0 ? xLabel(pts[idx].t) : "--";
       out += '<text class="xl" x="'+tx.toFixed(1)+'" y="'+(H-8)+'" text-anchor="'+anchor+'">'+label+'</text>';
     }
-    ss.forEach(function(s){
-      var poly = [];
-      if (n === 0) poly = [[x0, y1], [x1, y1]];
-      else if (n === 1) poly = [[x0, yOf(s.data[0])], [x1, yOf(s.data[0])]];
-      else for (var i = 0; i < n; i++) poly.push([xOf(i), yOf(s.data[i])]);
-      out += '<polyline points="'+poly.map(function(p){ return p[0].toFixed(1)+","+p[1].toFixed(1); }).join(" ")+
-             '" fill="none" stroke="'+s.color+'" stroke-width="1.6" stroke-linejoin="round"/>';
-    });
+    if (state.chartStyle === "bar"){
+      // 柱状：多序列并排。槽宽取相邻点的像素间距，柱子中心正好落在 xOf(i) 上，
+      // 这样十字线和悬浮点跟折线模式对得齐——两种样式共用同一套坐标才不会有偏差。
+      var gap = n > 1 ? (x1 - x0) / (n - 1) : (x1 - x0);
+      var groupW = Math.max(2, Math.min(gap * 0.66, 26));
+      var barW = Math.max(1, groupW / Math.max(1, ss.length));
+      ss.forEach(function(s, si){
+        for (var i = 0; i < n; i++){
+          var v = s.data[i] || 0;
+          var bh = Math.max(v > 0 ? 1 : 0, y1 - yOf(v));
+          var cx = n > 1 ? xOf(i) : (x0 + x1) / 2;
+          var bx = cx - groupW / 2 + barW * si;
+          out += '<rect x="'+bx.toFixed(1)+'" y="'+(y1-bh).toFixed(1)+'" width="'+(barW*0.86).toFixed(1)+
+                 '" height="'+bh.toFixed(1)+'" fill="'+s.color+'" rx="1"/>';
+        }
+      });
+    } else {
+      ss.forEach(function(s){
+        var poly = [];
+        if (n === 0) poly = [[x0, y1], [x1, y1]];
+        else if (n === 1) poly = [[x0, yOf(s.data[0])], [x1, yOf(s.data[0])]];
+        else for (var i = 0; i < n; i++) poly.push([xOf(i), yOf(s.data[i])]);
+        out += '<polyline points="'+poly.map(function(p){ return p[0].toFixed(1)+","+p[1].toFixed(1); }).join(" ")+
+               '" fill="none" stroke="'+s.color+'" stroke-width="1.6" stroke-linejoin="round"/>';
+      });
+    }
     var hi = state.hoverIdx;
     if (hi != null && n > 0 && hi < n){
       var hx = xOf(hi);
@@ -3351,6 +3567,332 @@
     '</div>';
   }
 
+  // ---------- 登录设备 ----------
+  function ago(ms){
+    if (!ms) return "—";
+    var d = Date.now() - ms;
+    if (d < 0) d = 0;
+    var m = Math.floor(d / 60000);
+    if (m < 1) return t("dev.now");
+    if (m < 60) return t("dev.min", {n: m});
+    var h = Math.floor(m / 60);
+    if (h < 24) return t("dev.hour", {n: h});
+    return t("dev.day", {n: Math.floor(h / 24)});
+  }
+  function leftTime(secs){
+    var s2 = Number(secs) || 0;
+    if (s2 >= 3600) return Math.floor(s2 / 3600) + "h " + Math.floor(s2 % 3600 / 60) + "m";
+    if (s2 >= 60) return Math.floor(s2 / 60) + "m";
+    return s2 + "s";
+  }
+
+  function renderSessions(d){
+    var box = $("dev-list");
+    if (!box) return;
+    d = d || {};
+    if ($("f-single-session")) $("f-single-session").checked = !!d.single_session;
+    var rows = d.sessions || [];
+    if ($("dev-hint")) $("dev-hint").textContent = t("sc.dev.count", {n: rows.length});
+    if ($("sc-sessions")) $("sc-sessions").textContent = t("sc.dev.count", {n: rows.length});
+    if (!rows.length){
+      box.innerHTML = '<div class="note">' + esc(t("sc.dev.empty")) + '</div>';
+      return;
+    }
+    box.innerHTML = rows.map(function(s){
+      return '<div class="dev-row">'+
+        '<span class="dev-ua">'+esc(s.ua||"—")+
+          (s.current ? ' <b class="dev-cur">'+esc(t("sc.dev.current"))+'</b>' : '')+'</span>'+
+        '<span class="mono" style="font-size:12px">'+esc(s.ip||"—")+'</span>'+
+        '<span class="note">'+esc(t("sc.dev.seen", {t: ago(s.last_seen_ms)}))+'</span>'+
+        '<span class="note">'+esc(t("sc.dev.exp", {t: leftTime(s.expires_in)}))+'</span>'+
+        (s.current
+          ? '<span class="note">' + esc(t("sc.dev.thisone")) + '</span>'
+          : '<button class="btn btn-sm danger-btn" data-kick="'+esc(s.id)+'">'+esc(t("sc.dev.kick"))+'</button>')+
+        '</div>';
+    }).join("");
+  }
+
+  function loadSessions(){
+    return api("/api/sessions").then(renderSessions).catch(function(){});
+  }
+
+  // ---------- 外观 ----------
+  // 图片不存进配置：文件落在 data_dir/branding/，URL 带 mtime 版本号。
+  // 配置里只留主题色和图表样式这两个标量。
+  var LOOK_KINDS = [
+    {k:"bg",      t:"look.k.bg",      d:"look.k.bg.d",      wide:true},
+    {k:"loading", t:"look.k.loading", d:"look.k.loading.d"},
+    {k:"login",   t:"look.k.login",   d:"look.k.login.d"},
+    {k:"rail",    t:"look.k.rail",    d:"look.k.rail.d"}
+  ];
+  var LOOK_SWATCHES = ["#0052d9","#7c5cff","#00a870","#e34d59","#ed7b2f","#0f766e","#b45309","#1f2329"];
+
+  function hexOk(v){ return /^#[0-9a-fA-F]{6}$/.test(v || ""); }
+  function hexRgb(h){
+    var n = parseInt(h.slice(1), 16);
+    return [(n>>16)&255, (n>>8)&255, n&255];
+  }
+  function rgbHex(r,g,b){
+    return "#" + [r,g,b].map(function(x){
+      x = Math.max(0, Math.min(255, Math.round(x)));
+      return (x < 16 ? "0" : "") + x.toString(16);
+    }).join("");
+  }
+  // 把颜色往 target 混 amt：主题色的深浅两档都从主色算出来，
+  // 不写死第二第三个颜色，换主色才不会出现"按钮是新的、hover 还是旧的"。
+  function mixHex(h, target, amt){
+    var a = hexRgb(h), b = hexRgb(target);
+    return rgbHex(a[0]+(b[0]-a[0])*amt, a[1]+(b[1]-a[1])*amt, a[2]+(b[2]-a[2])*amt);
+  }
+  function luma(h){
+    var c = hexRgb(h);
+    return (0.299*c[0] + 0.587*c[1] + 0.114*c[2]) / 255;
+  }
+
+  function applyLook(d){
+    var root = document.documentElement.style;
+    var on = !!(d && d.enabled);
+    var accent = (on && hexOk(d.accent)) ? d.accent : "#0052d9";
+    root.setProperty("--blue", accent);
+    root.setProperty("--blue-d", mixHex(accent, "#000000", 0.20));
+    root.setProperty("--blue-soft", mixHex(accent, "#ffffff", 0.90));
+    // 亮色主题色配白字会糊成一片，按亮度把按钮文字翻成深色
+    root.setProperty("--on-accent", luma(accent) > 0.62 ? "#1b222e" : "#ffffff");
+
+    function put(name, url){
+      if (on && url) root.setProperty(name, 'url("' + url + '")');
+      else root.removeProperty(name);
+    }
+    put("--logo-rail", d && d.rail);
+    put("--logo-login", d && d.login);
+    put("--loading", d && d.loading);
+    put("--bg-img", d && d.bg);
+
+    var hasBg = !!(on && d && d.bg);
+    document.body.classList.toggle("custom-bg", hasBg);
+    document.body.classList.toggle("custom-loading", !!(on && d && d.loading));
+
+    state.chartStyle = (on && d && d.chart_style === "bar") ? "bar" : "line";
+    // 已经画过图就立刻按新样式重绘，否则要等下一次推送才变
+    if (state.status) { try { drawChart(); } catch(e){} }
+  }
+
+  // 图片格子 + 状态副标题：可以随便重画，不碰任何输入框
+  function renderLookAssets(d){
+    var box = $("look-assets");
+    if (!box) return;
+    d = d || state.look || {};
+    box.innerHTML = LOOK_KINDS.map(function(m){
+      var url = d[m.k] || "";
+      return '<div class="brand-cell">'+
+        '<div class="bt">' + esc(t(m.t)) + '</div>'+
+        '<div class="bd">' + esc(t(m.d)) + '</div>'+
+        '<div class="brand-prev" style="'+(m.wide?'height:86px':'')+'">'+
+          (url ? '<img src="'+esc(url)+'" alt="">' : '<span class="none">'+esc(t("look.builtin"))+'</span>')+
+        '</div>'+
+        '<div class="brand-acts">'+
+          '<button class="btn btn-sm" data-look-pick="'+m.k+'">'+esc(t("look.pick"))+'</button>'+
+          (url ? '<button class="btn btn-sm danger-btn" data-look-drop="'+m.k+'">'+esc(t("look.drop"))+'</button>' : '')+
+        '</div></div>';
+    }).join("");
+    if ($("look-stat")){
+      $("look-stat").textContent = d.enabled ? t("look.on") : t("look.off");
+    }
+    var note = $("look-note");
+    if (note){
+      var a = d.accent || "#0052d9";
+      note.innerHTML = (luma(a) > 0.78 || luma(a) < 0.06)
+        ? '<span style="color:var(--amber)">' + esc(t("look.warn.light")) + '</span>'
+        : esc(t("look.accent.note"));
+    }
+  }
+
+  // 用服务端数据回填表单：只在真正加载时调用
+  function fillLookForm(d){
+    d = d || {};
+    if ($("f-look-accent")){
+      $("f-look-accent").value = d.accent || "#0052d9";
+      $("f-look-hex").value = d.accent || "#0052d9";
+    }
+    renderSwatches(d.accent || "#0052d9");
+    var seg = $("look-seg");
+    if (seg){
+      var style = (d.enabled && d.chart_style === "bar") ? "bar" : "line";
+      Array.prototype.forEach.call(seg.children, function(b){
+        b.classList.toggle("on", b.getAttribute("data-style") === style);
+      });
+    }
+  }
+
+  function renderLook(d){
+    renderLookAssets(d);
+    fillLookForm(d);
+  }
+
+  function renderSwatches(cur){
+    var box = $("look-swatches");
+    if (!box) return;
+    box.innerHTML = LOOK_SWATCHES.map(function(c){
+      return '<button class="swatch'+(c.toLowerCase()===String(cur).toLowerCase()?" on":"")+'" '+
+        'data-swatch="'+c+'" style="background:'+c+'" title="'+c+'"></button>';
+    }).join("");
+  }
+
+  function loadAppearance(){
+    // 不用 api()：这个接口是公开的，登录页就要用，走 WS 通道反而在登录前不可用
+    return fetch("/api/appearance", {credentials: "same-origin"})
+      .then(function(r){ return r.json(); })
+      .then(function(d){ state.look = d; applyLook(d); renderLook(d); return d; })
+      .catch(function(){});
+  }
+
+  function bindLook(){
+    if (!$("look-assets")) return;
+
+    $("look-assets").addEventListener("click", function(ev){
+      var pick = ev.target.closest("[data-look-pick]");
+      if (pick){
+        state.lookPick = pick.getAttribute("data-look-pick");
+        $("look-file").click();
+        return;
+      }
+      var drop = ev.target.closest("[data-look-drop]");
+      if (drop){
+        var kind = drop.getAttribute("data-look-drop");
+        var btn = drop;
+        setBusy(btn, true);
+        api("/api/appearance/asset/" + kind, {method: "DELETE"})
+          .then(function(d){
+            if (!d.ok) throw new Error(d.error || t("look.drop.failed"));
+            toast(t("look.dropped"), "ok");
+            return loadAppearance();
+          })
+          .catch(function(e){ toast(e.message, "err"); })
+          .finally(function(){ setBusy(btn, false); });
+      }
+    });
+
+    $("look-file").addEventListener("change", function(){
+      var f = this.files && this.files[0];
+      var kind = state.lookPick;
+      this.value = "";
+      if (!f || !kind) return;
+      if (f.size > 4 * 1024 * 1024){
+        toast(t("look.toobig"), "err");
+        return;
+      }
+      var r = new FileReader();
+      r.onload = function(){
+        var data = String(r.result || "");
+        // 上传成功后自动打开总开关：否则"传了图但界面没变"是必然的困惑
+        api("/api/appearance/upload", {
+          method: "POST", headers: {"content-type": "application/json"},
+          body: JSON.stringify({kind: kind, data: data})
+        }).then(function(d){
+          if (!d.ok) throw new Error(d.error || t("look.up.failed"));
+          toast(t("look.up.ok"), "ok");
+          if (!(state.look && state.look.enabled)){
+            return api("/api/appearance", {
+              method: "PUT", headers: {"content-type": "application/json"},
+              body: JSON.stringify({enabled: true})
+            }).then(loadAppearance);
+          }
+          return loadAppearance();
+        }).catch(function(e){ toast(e.message, "err"); });
+      };
+      r.onerror = function(){ toast(t("look.up.readerr"), "err"); };
+      r.readAsDataURL(f);
+    });
+
+    // 取色器与十六进制输入框互相同步；两个都改同一个状态，谁也别当权威
+    $("f-look-accent").addEventListener("input", function(){
+      $("f-look-hex").value = this.value;
+      renderSwatches(this.value);
+      previewLook();
+    });
+    $("f-look-hex").addEventListener("input", function(){
+      var v = this.value.trim();
+      if (hexOk(v)){
+        $("f-look-accent").value = v;
+        renderSwatches(v);
+        previewLook();
+      }
+    });
+    $("look-swatches").addEventListener("click", function(ev){
+      var b = ev.target.closest("[data-swatch]");
+      if (!b) return;
+      var c = b.getAttribute("data-swatch");
+      $("f-look-accent").value = c;
+      $("f-look-hex").value = c;
+      renderSwatches(c);
+      previewLook();
+    });
+    $("look-seg").addEventListener("click", function(ev){
+      var b = ev.target.closest("[data-style]");
+      if (!b) return;
+      Array.prototype.forEach.call(this.children, function(x){ x.classList.remove("on"); });
+      b.classList.add("on");
+      previewLook();
+    });
+
+    $("btn-look-save").addEventListener("click", function(){
+      saveLook(this);
+    });
+    $("btn-look-reset").addEventListener("click", function(){
+      var btn = this;
+      setBusy(btn, true);
+      api("/api/appearance", {
+        method: "PUT", headers: {"content-type": "application/json"},
+        body: JSON.stringify({enabled: false, accent: "#0052d9", chart_style: "line"})
+      }).then(function(d){
+        if (!d.ok) throw new Error(d.error || t("look.save.failed"));
+        toast(t("look.reset.ok"), "ok");
+        return loadAppearance();
+      }).catch(function(e){ toast(e.message, "err"); })
+        .finally(function(){ setBusy(btn, false); });
+    });
+  }
+
+  // 改动先即时预览（本地应用），点保存才写服务端。
+  // 不即时预览的话，选颜色等于盲选——选完还得保存再刷新才知道好不好看。
+  function previewLook(){
+    var accent = $("f-look-hex").value.trim();
+    if (!hexOk(accent)) accent = "#0052d9";
+    var seg = $("look-seg");
+    var style = "line";
+    Array.prototype.forEach.call(seg.children, function(b){
+      if (b.classList.contains("on")) style = b.getAttribute("data-style");
+    });
+    var d = {};
+    for (var k in (state.look || {})) d[k] = state.look[k];
+    d.enabled = true;
+    d.accent = accent;
+    d.chart_style = style;
+    applyLook(d);
+    // 只重画图片格子和状态行；输入框是用户正在操作的东西，不能回写
+    renderLookAssets(d);
+  }
+
+  function saveLook(btn){
+    var accent = $("f-look-hex").value.trim();
+    if (!hexOk(accent)){ toast(t("look.badhex"), "err"); return; }
+    var seg = $("look-seg");
+    var style = "line";
+    Array.prototype.forEach.call(seg.children, function(b){
+      if (b.classList.contains("on")) style = b.getAttribute("data-style");
+    });
+    setBusy(btn, true);
+    api("/api/appearance", {
+      method: "PUT", headers: {"content-type": "application/json"},
+      body: JSON.stringify({enabled: true, accent: accent, chart_style: style})
+    }).then(function(d){
+      if (!d.ok) throw new Error(d.error || t("look.save.failed"));
+      toast(t("look.saved"), "ok");
+      return loadAppearance();
+    }).catch(function(e){ toast(e.message, "err"); })
+      .finally(function(){ setBusy(btn, false); });
+  }
+
   // ---------- 访问控制（IP 黑白名单）----------
   function aclRows(){
     if (!state.aclRows) state.aclRows = [];
@@ -4597,6 +5139,43 @@
     cfg.admin.max_failed_attempts=Number($("f-admin-max").value)||5;
     save(cfg, t("sc.saved"), this);
   });
+  // ---- 登录设备 ----
+  if ($("dev-list")){
+    $("btn-dev-reload").addEventListener("click", function(){ loadSessions(); });
+    $("dev-list").addEventListener("click", function(ev){
+      var b = ev.target.closest("[data-kick]");
+      if (!b) return;
+      var id = b.getAttribute("data-kick");
+      setBusy(b, true);
+      api("/api/sessions/" + encodeURIComponent(id), {method: "DELETE"})
+        .then(function(d){
+          if (!d.ok) throw new Error(d.error || t("sc.dev.fail"));
+          toast(d.removed ? t("sc.dev.kicked") : t("sc.dev.gone"), "ok");
+          return loadSessions();
+        })
+        .catch(function(e){ toast(e.message, "err"); })
+        .finally(function(){ setBusy(b, false); });
+    });
+    $("btn-dev-others").addEventListener("click", function(){
+      var btn = this;
+      setBusy(btn, true);
+      api("/api/sessions/others", {method: "DELETE"})
+        .then(function(d){
+          if (!d.ok) throw new Error(d.error || t("sc.dev.fail"));
+          toast(t("sc.dev.kickedothers", {n: d.removed || 0}), "ok");
+          return loadSessions();
+        })
+        .catch(function(e){ toast(e.message, "err"); })
+        .finally(function(){ setBusy(btn, false); });
+    });
+    // 单点登录是配置项，走的是和其它安全选项同一条保存路径
+    $("btn-dev-save").addEventListener("click", function(){
+      var cfg = clone();
+      cfg.admin.single_session = !!$("f-single-session").checked;
+      save(cfg, t("sc.dev.saved"), this).then(loadSessions);
+    });
+  }
+
   $("btn-pass-save").addEventListener("click", function(){
     var pw = $("f-newpass").value;
     if (pw.length < 8){ toast(t("sc.pass.short"), "err"); return; }
@@ -5034,6 +5613,8 @@
       $("crumb-now").textContent = label ? label.textContent : "";
       if (id==="p-history"){ loadSnapshots(); loadAudit(); }
       if (id==="p-acl"){ loadAcl(); }
+      if (id==="p-look"){ loadAppearance(); }
+      if (id==="p-security"){ loadSessions(); }
       if (id==="p-backends"){ loadConfig(); }
     });
   });
@@ -5082,7 +5663,11 @@
       bindSearch();
       bindPorts();
       bindAcl();
+      bindLook();
     }
+    // 外观先于鉴权拉：登录页的图标和主题色还没登录就得对，
+    // 否则每次打开都先闪一下默认蓝再变过来。
+    loadAppearance();
     return checkAuth().then(function(ok){
       if (!ok) return;
       return refreshAll().then(function(){

@@ -259,7 +259,6 @@ pub fn reset_self_signed(cfg: &TlsConfig, tls_dir: &Path, names: &[String]) -> R
 pub struct CertFacts {
     /// SAN 里的域名与 IP（没写 SAN 时退回 CN）
     pub names: Vec<String>,
-    pub subject: String,
     pub issuer: String,
     pub not_before: i64,
     pub not_after: i64,
@@ -308,7 +307,6 @@ pub fn parse_chain(cert_pem: &str) -> Result<CertFacts> {
 
     Ok(CertFacts {
         names,
-        subject: cert.subject().to_string(),
         issuer: cert.issuer().to_string(),
         not_before: cert.validity().not_before.timestamp(),
         not_after: cert.validity().not_after.timestamp(),

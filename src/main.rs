@@ -9,6 +9,7 @@
 //! 明确未交付：QUIC/HTTP3（需要完整 h3 协议栈，见 README「未实现」一节）。
 
 mod admin;
+mod appearance;
 mod apps;
 mod auth;
 mod backends;
