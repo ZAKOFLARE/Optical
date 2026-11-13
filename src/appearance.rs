@@ -32,6 +32,9 @@ pub struct AppearanceConfig {
     pub accent: String,
     /// `line` | `bar`
     pub chart_style: String,
+    /// 界面不透明度（百分比，55..100）。100 = 现在的实心面板；
+    /// 调低会透出自定义背景，代价是面板上的小字对比度会掉。
+    pub panel_alpha: u8,
 }
 
 impl Default for AppearanceConfig {
@@ -40,6 +43,7 @@ impl Default for AppearanceConfig {
             enabled: false,
             accent: default_accent(),
             chart_style: default_chart_style(),
+            panel_alpha: 100,
         }
     }
 }
@@ -56,6 +60,8 @@ impl AppearanceConfig {
         if self.chart_style != "bar" {
             self.chart_style = default_chart_style();
         }
+        // 低于 55% 就不是"透明"而是"看不见字"了，直接夹住
+        self.panel_alpha = self.panel_alpha.clamp(55, 100);
     }
 }
 
@@ -246,6 +252,8 @@ pub fn payload(cfg: &AppearanceConfig, data_dir: &Path) -> serde_json::Value {
         "enabled": cfg.enabled,
         "accent": cfg.accent,
         "chart_style": cfg.chart_style,
+        // 手改配置写成 0 也不会把面板变成全透明：出口这里再夹一次
+        "panel_alpha": cfg.panel_alpha.clamp(55, 100),
         "bg": get("bg"),
         "loading": get("loading"),
         "login": get("login"),
