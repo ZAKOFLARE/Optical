@@ -35,6 +35,9 @@ pub struct TlsMaterial {
     pub cert_path: Option<PathBuf>,
     pub self_signed: bool,
     pub versions: &'static str,
+    /// 配置的证书加载失败、退回自签时的原因。空 = 没降级。
+    /// 这个字段存在的意义就是"别让人对着一个 502 猜"。
+    pub degraded: Option<String>,
 }
 
 /// `tls_dir` 是自签证书的落盘目录（来自 `[paths] tls_dir`），
@@ -42,36 +45,85 @@ pub struct TlsMaterial {
 pub fn build_acceptor(cfg: &TlsConfig, tls_dir: &Path, base_dir: &Path) -> Result<TlsMaterial> {
     install_crypto_provider();
 
-    let (cert_pem, key_pem, self_signed, cert_path) = if cfg.cert.is_empty() || cfg.key.is_empty() {
-        let dir = tls_dir.to_path_buf();
-        std::fs::create_dir_all(&dir).ok();
-        let cert_path = dir.join("dev-cert.pem");
-        let key_path = dir.join("dev-key.pem");
-        if cert_path.exists() && key_path.exists() {
-            (
-                std::fs::read_to_string(&cert_path)?,
-                std::fs::read_to_string(&key_path)?,
-                true,
-                Some(cert_path),
-            )
-        } else {
-            // 自签也要把真实域名签进 SAN，否则 https://<域名> 上去永远是"证书不匹配"
-            let names = san_names(cfg);
-            let (cert_pem, key_pem) = generate_self_signed(&dir, &names, cfg.self_signed_days)?;
-            (cert_pem, key_pem, true, Some(cert_path))
+    let dir = tls_dir.to_path_buf();
+    std::fs::create_dir_all(&dir).ok();
+    let dev_cert = dir.join("dev-cert.pem");
+    let dev_key = dir.join("dev-key.pem");
+
+    // 自签（无论是"本来就要自签"还是"配置的证书废了"）都走同一条路：
+    // 把真实域名签进 SAN，否则 https://<域名> 上去永远报"证书不匹配"。
+    let self_signed_material = || -> Result<(String, String)> {
+        if dev_cert.exists() && dev_key.exists() {
+            if let (Ok(c), Ok(k)) = (
+                std::fs::read_to_string(&dev_cert),
+                std::fs::read_to_string(&dev_key),
+            ) {
+                return Ok((c, k));
+            }
         }
-    } else {
-        let cert_path = crate::config::resolve_one(&cfg.cert, base_dir);
-        let key_path = crate::config::resolve_one(&cfg.key, base_dir);
-        let cert = std::fs::read_to_string(&cert_path)
-            .with_context(|| format!("读取证书失败: {}", cert_path.display()))?;
-        let key = std::fs::read_to_string(&key_path)
-            .with_context(|| format!("读取私钥失败: {}", key_path.display()))?;
-        (cert, key, false, None)
+        generate_self_signed(&dir, &san_names(cfg), cfg.self_signed_days)
     };
 
+    let configured = !(cfg.cert.trim().is_empty() || cfg.key.trim().is_empty());
+    let mut degraded: Option<String> = None;
+
+    // 先把配置的证书读出来并验证能装载；坏了再决定是降级还是拒绝
+    let loaded: Option<(String, String)> = if configured {
+        let cert_path = crate::config::resolve_one(&cfg.cert, base_dir);
+        let key_path = crate::config::resolve_one(&cfg.key, base_dir);
+        let attempt = (|| -> Result<(String, String)> {
+            let cert = std::fs::read_to_string(&cert_path)
+                .with_context(|| format!("读取证书失败: {}", cert_path.display()))?;
+            let key = std::fs::read_to_string(&key_path)
+                .with_context(|| format!("读取私钥失败: {}", key_path.display()))?;
+            // 这里先试装一遍：私钥与证书不配对、算法不支持，都要在启动时暴露，
+            // 而不是等浏览器握手失败
+            build_config(cfg, &cert, &key)?;
+            Ok((cert, key))
+        })();
+        match attempt {
+            Ok(v) => Some(v),
+            Err(e) => {
+                if cfg.degrade == "strict" {
+                    return Err(e.context("TLS 证书不可用，且 tls.degrade = strict"));
+                }
+                degraded = Some(format!("{e:#}"));
+                tracing::error!(
+                    error = %format!("{e:#}"),
+                    "配置的 TLS 证书不可用，已退回自签证书继续服务（tls.degrade = self-signed）"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let (cert_pem, key_pem, self_signed, cert_path) = match loaded {
+        Some((c, k)) => (c, k, false, None),
+        None => {
+            let (c, k) = self_signed_material().context("自签证书生成失败")?;
+            (c, k, true, Some(dev_cert.clone()))
+        }
+    };
+
+    let server = build_config(cfg, &cert_pem, &key_pem)?;
+
+    Ok(TlsMaterial {
+        acceptor: TlsAcceptor::from(Arc::new(server)),
+        cert_path,
+        self_signed,
+        versions: if cfg.min_version == "1.3" { "TLS 1.3" } else { "TLS 1.2+" },
+        degraded,
+    })
+}
+
+/// 用一对 PEM 装出 rustls 配置。抽出来是为了"先验证再决定要不要降级"：
+/// 证书与私钥不配对这件事，只有真装一遍才知道。
+fn build_config(cfg: &TlsConfig, cert_pem: &str, key_pem: &str) -> Result<RustlsConfig> {
     let certs: Vec<CertificateDer<'static>> =
-        rustls_pemfile::certs(&mut cert_pem.as_bytes()).collect::<Result<_, _>>()
+        rustls_pemfile::certs(&mut cert_pem.as_bytes())
+            .collect::<Result<_, _>>()
             .context("解析证书 PEM 失败")?;
     let key = rustls_pemfile::private_key(&mut key_pem.as_bytes())
         .context("解析私钥 PEM 失败")?
@@ -97,13 +149,7 @@ pub fn build_acceptor(cfg: &TlsConfig, tls_dir: &Path, base_dir: &Path) -> Resul
 
     // 只允许 HTTP/1.1 与 h2，别把 ALPN 交给默认值
     server.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-
-    Ok(TlsMaterial {
-        acceptor: TlsAcceptor::from(Arc::new(server)),
-        cert_path,
-        self_signed,
-        versions: if cfg.min_version == "1.3" { "TLS 1.3" } else { "TLS 1.2+" },
-    })
+    Ok(server)
 }
 
 /// HTTPS 监听循环：先握手再交给同一套 handle。
@@ -511,6 +557,88 @@ mod tests {
         let params = rcgen::CertificateParams::new(list).unwrap();
         let cert = params.self_signed(&kp).unwrap();
         (cert.pem(), kp.serialize_pem())
+    }
+
+    fn tmpdir(tag: &str) -> PathBuf {
+        let p = std::env::temp_dir().join(format!(
+            "optical-tls-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn broken_cert_falls_back_to_self_signed_instead_of_killing_https() {
+        // 这是线上真实踩过的坑：证书路径写错 → 443 直接不监听 → CDN 回源失败 → 用户看到 502。
+        // 证书是"更好的锁"，不是"门本身"：锁坏了不该把门焊死。
+        let dir = tmpdir("degrade");
+        let mut cfg = TlsConfig::default();
+        cfg.enabled = true;
+        cfg.cert = "/nonexistent/cert.pem".into();
+        cfg.key = "/nonexistent/key.pem".into();
+        cfg.degrade = "self-signed".into();
+
+        let m = build_acceptor(&cfg, &dir, &dir).expect("证书坏了也要能起来");
+        assert!(m.self_signed, "应退回自签");
+        assert!(m.degraded.is_some(), "必须留下降级原因，否则又在让人猜");
+        assert!(m.degraded.unwrap().contains("证书"), "原因要说清是证书的问题");
+        assert!(dir.join("dev-cert.pem").exists(), "自签材料要落盘复用");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn strict_mode_refuses_to_start_without_a_usable_cert() {
+        let dir = tmpdir("strict");
+        let mut cfg = TlsConfig::default();
+        cfg.enabled = true;
+        cfg.cert = "/nonexistent/cert.pem".into();
+        cfg.key = "/nonexistent/key.pem".into();
+        cfg.degrade = "strict".into();
+        match build_acceptor(&cfg, &dir, &dir) {
+            Ok(_) => panic!("strict 模式下不该起得来"),
+            Err(e) => assert!(format!("{e:#}").contains("strict"), "{e:#}"),
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn mismatched_key_is_detected_at_startup() {
+        // 证书和私钥不是一对：装载时就该炸，而不是等浏览器握手失败
+        let dir = tmpdir("mismatch");
+        let (cert_a, _key_a) = test_pair(&["a.example.com"]);
+        let (_cert_b, key_b) = test_pair(&["b.example.com"]);
+        std::fs::write(dir.join("c.pem"), &cert_a).unwrap();
+        std::fs::write(dir.join("k.pem"), &key_b).unwrap();
+
+        let mut cfg = TlsConfig::default();
+        cfg.enabled = true;
+        cfg.cert = dir.join("c.pem").display().to_string();
+        cfg.key = dir.join("k.pem").display().to_string();
+        cfg.degrade = "self-signed".into();
+        let m = build_acceptor(&cfg, &dir, &dir).expect("降级模式下仍要能起来");
+        assert!(m.degraded.is_some(), "错配要给出原因");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn good_cert_is_used_as_is_and_not_marked_degraded() {
+        let dir = tmpdir("good");
+        let (cert, key) = test_pair(&["good.example.com"]);
+        std::fs::write(dir.join("c.pem"), &cert).unwrap();
+        std::fs::write(dir.join("k.pem"), &key).unwrap();
+        let mut cfg = TlsConfig::default();
+        cfg.enabled = true;
+        cfg.cert = dir.join("c.pem").display().to_string();
+        cfg.key = dir.join("k.pem").display().to_string();
+        let m = build_acceptor(&cfg, &dir, &dir).unwrap();
+        assert!(!m.self_signed);
+        assert!(m.degraded.is_none());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

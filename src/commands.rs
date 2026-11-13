@@ -101,6 +101,23 @@ pub async fn run_gateway(config_opt: Option<PathBuf>, args: crate::cli::RunArgs)
             Ok(l) => {
                 match crate::tls::build_acceptor(&cfg.tls, &state.paths.tls_dir, state.base_dir()) {
                     Ok(m) => {
+                        // 证书降级不是"小事一桩"：443 能服务但证件是兜底的，
+                        // 得让状态页和管理面都能看见原因
+                        if let Some(why) = m.degraded.clone() {
+                            state.set_tls_degraded(Some(why.clone()));
+                            let storage = cfg.storage.clone();
+                            state.audit.push(
+                                &storage,
+                                crate::storage::AuditEntry {
+                                    ts_ms: crate::storage::now_ms(),
+                                    kind: "tls.degraded".into(),
+                                    detail: format!("配置证书不可用，已退回自签：{why}"),
+                                    identity: String::new(),
+                                    path: "/tls".into(),
+                                    rule: "tls-degrade".into(),
+                                },
+                            );
+                        }
                         let l6 = if cfg.tls.listen_v6.trim().is_empty() {
                             None
                         } else {

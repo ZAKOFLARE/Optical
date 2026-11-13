@@ -57,6 +57,8 @@ pub struct Config {
     pub ip_filter: crate::ipfilter::IpFilterConfig,
     /// 外观：主题色、图表样式、背景与图标
     pub appearance: crate::appearance::AppearanceConfig,
+    /// 响应压缩：gzip / brotli
+    pub compression: CompressionConfig,
     pub extensions: ExtensionsConfig,
 }
 
@@ -144,6 +146,17 @@ pub struct TlsConfig {
     /// 明文 HTTP 一律 301 到 HTTPS（tls.enabled 为真时生效）
     #[serde(default)]
     pub http_redirect: bool,
+    /// 证书不可用（路径写错、文件被删、私钥不配对）时怎么办：
+    ///
+    /// - `self-signed`（默认）：退回自签继续服务，把原因写在日志、审计和状态页上。
+    ///   证书是"更好的锁"，不是"门本身"——锁坏了就把门焊死，等于用户访问的是 502。
+    /// - `strict`：拒绝启动 HTTPS 监听（只有明确要求"没证书就别服务"时才用）。
+    #[serde(default = "default_tls_degrade")]
+    pub degrade: String,
+}
+
+fn default_tls_degrade() -> String {
+    "self-signed".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -280,6 +293,37 @@ pub struct MetricsConfig {
     /// 这是"选 30 天能真看到 30 天"的前提——细粒度环再降采样也撑不到那么远。
     /// 置 0 关掉长期留存，省下 2160 个点的内存，但大范围视图就只剩最近那截。
     pub history_days: u32,
+}
+
+/// 响应压缩。默认开，但只碰"确定值得压"的东西：
+/// 文本类、长度已知且落在区间内、上游没压过。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CompressionConfig {
+    pub enabled: bool,
+    /// 允许 brotli（`Accept-Encoding: br`）
+    pub brotli: bool,
+    /// 允许 gzip
+    pub gzip: bool,
+    /// 小于这个字节数不压：头部开销可能比省下的还多
+    pub min_bytes: usize,
+    /// 大于这个字节数不压：为一次响应把整块内容读进内存，是给自己开 OOM 入口
+    pub max_bytes: usize,
+    /// 1..9。gzip 直接用；brotli 折半使用（9 档在网关上会把 CPU 吃干净）
+    pub level: u32,
+}
+
+impl Default for CompressionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            brotli: true,
+            gzip: true,
+            min_bytes: 512,
+            max_bytes: 1024 * 1024,
+            level: 5,
+        }
+    }
 }
 
 /// 采集间隔下限：5 秒。再细就是拿 CPU 换噪点。
@@ -686,6 +730,7 @@ impl Default for TlsConfig {
             self_signed_days: 365,
             san: Vec::new(),
             http_redirect: false,
+            degrade: default_tls_degrade(),
         }
     }
 }
@@ -1128,11 +1173,29 @@ impl Config {
             if self.tls.listen.parse::<SocketAddr>().is_err() {
                 errs.push(format!("tls.listen 非法（需要 IP:PORT）: {}", self.tls.listen));
             }
+            // 证书路径不存在**不能**当成致命错误：这是把 443 直接弄死的头号原因，
+            // 前面挂着 CDN 的话，用户看到的就是一个没有上下文的 502。
+            // 只有明确要求 strict 时才拒绝启动；默认交给 build_acceptor 退回自签。
+            let strict = self.tls.degrade == "strict";
             if !self.tls.cert.is_empty() && !resolve_one(&self.tls.cert, base).exists() {
-                errs.push(format!("tls.cert 不存在: {}", self.tls.cert));
+                if strict {
+                    errs.push(format!("tls.cert 不存在: {}", self.tls.cert));
+                } else {
+                    tracing::warn!(
+                        cert = %self.tls.cert,
+                        "tls.cert 不存在；tls.degrade = self-signed，启动时会退回自签证书"
+                    );
+                }
             }
             if !self.tls.key.is_empty() && !resolve_one(&self.tls.key, base).exists() {
-                errs.push(format!("tls.key 不存在: {}", self.tls.key));
+                if strict {
+                    errs.push(format!("tls.key 不存在: {}", self.tls.key));
+                } else {
+                    tracing::warn!(
+                        key = %self.tls.key,
+                        "tls.key 不存在；tls.degrade = self-signed，启动时会退回自签证书"
+                    );
+                }
             }
             if !matches!(self.tls.min_version.as_str(), "1.2" | "1.3") {
                 errs.push("tls.min_version 只支持 1.2 / 1.3".to_string());
@@ -1666,6 +1729,47 @@ mod tests {
         let cfg = Config::default();
         let errs = cfg.validate();
         assert!(errs.is_empty(), "{errs:?}");
+    }
+
+    #[test]
+    fn parsing_the_example_config_is_cheap() {
+        // 把"TOML 解析到底慢不慢"变成一条会红的断言，而不是靠感觉。
+        // 例子里所有字段都写满，比真实配置更大；200 次取平均。
+        let text = include_str!("../config.example.toml");
+        let t0 = std::time::Instant::now();
+        for _ in 0..200 {
+            let c: Config = toml::from_str(text).expect("示例配置必须能解析");
+            std::hint::black_box(&c);
+        }
+        let each = t0.elapsed() / 200;
+        println!("TOML 解析单次耗时: {each:?}（{} 字节）", text.len());
+        assert!(
+            each < std::time::Duration::from_millis(20),
+            "单次解析超过 20ms 就该考虑缓存了，实测 {each:?}"
+        );
+    }
+
+    #[test]
+    fn missing_cert_path_is_not_fatal_unless_strict() {
+        // 线上踩过的坑：证书路径写错 → 配置校验直接拒启动 → 443 整个消失 →
+        // 前面挂着 CDN，用户看到的就是一个没有上下文的 502。
+        let mut cfg = Config::default();
+        cfg.tls.enabled = true;
+        cfg.tls.cert = "/nonexistent/cert.pem".into();
+        cfg.tls.key = "/nonexistent/key.pem".into();
+        cfg.tls.degrade = "self-signed".into();
+        let errs = cfg.validate();
+        assert!(
+            !errs.iter().any(|e| e.contains("tls.cert") || e.contains("tls.key")),
+            "默认模式不该因为证书文件缺失而拒绝启动: {errs:?}"
+        );
+
+        cfg.tls.degrade = "strict".into();
+        let errs = cfg.validate();
+        assert!(
+            errs.iter().any(|e| e.contains("tls.cert")),
+            "strict 模式必须明确报错: {errs:?}"
+        );
     }
 
     #[test]

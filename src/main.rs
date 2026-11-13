@@ -16,6 +16,7 @@ mod backends;
 mod cache;
 mod cli;
 mod commands;
+mod compress;
 mod config;
 mod echo;
 mod errors;

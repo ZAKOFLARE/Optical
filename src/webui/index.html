@@ -1074,6 +1074,20 @@
                 <div class="field"><label>cache.ttl_secs</label><input type="number" id="f-cache-ttl" min="1"></div>
                 <div class="field"><label>cache.max_bytes</label><input type="number" id="f-cache-bytes" min="1024" step="1024"></div>
                 <div class="field"><label>cache.max_entries</label><input type="number" id="f-cache-entries" min="1"></div>
+                <div class="field"><label>tls.degrade<i class="q" data-i18n-tip="tip.tlsdegrade">?</i></label>
+                  <select id="f-tls-degrade">
+                    <option value="self-signed" data-i18n="cf.degrade.self">self-signed（证书坏了退回自签继续服务）</option>
+                    <option value="strict" data-i18n="cf.degrade.strict">strict（证书不可用就不开 HTTPS）</option>
+                  </select></div>
+                <div class="field"><label>compression.enabled</label>
+                  <select id="f-cmp-enabled"><option value="true">true</option><option value="false">false</option></select></div>
+                <div class="field"><label>compression.gzip</label>
+                  <select id="f-cmp-gzip"><option value="true">true</option><option value="false">false</option></select></div>
+                <div class="field"><label>compression.brotli</label>
+                  <select id="f-cmp-br"><option value="true">true</option><option value="false">false</option></select></div>
+                <div class="field"><label>compression.level</label><input type="number" id="f-cmp-level" min="1" max="9"></div>
+                <div class="field"><label>compression.min_bytes</label><input type="number" id="f-cmp-min" min="0" step="128"></div>
+                <div class="field"><label>compression.max_bytes</label><input type="number" id="f-cmp-max" min="1024" step="1024"></div>
               </div>
               <div class="formfoot">
                 <span class="note" id="lock-note"></span>
@@ -1439,6 +1453,10 @@
       "pt.tls":"HTTPS 证书","pt.resign":"重签自签证书","pt.signed":"已重签：",
       "pt.san":"证书 SAN（逗号分隔；留空用配置里的 tls.san）",
       "pt.tls.note":"重签会覆盖 dev-cert.pem，重启进程后生效；外部托管的 cert/key 不会被覆盖。",
+      "pt.tls.degraded":"配置的证书用不了，正在用兜底自签证书：",
+      "cf.degrade.self":"self-signed（证书坏了退回自签继续服务）",
+      "cf.degrade.strict":"strict（证书不可用就不开 HTTPS）",
+      "tip.tlsdegrade":"证书是更好的锁，不是门本身。默认 self-signed：证书路径写错、文件被删、私钥不配对时退回自签继续服务，原因写在日志、审计和这张卡片上；strict 则宁可不开 HTTPS。",
       "pt.tls.off":"未启用 TLS","pt.tls.self":"自签证书","pt.tls.ext":"外部证书","pt.tls.missing":"（文件缺失）",
       "pt.tls.expire":"到期时间","pt.tls.expired":"这张证书已经过期，浏览器会直接拒绝连接",
       "pt.up.title":"上传证书","pt.up.scope":"只负责挂上去：申请和续期交给 ACME 客户端或服务器运维面板",
@@ -1725,6 +1743,10 @@
       "pt.tls":"HTTPS certificate","pt.resign":"Re-sign self-signed","pt.signed":"Re-signed:",
       "pt.san":"Cert SAN (comma separated; empty = tls.san)",
       "pt.tls.note":"Re-sign overwrites dev-cert.pem and takes effect after restart; externally managed cert/key is never overwritten.",
+      "pt.tls.degraded":"The configured certificate is unusable; serving with the fallback self-signed one:",
+      "cf.degrade.self":"self-signed (fall back and keep serving)",
+      "cf.degrade.strict":"strict (no HTTPS without a usable cert)",
+      "tip.tlsdegrade":"A certificate is a better lock, not the door itself. With self-signed, a wrong path, deleted file or mismatched key falls back to self-signed and the reason lands in logs, audit and this card. strict refuses to start HTTPS instead.",
       "pt.tls.off":"TLS off","pt.tls.self":"self-signed","pt.tls.ext":"external","pt.tls.missing":" (missing)",
       "pt.tls.expire":"Expires","pt.tls.expired":"This certificate has expired; browsers refuse to connect",
       "pt.up.title":"Upload certificate","pt.up.scope":"Mount only: issuance and renewal belong to your ACME client or ops panel",
@@ -3468,7 +3490,15 @@
         return '<div style="display:flex;gap:10px;padding:2px 0"><b style="flex:0 0 96px;color:var(--ink-2)">'+esc(r[0])+'</b><span style="word-break:break-all">'+esc(r[1])+'</span></div>';
       }).join("") + (d.expired
         ? '<div style="color:var(--red);margin-top:4px">'+esc(t("pt.tls.expired"))+'</div>'
-        : "");
+        : "")
+        // 降级必须显眼：443 还在服务，但证件是兜底的。
+        // 不写出来，用户就只会在浏览器里看到证书警告，然后去猜"是不是 502 了"。
+        + (d.degraded
+          ? '<div style="margin-top:8px;padding:8px 10px;border-left:3px solid var(--amber);'+
+            'background:var(--amber-soft);color:var(--ink);font-size:12px">'+
+            '<b>'+esc(t("pt.tls.degraded"))+'</b><div class="mono" style="margin-top:3px;word-break:break-all">'+
+            esc(d.degraded)+'</div></div>'
+          : "");
       return d;
     }).catch(function(){});
   }
@@ -5083,6 +5113,14 @@
     $("f-tls-listen-v6").value=c.tls.listen_v6||"";
     $("f-tls-min").value=c.tls.min_version; $("f-tls-cert").value=c.tls.cert||""; $("f-tls-key").value=c.tls.key||"";
     $("f-cache-enabled").value=String(!!c.cache.enabled); $("f-cache-ttl").value=c.cache.ttl_secs;
+    if (c.tls) $("f-tls-degrade").value = c.tls.degrade === "strict" ? "strict" : "self-signed";
+    var cmp = c.compression || {};
+    $("f-cmp-enabled").value=String(cmp.enabled !== false);
+    $("f-cmp-gzip").value=String(cmp.gzip !== false);
+    $("f-cmp-br").value=String(cmp.brotli !== false);
+    $("f-cmp-level").value = cmp.level || 5;
+    $("f-cmp-min").value = cmp.min_bytes == null ? 512 : cmp.min_bytes;
+    $("f-cmp-max").value = cmp.max_bytes || 1048576;
     $("f-cache-bytes").value=c.cache.max_bytes; $("f-cache-entries").value=c.cache.max_entries;
     $("f-sh-keep").value=c.storage.config_history_keep; $("f-sh-bytes").value=c.storage.config_history_max_bytes;
     $("f-sh-days").value=c.storage.config_history_keep_days; $("f-au-keep").value=c.storage.audit_keep;
@@ -5144,6 +5182,14 @@
     cfg.cache.ttl_secs=Number($("f-cache-ttl").value)||1;
     cfg.cache.max_bytes=Number($("f-cache-bytes").value)||1048576;
     cfg.cache.max_entries=Number($("f-cache-entries").value)||128;
+    cfg.tls.degrade=$("f-tls-degrade").value;
+    cfg.compression = cfg.compression || {};
+    cfg.compression.enabled=$("f-cmp-enabled").value==="true";
+    cfg.compression.gzip=$("f-cmp-gzip").value==="true";
+    cfg.compression.brotli=$("f-cmp-br").value==="true";
+    cfg.compression.level=Math.max(1, Math.min(9, Number($("f-cmp-level").value)||5));
+    cfg.compression.min_bytes=Math.max(0, Number($("f-cmp-min").value)||0);
+    cfg.compression.max_bytes=Math.max(1024, Number($("f-cmp-max").value)||1048576);
     save(cfg, t("cf.server.saved"), this);
   });
 

@@ -45,6 +45,8 @@ pub struct Metrics {
     /// 当前管理面 WebSocket 连接数（0 = 前端已回退到轮询）
     pub ws_clients: AtomicU64,
     pub tls_handshakes: AtomicU64,
+    /// 压缩省下的字节数（原长 - 压缩后），用来回答"这功能到底值不值得开"
+    pub bytes_saved: AtomicU64,
     /// UA 计数
     pub ua: Mutex<HashMap<String, u64>>,
     /// 客户端 IP 计数
@@ -92,6 +94,7 @@ pub struct MetricsSnapshot {
     pub waf_hit_rate: f64,
     pub ws_upgrades: u64,
     pub tls_handshakes: u64,
+    pub bytes_saved: u64,
     pub status: Vec<(u16, u64)>,
 }
 
@@ -164,6 +167,9 @@ pub struct AppState {
     ip_remote: std::sync::RwLock<Arc<crate::ipfilter::RemoteList>>,
     /// 远程名单版本号：换了一份就 +1，编译结果据此重建
     ip_remote_gen: AtomicU64,
+    /// TLS 证书降级的原因（证书坏了退回自签时非空）。
+    /// 存在这里而不是只打日志：状态页要能直接看到"你现在用的是兜底证书"。
+    tls_degraded: std::sync::RwLock<Option<String>>,
 }
 
 #[derive(Default)]
@@ -236,6 +242,7 @@ impl AppState {
             // 启动先吃落盘缓存：订阅源一时拉不到，也不能让白名单模式直接全拒或全放
             ip_remote: std::sync::RwLock::new(Arc::new(crate::ipfilter::load_cache(&data_dir))),
             ip_remote_gen: AtomicU64::new(1),
+            tls_degraded: std::sync::RwLock::new(None),
         }
     }
 
@@ -396,6 +403,7 @@ impl AppState {
             },
             ws_upgrades: self.metrics.ws_upgrades.load(Ordering::Relaxed),
             tls_handshakes: self.metrics.tls_handshakes.load(Ordering::Relaxed),
+            bytes_saved: self.metrics.bytes_saved.load(Ordering::Relaxed),
             status,
         }
     }
@@ -695,6 +703,18 @@ impl AppState {
         self.sync_history();
         let h = self.history.lock().unwrap_or_else(|e| e.into_inner());
         h.query(gran_ms, range_secs, now_ms())
+    }
+
+    /// 记录/读取 TLS 降级原因。
+    pub fn set_tls_degraded(&self, reason: Option<String>) {
+        *self.tls_degraded.write().unwrap_or_else(|e| e.into_inner()) = reason;
+    }
+
+    pub fn tls_degraded(&self) -> Option<String> {
+        self.tls_degraded
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// 长期环里有几个点（每小时一个）。
