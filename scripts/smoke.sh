@@ -270,6 +270,34 @@ curl -s -o /dev/null -m 6 "http://$GW/assets/app.css"
 check "第二次请求命中缓存" 'x-optical-cache: HIT' "$(curl -si -m 6 "http://$GW/assets/app.css" | tr -d '\r')"
 check "缓存命中计数" '"cache_hit_rate"' "$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/metrics")"
 
+echo "-- 响应压缩（gzip / brotli）--"
+# 造一个够大的响应体，跨过 compression.min_bytes（默认 512）
+BIG="$(python3 -c "print('x' * 2000)")"
+HDR() { curl -s -D - -o /dev/null -m 8 -H "$1" "http://$GW/hello?big=$BIG" | tr -d '\r' | tr 'A-Z' 'a-z'; }
+H_GZ="$(HDR 'Accept-Encoding: gzip')"
+check "gzip：响应带 content-encoding" 'content-encoding: gzip' "$H_GZ"
+check "gzip：Vary 带上 accept-encoding（CDN 才不会串味）" 'vary: .*accept-encoding' "$H_GZ"
+# hyper 会按实际 body 重算 Content-Length，所以"必须没有这个头"是错的期待；
+# 要断言的是"声明值 = 实际压缩后的字节数"。
+CL="$(printf '%s' "$H_GZ" | awk -F': *' '/^content-length/{print $2}' | tr -d ' \r')"
+BL="$(curl -s -m 8 -H 'Accept-Encoding: gzip' "http://$GW/hello?big=$BIG" | wc -c | tr -d ' ')"
+check "gzip：声明的长度就是压缩后的字节数" 'yes' "$([ -n "$CL" ] && [ "$CL" = "$BL" ] && echo yes || echo "no($CL/$BL)")"
+H_BR="$(HDR 'Accept-Encoding: br, gzip')"
+check "br：两种都支持时优先 brotli" 'content-encoding: br' "$H_BR"
+check "br;q=0 是明确拒绝，退回 gzip" 'content-encoding: gzip' "$(HDR 'Accept-Encoding: br;q=0, gzip')"
+check "客户端不接受压缩时不压" 'yes' \
+  "$(printf '%s' "$(HDR 'Accept-Encoding: identity')" | grep -q 'content-encoding' && echo no || echo yes)"
+# 压出来的东西必须真能解开，否则等于把页面弄坏
+check "gzip 解压后仍是原文" '"service":"optical-echo"' \
+  "$(curl -s -m 8 -H 'Accept-Encoding: gzip' "http://$GW/hello?big=$BIG" | python3 -c 'import sys,gzip;sys.stdout.write(gzip.decompress(sys.stdin.buffer.read()).decode())')"
+# 解压校验：装了解码器才验，没有就明说跳过——不拿"编好的期望值"充数
+if python3 -c 'import brotli' 2>/dev/null; then
+  check "br 解压后仍是原文" '"service":"optical-echo"' \
+    "$(curl -s -m 8 -H 'Accept-Encoding: br' "http://$GW/hello?big=$BIG" | python3 -c 'import sys,brotli;sys.stdout.write(brotli.decompress(sys.stdin.buffer.read()).decode())')"
+else
+  printf '  \033[33mSKIP\033[0m br 解压校验（本机 python 没有 brotli 模块，头部断言已覆盖）\n'
+fi
+
 echo "-- WAF --"
 check "SQL 注入被拦" '403' "$(code "http://$GW/search?q=%27%20or%201%3D1%20union%20select%20pw")"
 check "命中规则写入响应头" 'x-optical-waf: sql' "$(curl -si -m 6 "http://$GW/search?q=%27%20or%201%3D1" | tr -d '\r' | grep -i 'x-optical-waf')"

@@ -1123,7 +1123,14 @@ async fn api_firewall_apply(State(st): State<Arc<AppState>>) -> Json<Value> {
 async fn api_tls_info(State(st): State<Arc<AppState>>) -> Json<Value> {
     let cfg = st.snapshot().await;
     let base = st.base_dir().to_path_buf();
-    Json(crate::tls::describe(&cfg.tls, &st.paths.tls_dir, &base))
+    let mut v = crate::tls::describe(&cfg.tls, &st.paths.tls_dir, &base);
+    // 降级原因单独挂上去：证书卡片要能直接说"配置的那张废了，现在用的是兜底自签"，
+    // 否则用户只会在浏览器里看到一个证书警告，或者更糟——只看到 502。
+    if let Some(o) = v.as_object_mut() {
+        o.insert("degraded".into(), json!(st.tls_degraded()));
+        o.insert("degrade_mode".into(), json!(cfg.tls.degrade));
+    }
+    Json(v)
 }
 
 #[derive(Deserialize)]

@@ -770,6 +770,14 @@ pub async fn handle(
     }
     append_forwarded(&mut parts.headers, &peer, original_host.as_deref(), scheme);
 
+    // 压缩要在响应回来之后决定，但请求头马上就被 move 进上游请求了，先留住
+    let accept_encoding = parts
+        .headers
+        .get(http::header::ACCEPT_ENCODING)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
     let is_h2 = parts.version == Version::HTTP_2;
     parts.uri = uri;
     parts.version = if is_h2 { Version::HTTP_2 } else { Version::HTTP_11 };
@@ -783,7 +791,18 @@ pub async fn handle(
             return fail(&state, &cfg, &ua, &ip_str, StatusCode::GATEWAY_TIMEOUT, format!("上游超时（{} ms）", timeout_ms))
         }
         Ok(Err(e)) => {
-            return fail(&state, &cfg, &ua, &ip_str, StatusCode::BAD_GATEWAY, format!("连接上游失败: {e}"))
+            // 把目标写进去：只回一句 "连接上游失败" 的话，人只能去猜是证书、
+            // 是域名、还是后端没起。这里直接点名是谁连不上。
+            return fail(
+                &state,
+                &cfg,
+                &ua,
+                &ip_str,
+                StatusCode::BAD_GATEWAY,
+                format!(
+                    "连接上游失败: {e}（目标 {up_scheme}://{authority}；常见原因：后端没在监听、端口写错、回源协议该用 http 却写了 https）"
+                ),
+            )
         }
         Ok(Ok(r)) => r,
     };
@@ -850,10 +869,29 @@ pub async fn handle(
         && body_len > 0
         && body_len <= cfg.cache.max_bytes / 4;
 
-    let body: ProxyBody = if want_cache {
+    // ---- 响应压缩（gzip / brotli）----
+    // 只在"长度已知且落在区间内、上游没压过、类型是文本"时才考虑；
+    // 其余直传——压错了比不压更糟，尤其是把已经压过的再压一遍。
+    let enc = crate::compress::negotiate(&accept_encoding, &cfg.compression);
+    let content_type = rparts
+        .headers
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let want_compress = enc.is_some()
+        && crate::compress::should_compress(
+            &cfg.compression,
+            status.as_u16(),
+            content_type.as_deref(),
+            Some(body_len as u64),
+            rparts.headers.contains_key(http::header::CONTENT_ENCODING),
+        );
+
+    let body: ProxyBody = if want_cache || want_compress {
         match rbody.collect().await {
             Ok(c) => {
                 let bytes = c.to_bytes();
+                if want_cache {
                 let mut stored = rparts.headers.clone();
                 stored.remove(http::header::TRANSFER_ENCODING);
                 stored.remove(HeaderName::from_static("x-optical-cache"));
@@ -877,6 +915,34 @@ pub async fn handle(
                     .metrics
                     .bytes_out
                     .fetch_add(bytes.len() as u64, Ordering::Relaxed);
+                }
+
+                if let Some(e) = enc.filter(|_| want_compress) {
+                    // 小于可压区间时 should_compress 已经拦掉了，这里只处理编码
+                    match crate::compress::encode(e, &bytes, cfg.compression.level) {
+                        Ok(z) if z.len() < bytes.len() => {
+                            // 压完必须改头：长度变了、ETag 描述的是未压缩表示、
+                            // 还要让 CDN 按 Accept-Encoding 分桶
+                            rparts.headers.remove(http::header::CONTENT_LENGTH);
+                            rparts.headers.remove(http::header::ETAG);
+                            if let Ok(v) = HeaderValue::from_str(e.as_str()) {
+                                rparts.headers.insert(http::header::CONTENT_ENCODING, v);
+                            }
+                            append_vary(&mut rparts.headers, "accept-encoding");
+                            state
+                                .metrics
+                                .bytes_saved
+                                .fetch_add((bytes.len() - z.len()) as u64, Ordering::Relaxed);
+                            return Response::from_parts(
+                                rparts,
+                                Full::new(Bytes::from(z)).map_err(|never| match never {}).boxed(),
+                            );
+                        }
+                        // 压完反而更大（几百字节的响应就是这样），老老实实直传
+                        Ok(_) => {}
+                        Err(err) => tracing::debug!(error = %err, enc = e.as_str(), "压缩失败，直传"),
+                    }
+                }
                 Full::new(bytes).map_err(|never| match never {}).boxed()
             }
             Err(e) => {
@@ -920,6 +986,28 @@ pub async fn handle(
     );
 
     Response::from_parts(rparts, body)
+}
+
+/// 往 `Vary` 里追加一个字段。已有的值要保留——覆盖掉别人写的
+/// `Vary: Accept-Encoding, Origin` 会让缓存串味。
+fn append_vary(headers: &mut http::HeaderMap, field: &str) {
+    let have = headers
+        .get(http::header::VARY)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let already = have.split(',').any(|x| x.trim() == field);
+    if already {
+        return;
+    }
+    let next = if have.is_empty() {
+        field.to_string()
+    } else {
+        format!("{}, {}", headers[http::header::VARY].to_str().unwrap_or("").trim(), field)
+    };
+    if let Ok(v) = HeaderValue::from_str(&next) {
+        headers.insert(http::header::VARY, v);
+    }
 }
 
 /// 流式转发时边转发边计字节，不缓冲。

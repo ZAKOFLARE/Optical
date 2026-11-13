@@ -34,6 +34,12 @@ self_signed_days = 365
 san = []
 # 明文 HTTP 一律 301 到 HTTPS（tls.enabled 为真时生效）
 http_redirect = false
+# 证书不可用时怎么办：
+#   self-signed（默认）= 退回自签继续服务，原因写进日志/审计/证书卡片
+#   strict            = 干脆不开 HTTPS 监听
+# 默认选 self-signed 的原因很实在：证书路径写错、文件被 ACME 客户端换坏、
+# 私钥不配对，都会让 443 直接消失；前面挂了 CDN 的话，用户看到的就是一个 502。
+degrade = "self-signed"
 
 # ---------- 管理面认证 ----------
 [admin]
@@ -106,6 +112,17 @@ audit_max_bytes = 4194304
 # expose = []
 # credentials = false      # true 时不能用 "*"（浏览器禁止）
 # max_age = 600
+
+# ---------- 响应压缩 ----------
+# 只压"确定值得压"的东西：文本类、长度已知、落在区间内、上游没压过。
+# 上游已经带 Content-Encoding 就原样透传——二次压缩只会更大更慢。
+[compression]
+enabled = true
+gzip = true
+brotli = true      # 两种都支持时优先 br（同样的内容通常再小 15%~20%）
+min_bytes = 512    # 更小的不压：头部开销可能比省下的还多
+max_bytes = 1048576 # 更大的直传：为一次响应缓冲整块内容是给自己开 OOM 入口
+level = 5          # 1..9；brotli 会折半使用（9 档在网关上会把 CPU 吃干净）
 
 # ---------- 外观 ----------
 # 主题色与统计图样式存在这里；背景与图标是文件，落在 <data_dir>/branding/，
