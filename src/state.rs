@@ -606,10 +606,12 @@ impl AppState {
             names.push(f.rule.to_string());
         }
         drop(g);
+        // 走 record_waf 而不是 record_rules：`rules` 那张表现在只装自定义规则，
+        // WAF 的检测项混进去会让「自定义规则」这一栏彻底失真。
         self.stats
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .record_rules(now_ms() / 60_000, &names);
+            .record_waf(now_ms() / 60_000, &names);
         self.stats_rev.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -669,14 +671,23 @@ impl AppState {
         }
     }
 
+    /// 长期留存天数（小时环）。
+    pub fn history_days(&self) -> u32 {
+        self.try_config()
+            .map(|c| c.metrics.history_days.min(365))
+            .unwrap_or(90)
+    }
+
     /// 把当前配置套到历史序列上（间隔变了清空、点数变少了裁剪）。
     /// 采样循环和查询前都调一次，配置热重载后立刻生效。
     pub fn sync_history(&self) {
         let (interval, cap) = self.sampling();
-        self.history
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .reconfigure(interval, cap);
+        let days = self.history_days();
+        let mut h = self.history.lock().unwrap_or_else(|e| e.into_inner());
+        h.reconfigure(interval, cap);
+        if h.coarse_days() != days {
+            h.set_coarse_days(days);
+        }
     }
 
     /// 按请求的粒度/范围取历史。粒度只是查询参数，不碰配置。
@@ -684,6 +695,14 @@ impl AppState {
         self.sync_history();
         let h = self.history.lock().unwrap_or_else(|e| e.into_inner());
         h.query(gran_ms, range_secs, now_ms())
+    }
+
+    /// 长期环里有几个点（每小时一个）。
+    pub fn history_coarse_len(&self) -> usize {
+        self.history
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .coarse_len()
     }
 
     /// 历史序列当前的分辨率与规模，供状态接口展示"已经降采样到多粗"。

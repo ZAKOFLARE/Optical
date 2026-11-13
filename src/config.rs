@@ -276,6 +276,10 @@ pub struct MetricsConfig {
     pub sample_interval_ms: u64,
     /// 历史点数上限。写满后自动合并相邻点、分辨率翻倍，窗口自然变长，内存不涨。
     pub history_points: usize,
+    /// 长期留存天数：每小时一个聚合点，默认 90 天。
+    /// 这是"选 30 天能真看到 30 天"的前提——细粒度环再降采样也撑不到那么远。
+    /// 置 0 关掉长期留存，省下 2160 个点的内存，但大范围视图就只剩最近那截。
+    pub history_days: u32,
 }
 
 /// 采集间隔下限：5 秒。再细就是拿 CPU 换噪点。
@@ -756,6 +760,7 @@ impl Default for MetricsConfig {
             top_n: 8,
             sample_interval_ms: MIN_SAMPLE_MS,
             history_points: 2880,
+            history_days: 90,
         }
     }
 }

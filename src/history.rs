@@ -4,8 +4,14 @@
 //! 那样要么内存翻好几倍，要么一换档就得清历史（旧点的时间宽度不一样，混着画读数就是假的）。
 //! 更关键的是——粒度属于"看的人"的选择，不该写进服务端配置，否则两个会话各切各的就会撞乐观锁。
 //!
-//! 这里只存一条序列：点满了就把相邻两点合并、桶宽翻倍，窗口自然变长。
-//! 查询时按请求的粒度/范围重新分桶，所以前端换粒度只是换观察方式，数据一次都不丢。
+//! 这里存两条序列，各管一段时间尺度：
+//!
+//! - **细粒度环**：点满了就把相邻两点合并、桶宽翻倍，窗口自然变长。它负责"最近这段看细节"。
+//! - **小时环**：每满一小时落一个聚合点，固定保留 `history_days` 天（默认 90 天，2160 个点）。
+//!   它负责"上个月发生了什么"——细粒度环再怎么降采样也撑不到 30 天，
+//!   以前选 30 天其实只看到最近十几小时，图上自然像"只剩一小时"。
+//!
+//! 查询时按请求的粒度/范围重新分桶：请求的桶不比一小时更细时，老数据从小时环取。
 
 use crate::state::Sample;
 use std::collections::VecDeque;
@@ -27,12 +33,22 @@ pub struct Bucketed {
     pub exact: bool,
 }
 
+/// 小时环的固定桶宽。长期曲线的分辨率就是它，不再细分——
+/// 90 天 × 每小时一个点 = 2160 个点，这点内存换"上个月到底什么样"很划算。
+pub const COARSE_BUCKET_MS: u64 = 3_600_000;
+
 pub struct History {
     /// 当前每点代表的毫秒数
     bucket_ms: u64,
     /// 点数上限：超了就降采样，绝不无限增长
     cap: usize,
     points: VecDeque<Point>,
+    /// 长期环：固定 1 小时一点
+    coarse: VecDeque<Point>,
+    /// 长期环的保留天数（点数上限 = 天数 × 24）
+    coarse_days: u32,
+    /// 正在累积的那个小时：(小时序号, 未完成聚合)
+    coarse_pending: Option<(i64, Point)>,
 }
 
 impl History {
@@ -41,7 +57,27 @@ impl History {
             bucket_ms: bucket_ms.max(1000),
             cap: cap.max(32),
             points: VecDeque::new(),
+            coarse: VecDeque::new(),
+            coarse_days: 90,
+            coarse_pending: None,
         }
+    }
+
+    /// 长期环保留天数。0 表示关掉长期留存（省内存，但又只剩最近那截）。
+    pub fn set_coarse_days(&mut self, days: u32) {
+        self.coarse_days = days.min(365);
+        let cap = (self.coarse_days as usize).saturating_mul(24).max(24);
+        while self.coarse.len() > cap {
+            self.coarse.pop_front();
+        }
+    }
+
+    pub fn coarse_days(&self) -> u32 {
+        self.coarse_days
+    }
+
+    pub fn coarse_len(&self) -> usize {
+        self.coarse.len()
     }
 
     pub fn bucket_ms(&self) -> u64 {
@@ -65,6 +101,7 @@ impl History {
         if bucket_ms != self.bucket_ms {
             self.points.clear();
             self.bucket_ms = bucket_ms;
+            // 小时环不受采集间隔影响：它的桶宽是固定的，清掉反而白丢 90 天
         }
         self.cap = cap;
         while self.points.len() > self.cap {
@@ -77,7 +114,34 @@ impl History {
         if self.points.len() >= self.cap {
             self.merge_once();
         }
-        self.points.push_back(Point { t, s });
+        self.points.push_back(Point { t, s: s.clone() });
+        self.fold_coarse(t, s);
+    }
+
+    /// 把采样点折进小时环。跨小时就把上一个小时定稿，避免"当前小时"被查出来时还是半截数据。
+    fn fold_coarse(&mut self, t: i64, s: Sample) {
+        if self.coarse_days == 0 {
+            return;
+        }
+        let slot = t.div_euclid(COARSE_BUCKET_MS as i64);
+        let same = matches!(&self.coarse_pending, Some((cur, _)) if *cur == slot);
+        if same {
+            if let Some((_, p)) = self.coarse_pending.as_mut() {
+                p.s.merge(&s);
+            }
+            return;
+        }
+        if let Some((_, done)) = self.coarse_pending.replace((slot, Point {
+            // 桶结束时刻，和细粒度环的约定一致
+            t: (slot + 1) * COARSE_BUCKET_MS as i64,
+            s,
+        })) {
+            self.coarse.push_back(done);
+            let cap = (self.coarse_days as usize).saturating_mul(24).max(24);
+            while self.coarse.len() > cap {
+                self.coarse.pop_front();
+            }
+        }
     }
 
     /// 相邻两点合并、桶宽翻倍。计数类是增量，直接相加；平均延迟靠 upstream_ms 除以 requests 还原。
@@ -111,12 +175,9 @@ impl History {
         // 记的是"上一个点落在哪个桶"，不是上一个桶的结束时间——
         // 结束时间是 (slot+1)*bucket，拿它去算 slot 永远差一格，每个点都会被当成新桶。
         let mut last_slot: Option<i64> = None;
-        for p in self.points.iter() {
-            if p.t <= from {
-                continue;
-            }
-            let slot = p.t / bucket as i64;
-            if Some(slot) == last_slot {
+        let push = |p: &Point, out: &mut Vec<Point>, last_slot: &mut Option<i64>| {
+            let slot = p.t.div_euclid(bucket as i64);
+            if Some(slot) == *last_slot {
                 if let Some(last) = out.last_mut() {
                     last.s.merge(&p.s);
                 }
@@ -125,9 +186,34 @@ impl History {
                     t: (slot + 1) * bucket as i64,
                     s: p.s.clone(),
                 });
-                last_slot = Some(slot);
+                *last_slot = Some(slot);
+            }
+        };
+
+        // 老数据从小时环取。但它只有小时分辨率：请求的桶比一小时更细时不能拿它充数，
+        // 否则等于把"一小时的总量"画成一个 15 分钟的点，读数直接翻四倍。
+        if bucket >= COARSE_BUCKET_MS {
+            let raw_oldest = self.points.front().map(|p| p.t);
+            for p in self.coarse.iter() {
+                if p.t <= from {
+                    continue;
+                }
+                // 与细粒度环重叠的时段交给细粒度环：同一段时间被两边各算一次就是重复计数
+                if let Some(oldest) = raw_oldest {
+                    if p.t >= oldest {
+                        continue;
+                    }
+                }
+                push(p, &mut out, &mut last_slot);
             }
         }
+        for p in self.points.iter() {
+            if p.t <= from {
+                continue;
+            }
+            push(p, &mut out, &mut last_slot);
+        }
+
         Bucketed {
             bucket_ms: bucket,
             points: out,
@@ -193,6 +279,78 @@ mod tests {
         }
         let b = h.query(1000, 3, 10_000); // 只要最后 3 秒
         assert_eq!(b.points.len(), 3);
+    }
+
+    const H: i64 = 3_600_000;
+
+    #[test]
+    fn coarse_ring_keeps_one_point_per_hour() {
+        let mut h = History::new(1000, 600);
+        // 三小时，每小时两点
+        for hour in 0..3 {
+            for k in 0..2 {
+                h.record(hour * H + k * 1000, s(10));
+            }
+        }
+        // 前两小时已定稿，第三小时还在累积
+        assert_eq!(h.coarse_len(), 2, "每小时一个点，当前小时未定稿");
+        let b = h.query(H as u64, 4 * 3600, 3 * H);
+        let req: u64 = b.points.iter().map(|p| p.s.requests as u64).sum();
+        assert_eq!(req, 60, "小时环不能丢样本，实际 {req}");
+    }
+
+    #[test]
+    fn coarse_ring_is_not_used_for_sub_hour_buckets() {
+        let mut h = History::new(1000, 600);
+        // 只有远早于一小时前的点，细粒度环里没有它们
+        for hour in 0..3 {
+            for k in 0..4 {
+                h.record(hour * H + k * 15_000, s(100));
+            }
+        }
+        // 请求 15 分钟桶：小时环分辨率不够，不能用它充数
+        let b = h.query(900_000, 4 * 3600, 3 * H);
+        let req: u64 = b.points.iter().map(|p| p.s.requests as u64).sum();
+        // 12 个点 × 100 = 1200，全部来自细粒度环。
+        // 如果小时环也被算进来（2 个定稿小时各 400），这里会变成 2000。
+        assert_eq!(req, 1200, "15 分钟桶只能由细粒度环供给，实际 {req}");
+    }
+
+    #[test]
+    fn coarse_and_fine_rings_do_not_double_count() {
+        let mut h = History::new(1000, 64);
+        // 细粒度环装满会被降采样，但它的时间跨度远小于一小时
+        for i in 0..200 {
+            h.record(i * 1000, s(1));
+        }
+        let now = 200 * 1000;
+        // 请求 1 天、1 小时桶：细粒度点与小时环里尚未定稿的那个小时不能各算一次
+        let b = h.query(H as u64, 86_400, now);
+        let req: u64 = b.points.iter().map(|p| p.s.requests as u64).sum();
+        assert_eq!(req, 200, "同一段时间只能算一次，实际 {req}");
+    }
+
+    #[test]
+    fn coarse_ring_drops_oldest_beyond_retention() {
+        let mut h = History::new(1000, 600);
+        h.set_coarse_days(1); // 只留 24 个小时
+        for hour in 0..30 {
+            h.record(hour * H, s(1));
+        }
+        assert!(h.coarse_len() <= 24, "超过保留天数要丢最旧的，实际 {}", h.coarse_len());
+    }
+
+    #[test]
+    fn changing_sample_interval_keeps_long_term_ring() {
+        let mut h = History::new(1000, 600);
+        h.record(0, s(1));
+        h.record(H, s(1));
+        h.record(2 * H, s(1));
+        let before = h.coarse_len();
+        assert!(before > 0);
+        h.reconfigure(15_000, 600);
+        assert_eq!(h.len(), 0, "细粒度环必须清空");
+        assert_eq!(h.coarse_len(), before, "小时环的桶宽与采集间隔无关，不该被清掉");
     }
 
     #[test]

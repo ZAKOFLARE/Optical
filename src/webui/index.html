@@ -20,7 +20,10 @@
     /* 必须显式声明 color-scheme：否则原生控件（checkbox/select）会跟随系统偏好，
        在浅色页面上被画成暗色方块 */
     color-scheme: light;
-    --bg:#f4f6f9; --panel:#ffffff; --line:#e6e9ef; --line-2:#d5dae3;
+    /* 面板不透明度：1 = 现在的实心；调低会透出自定义背景。
+       用 rgb(... / var()) 而不是 opacity，否则文字和子元素会一起变淡。 */
+    --panel-a:1;
+    --bg:#f4f6f9; --panel:rgb(255 255 255 / var(--panel-a)); --line:#e6e9ef; --line-2:#d5dae3;
     --ink:#1b222e; --ink-2:#5a6478; --ink-3:#8b93a4;
     --blue:#0052d9; --blue-d:#0043b0; --blue-soft:#ebf2ff;
     --green:#00a870; --green-soft:#e8f8f1;
@@ -33,7 +36,8 @@
   }
   :root[data-theme="dark"]{
     color-scheme: dark;
-    --bg:#0e1116; --panel:#151a21; --line:#242b35; --line-2:#333c48;
+    --panel-a:1;
+    --bg:#0e1116; --panel:rgb(21 26 33 / var(--panel-a)); --line:#242b35; --line-2:#333c48;
     --ink:#e7ecf3; --ink-2:#9aa7b8; --ink-3:#6d7b8c;
     --blue:#4c8dff; --blue-d:#3d78e0; --blue-soft:#16233a;
     --green:#2fd39a; --green-soft:#10241d;
@@ -1208,6 +1212,14 @@
                   <button type="button" data-style="bar" data-i18n="look.chart.bar">柱状</button>
                 </div>
               </div>
+              <!-- 数值必须放在 data-i18n 元素外面：切语言时那个元素会被整段替换掉，
+                   塞在里面的 <b> 会连同百分号一起消失 -->
+              <div class="field"><label data-i18n="look.alpha">界面不透明度</label>
+                <div style="display:flex;align-items:center;gap:10px">
+                  <input type="range" id="f-look-alpha" min="55" max="100" step="1" value="100" style="flex:1">
+                  <b id="look-alpha-v" class="mono" style="font-size:12px;color:var(--ink-2);min-width:42px;text-align:right">100%</b>
+                </div>
+              </div>
             </div>
             <p class="note" id="look-note" style="margin-top:8px"></p>
           </div>
@@ -1341,6 +1353,7 @@
       "look.title":"外观","look.hint":"全部存在服务端，换台设备打开也是这一套",
       "look.reset":"恢复默认","look.theme":"主题","look.accent":"主题色","look.chart":"统计图样式",
       "look.chart.line":"折线","look.chart.bar":"柱状",
+      "look.alpha":"界面不透明度",
       "look.accent.note":"深浅两档由主色自动推出来，不用另外配。",
       "look.warn.light":"这个颜色太浅（或太深），文字和按钮的对比度会不够——能看清就继续用，看不清就换一个。",
       "look.images":"图片","look.imm":"上传即生效，不用点保存",
@@ -1481,12 +1494,14 @@
       "ov.rank.empty":"当前时间范围没有匹配的请求","ov.rank.total":"总计",
       "ov.rank.dropped":"当前维度不支持按 {f} 筛选，已忽略",
       "dim.route":"路由","dim.backend":"后端","dim.host":"域名 Host","dim.status":"状态码",
-      "dim.ip":"客户端 IP","dim.ua":"User-Agent","dim.rule":"自定义规则",
+      "dim.ip":"客户端 IP","dim.ua":"User-Agent","dim.rule":"自定义规则","dim.waf":"WAF 规则",
       "op.eq":"等于","op.ne":"不等于","op.contains":"包含","op.ncontains":"不包含",
       "ov.chart.window":"粒度 {gran} · 范围 {range} · {n} 点","ov.chart.peak":"峰值",
       "ov.gran":"粒度","ov.range":"范围","ov.gran.toofine":"比采集间隔细，无数据",
       "ov.copy":"点击复制","ov.copied":"已复制：","ov.copy.manual":"已选中，按 Ctrl+C 复制",
       "ov.down":" · 更早的数据已降采样到 ",
+      "ov.coarse.note":" · 按小时聚合，保留 {d} 天（{n} 个点）",
+      "ov.coarse.warm":" · 长期曲线按小时累积，开工还不满一小时（最多保留 {d} 天）",
       "ov.toofew":" · 点太少，把范围调大或粒度调细",
       "tip.histpoints":"历史点数上限。写满后自动合并相邻点、分辨率翻倍，窗口变长但内存不涨。",
       "lg.requests":"请求","lg.errors":"错误","lg.in":"入","lg.out":"出",
@@ -1624,6 +1639,7 @@
       "look.title":"Appearance","look.hint":"Stored on the server — the same look on every device you open it from",
       "look.reset":"Reset","look.theme":"Theme","look.accent":"Accent color","look.chart":"Chart style",
       "look.chart.line":"Line","look.chart.bar":"Bar",
+      "look.alpha":"Panel opacity",
       "look.accent.note":"The darker and lighter shades are derived from the accent — nothing else to configure.",
       "look.warn.light":"This color is very light (or very dark); text and button contrast may suffer. Keep it if it reads fine, otherwise pick another.",
       "look.images":"Images","look.imm":"Applies immediately — no need to save",
@@ -1764,12 +1780,14 @@
       "ov.rank.empty":"No matching requests in this range","ov.rank.total":"total",
       "ov.rank.dropped":"This dimension can't be filtered by {f}; ignored",
       "dim.route":"Route","dim.backend":"Backend","dim.host":"Host","dim.status":"Status",
-      "dim.ip":"Client IP","dim.ua":"User-Agent","dim.rule":"Custom rule",
+      "dim.ip":"Client IP","dim.ua":"User-Agent","dim.rule":"Custom rule","dim.waf":"WAF rule",
       "op.eq":"equals","op.ne":"not equals","op.contains":"contains","op.ncontains":"not contains",
       "ov.chart.window":"Bucket {gran} · range {range} · {n} points","ov.chart.peak":"peak",
       "ov.gran":"Bucket","ov.range":"Range","ov.gran.toofine":"finer than sampling",
       "ov.copy":"Click to copy","ov.copied":"Copied: ","ov.copy.manual":"Selected — press Ctrl+C",
       "ov.down":" · older data downsampled to ",
+      "ov.coarse.note":" · hourly, {d} days kept ({n} points)",
+      "ov.coarse.warm":" · long-range series accumulates hourly; less than one hour since start (keeps up to {d} days)",
       "ov.toofew":" · too few points — widen the range or refine the bucket",
       "tip.histpoints":"Max stored points. When full, neighbours merge and resolution doubles: longer window, same memory.",
       "lg.requests":"requests","lg.errors":"errors","lg.in":"in","lg.out":"out",
@@ -2613,7 +2631,8 @@
   }
 
   // ---------- 排行榜：维度 / 时间范围 / 条件筛选 ----------
-  var RANK_DIMS = ["route", "backend", "host", "status", "ip", "ua", "rule"];
+  // waf 单独一维：内置检测和自定义规则是两回事，混在一起看不出来是谁拦的
+  var RANK_DIMS = ["route", "backend", "host", "status", "ip", "ua", "rule", "waf"];
   var FILTER_OPS = ["eq", "ne", "contains", "ncontains"];
 
   function dimLabel(d){ return t("dim." + d); }
@@ -3668,6 +3687,13 @@
     put("--loading", d && d.loading);
     put("--bg-img", d && d.bg);
 
+    // 面板不透明度：只在启用自定义外观时生效，关掉就回到 1
+    var alpha = on && d && d.panel_alpha ? Number(d.panel_alpha) : 100;
+    alpha = Math.max(55, Math.min(100, alpha || 100));
+    if (on) root.setProperty("--panel-a", String(alpha / 100));
+    else root.removeProperty("--panel-a");
+    if ($("look-alpha-v")) $("look-alpha-v").textContent = alpha + "%";
+
     var hasBg = !!(on && d && d.bg);
     document.body.classList.toggle("custom-bg", hasBg);
     document.body.classList.toggle("custom-loading", !!(on && d && d.loading));
@@ -3715,6 +3741,8 @@
       $("f-look-hex").value = d.accent || "#0052d9";
     }
     renderSwatches(d.accent || "#0052d9");
+    if ($("f-look-alpha")) $("f-look-alpha").value = String(d.panel_alpha || 100);
+    if ($("look-alpha-v")) $("look-alpha-v").textContent = (d.panel_alpha || 100) + "%";
     var seg = $("look-seg");
     if (seg){
       var style = (d.enabled && d.chart_style === "bar") ? "bar" : "line";
@@ -3827,6 +3855,10 @@
       renderSwatches(c);
       previewLook();
     });
+    $("f-look-alpha").addEventListener("input", function(){
+      if ($("look-alpha-v")) $("look-alpha-v").textContent = this.value + "%";
+      previewLook();
+    });
     $("look-seg").addEventListener("click", function(ev){
       var b = ev.target.closest("[data-style]");
       if (!b) return;
@@ -3868,6 +3900,7 @@
     d.enabled = true;
     d.accent = accent;
     d.chart_style = style;
+    d.panel_alpha = Number($("f-look-alpha").value) || 100;
     applyLook(d);
     // 只重画图片格子和状态行；输入框是用户正在操作的东西，不能回写
     renderLookAssets(d);
@@ -3884,7 +3917,10 @@
     setBusy(btn, true);
     api("/api/appearance", {
       method: "PUT", headers: {"content-type": "application/json"},
-      body: JSON.stringify({enabled: true, accent: accent, chart_style: style})
+      body: JSON.stringify({
+        enabled: true, accent: accent, chart_style: style,
+        panel_alpha: Number($("f-look-alpha").value) || 100
+      })
     }).then(function(d){
       if (!d.ok) throw new Error(d.error || t("look.save.failed"));
       toast(t("look.saved"), "ok");
@@ -5424,9 +5460,18 @@
     if (!d) return;
     state.history = d;
     // 服务端存的分辨率比请求粗时，如实提示，别假装时间对得上
-    state.histNote = (d.exact === false && d.bucket_ms > view.gran * 1000)
-      ? (t("ov.down") + spanText(Math.round(d.bucket_ms / 1000)))
-      : "";
+    // 说明这段曲线是怎么来的：桶被放粗了、或者老数据来自小时环，
+    // 都要如实写出来，否则"30 天"看起来像 30 天，其实是每小时一个点。
+    if (d.exact === false && d.bucket_ms > view.gran * 1000){
+      state.histNote = t("ov.down") + spanText(Math.round(d.bucket_ms / 1000));
+    } else if (d.bucket_ms >= 3600000){
+      // 刚启动时长期环还是空的，说"保留 90 天（0 个点）"只会让人以为坏了
+      state.histNote = (d.coarse_points || 0) === 0
+        ? t("ov.coarse.warm", { d: d.history_days || 90 })
+        : t("ov.coarse.note", { d: d.history_days || 90, n: d.coarse_points || 0 });
+    } else {
+      state.histNote = "";
+    }
     drawChart();
     // 左侧指标条的 sparkline 也吃这份历史，必须先有数据再画
     renderAnTiles();

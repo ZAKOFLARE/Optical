@@ -498,6 +498,26 @@ curl -s -o /dev/null -m 6 "${AUTH[@]}" "http://$ADM/api/stats?by=status&range=86
 REV_S2="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config" | python3 -c 'import sys,json;print(json.load(sys.stdin)["rev"])' 2>/dev/null)"
 check "查排行榜不写配置（版本号不变）" "$REV_S1" "$REV_S2"
 
+# WAF 维度：内置检测项必须能单独看、单独筛，而不是混进「自定义规则」
+WAFRANK="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/stats?by=waf&range=3600&limit=10")"
+check "WAF 维度能列出被拦的检测项" '"by":"waf"' "$WAFRANK"
+check "WAF 维度有数据（前面刚拦过 SQL 注入）" 'sql' "$WAFRANK"
+# grep 用 BRE，方括号必须转义，否则会被当成字符类
+check "WAF 维度可单独筛选" '"filter_fields":\["waf"\]' "$WAFRANK"
+check "WAF 项不会漏进自定义规则维度" 'yes' "$(\
+  curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/stats?by=rule&range=3600&limit=20" | python3 -c '
+import sys, json
+rows = json.load(sys.stdin).get("rows") or []
+keys = [r.get("key", "") for r in rows]
+print("no" if any(k.startswith(("sql-", "xss-", "path-")) for k in keys) else "yes")
+')"
+
+# 大范围：前端能选 30 天，后端就不能把请求夹成 7 天
+H30="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/history?gran=3600&range=2592000")"
+check "30 天范围不再被夹短" '"range_secs":2592000' "$H30"
+check "历史带长期留存天数" '"history_days":90' "$H30"
+check "历史带长期环桶宽" '"coarse_bucket_ms":3600000' "$H30"
+
 echo "-- CLI status（本地令牌） --"
 ST="$("$BIN" --config "$CFG" status)"
 check "status 通过本地令牌认证" '运行中' "$ST"
@@ -596,6 +616,14 @@ curl -s -m 6 "${AUTH[@]}" -X PUT -H 'content-type: application/json' \
 AP2="$(curl -s -m 6 "http://$ADM/api/appearance")"
 check "非法主题色回落到默认蓝" '"accent":"#0052d9"' "$AP2"
 check "非法图表样式回落到折线" '"chart_style":"line"' "$AP2"
+
+# 面板不透明度：能存能读，低于可读下限要被夹住（不是原样存下来）
+curl -s -m 6 "${AUTH[@]}" -X PUT -H 'content-type: application/json' \
+  -d '{"panel_alpha":72}' "http://$ADM/api/appearance" >/dev/null
+check "面板不透明度能保存" '"panel_alpha":72' "$(curl -s -m 6 "http://$ADM/api/appearance")"
+curl -s -m 6 "${AUTH[@]}" -X PUT -H 'content-type: application/json' \
+  -d '{"panel_alpha":5}' "http://$ADM/api/appearance" >/dev/null
+check "过低的透明度被夹到 55" '"panel_alpha":55' "$(curl -s -m 6 "http://$ADM/api/appearance")"
 
 check "移除图标" '"removed":true' \
   "$(curl -s -m 6 "${AUTH[@]}" -X DELETE "http://$ADM/api/appearance/asset/rail")"

@@ -19,7 +19,11 @@ pub enum Dim {
     Status,
     Ip,
     Ua,
+    /// 自定义规则的命中
     Rule,
+    /// WAF 规则族的命中。和自定义规则分开：一个是"我自己写的策略"，
+    /// 一个是"网关内置的检测"，混在一张表里既说不清来源，也没法分开看趋势。
+    Waf,
 }
 
 impl Dim {
@@ -32,6 +36,7 @@ impl Dim {
             Dim::Ip => "ip",
             Dim::Ua => "ua",
             Dim::Rule => "rule",
+            Dim::Waf => "waf",
         }
     }
 
@@ -44,6 +49,7 @@ impl Dim {
             "ip" => Dim::Ip,
             "ua" => Dim::Ua,
             "rule" => Dim::Rule,
+            "waf" => Dim::Waf,
             _ => return None,
         })
     }
@@ -69,6 +75,7 @@ impl Dim {
             Dim::Ip => vec!["ip"],
             Dim::Ua => vec!["ua"],
             Dim::Rule => vec!["rule"],
+            Dim::Waf => vec!["waf"],
         }
     }
 }
@@ -181,6 +188,8 @@ struct Bucket {
     ips: HashMap<String, Counters>,
     uas: HashMap<String, Counters>,
     rules: HashMap<String, u32>,
+    /// WAF 命中：键是规则名（如 sql-error-blind），单独一张表
+    wafs: HashMap<String, u32>,
     /// 这个桶是否因为超容量丢掉过键。查询时汇总出去，
     /// 免得「全部」看起来是全量、其实早被挤掉一批长尾。
     trimmed: bool,
@@ -329,6 +338,23 @@ impl StatsStore {
         }
     }
 
+    /// WAF 命中单独记。以前它被塞进 `rules`，于是那一栏叫「自定义规则」、
+    /// 里面装的却是内置 WAF 的检测项——查的人根本分不清是谁拦的。
+    pub fn record_waf(&mut self, minute: i64, rules: &[String]) {
+        if rules.is_empty() {
+            return;
+        }
+        for ring in [&mut self.minute, &mut self.hour] {
+            let b = ring.touch(minute);
+            for r in rules {
+                if !r.is_empty() {
+                    *b.wafs.entry(r.clone()).or_insert(0) += 1;
+                }
+            }
+            b.trimmed |= trim(&mut b.wafs, CAP_RULES, |v| *v as u64);
+        }
+    }
+
     /// 规则命中单独记：它发生在 WAF 检查那一刻，那时还没有路由/后端决策，
     /// 硬塞进组合表只会得到一堆空维度。
     pub fn record_rules(&mut self, minute: i64, rules: &[String]) {
@@ -425,6 +451,15 @@ impl StatsStore {
                         e.requests += *n;
                     }
                 }
+                Dim::Waf => {
+                    for (rule, n) in b.wafs.iter() {
+                        if usable.iter().any(|f| f.field == Dim::Waf && !f.matches(rule)) {
+                            continue;
+                        }
+                        let e = acc.entry(rule.clone()).or_default();
+                        e.requests += *n;
+                    }
+                }
             }
         }
 
@@ -510,6 +545,41 @@ mod tests {
             backend: b,
             host: h,
         }
+    }
+
+    #[test]
+    fn waf_hits_have_their_own_dimension() {
+        let mut s = StatsStore::default();
+        // 必须落在"当前窗口"里：query 会按 range 过滤掉太旧的桶
+        let m = crate::state::now_ms() / 60_000;
+        s.record_waf(m, &["sql-error-blind".into(), "xss-script".into()]);
+        s.record_rules(m, &["my-own-rule".into()]);
+        let waf = s.query(3600, Dim::Waf, &[], 10);
+        let names: Vec<&str> = waf.rows.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(names.contains(&"sql-error-blind"), "{names:?}");
+        assert!(!names.contains(&"my-own-rule"), "自定义规则不能混进 WAF 维度");
+
+        let rule = s.query(3600, Dim::Rule, &[], 10);
+        let names: Vec<&str> = rule.rows.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(names.contains(&"my-own-rule"), "{names:?}");
+        assert!(!names.contains(&"sql-error-blind"), "WAF 检测项不能混进自定义规则");
+    }
+
+    #[test]
+    fn waf_dimension_can_be_filtered() {
+        let mut s = StatsStore::default();
+        // 必须落在"当前窗口"里：query 会按 range 过滤掉太旧的桶
+        let m = crate::state::now_ms() / 60_000;
+        s.record_waf(m, &["sql-error-blind".into(), "xss-script".into()]);
+        let f = Filter {
+            field: Dim::Waf,
+            op: Op::Eq,
+            value: "xss-script".into(),
+        };
+        let r = s.query(3600, Dim::Waf, &[f], 10);
+        assert_eq!(r.rows.len(), 1, "{:?}", r.rows);
+        assert_eq!(r.rows[0].0, "xss-script");
+        assert_eq!(Dim::Waf.filter_fields(), vec!["waf"]);
     }
 
     #[test]

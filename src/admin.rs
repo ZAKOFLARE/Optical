@@ -459,7 +459,8 @@ impl WsView {
     fn stats_query(&self) -> StatsQuery {
         StatsQuery {
             by: crate::stats::Dim::parse(&self.by).unwrap_or(crate::stats::Dim::Route),
-            range_secs: self.range.clamp(60, 7 * 86_400),
+            // 和 history_json 用同一个上限：前端能选 30 天，后端就不能只给 7 天
+            range_secs: self.range.clamp(60, crate::admin::MAX_RANGE_SECS),
             // 0 = 全部（和不截断语义一致）：这里绝不能 clamp 到 ≥1
             limit: self.limit.min(crate::stats::MAX_RANK_ROWS),
             filters: self
@@ -928,10 +929,13 @@ struct HistoryQuery {
 
 /// 历史曲线的 JSON 形状：HTTP `/api/history` 与 WS 推送共用一份，
 /// 免得两条路径慢慢长歪（前端也只写一份解析）。
+/// 查询范围上限：90 天。超过这个就没数据了，夹住比返回一段空曲线诚实。
+pub const MAX_RANGE_SECS: u64 = 90 * 86_400;
+
 fn history_json(st: &AppState, gran_secs: u64, range_secs: u64) -> Value {
     let (sample_ms, points_cap) = st.sampling();
     let gran = gran_secs.clamp((sample_ms / 1000).max(1), 86_400);
-    let range = range_secs.clamp(60, 90 * 86_400);
+    let range = range_secs.clamp(60, MAX_RANGE_SECS);
     let b = st.history_query(gran * 1000, range);
     let (stored_bucket_ms, stored_points) = st.history_meta();
     json!({
@@ -944,6 +948,10 @@ fn history_json(st: &AppState, gran_secs: u64, range_secs: u64) -> Value {
         // 服务端真实存着的分辨率：前端据此说明"更早的数据已经降采样"
         "stored_bucket_ms": stored_bucket_ms,
         "stored_points": stored_points,
+        // 长期环：只有请求的桶 ≥ 1 小时才会用到，前端据此说明"更早已按小时聚合"
+        "coarse_bucket_ms": crate::history::COARSE_BUCKET_MS,
+        "coarse_points": st.history_coarse_len(),
+        "history_days": st.history_days(),
         "points": b.points,
     })
 }
@@ -1606,6 +1614,8 @@ struct AppearanceReq {
     accent: Option<String>,
     #[serde(default)]
     chart_style: Option<String>,
+    #[serde(default)]
+    panel_alpha: Option<u8>,
 }
 
 async fn api_set_appearance(
@@ -1621,6 +1631,9 @@ async fn api_set_appearance(
     }
     if let Some(v) = req.chart_style {
         cfg.appearance.chart_style = v;
+    }
+    if let Some(v) = req.panel_alpha {
+        cfg.appearance.panel_alpha = v;
     }
     cfg.appearance.normalize();
     let accent = cfg.appearance.accent.clone();
