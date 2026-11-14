@@ -236,6 +236,40 @@ check "下发会话 Cookie" 'optical_sid=' "$COOKIE"
 AUTH=(-H "cookie: $COOKIE")
 check "带 Cookie 访问 /api/status" '"ok":true' "$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/status")"
 
+echo "-- 交付形态（WebUI / WebSocket 开关）--"
+set_delivery() {
+  local want="$1" rev body
+  rev="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config" | python3 -c 'import sys,json;print(json.load(sys.stdin)["rev"])')"
+  body="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config" | WANT="$want" python3 -c '
+import sys, json, os
+c = json.load(sys.stdin)["config"]
+c.setdefault("delivery", {}).update(json.loads(os.environ["WANT"]))
+print(json.dumps(c))
+')"
+  curl -s -m 8 -X PUT "${AUTH[@]}" -H 'content-type: application/json' \
+    -H "x-optical-config-rev: $rev" --data-binary "$body" "http://$ADM/api/config" >/dev/null
+}
+# 档一：全关
+set_delivery '{"webui":false,"websocket":false}'
+sleep 1.5
+check "关闭 WebUI 后 / 返回提示而非页面" 'WebUI' "$(curl -s -m 6 "http://$ADM/")"
+check "关闭 WebUI 后 REST 仍可用" '"ok":true' "$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/status")"
+# 必须带全升级头：缺 Sec-WebSocket-Key 会被 axum 在进 handler 前判成非法升级（400），
+# 那测的是 axum 而不是我们的开关。
+check "关闭 WS 后 /api/ws 拒绝升级" '503' \
+  "$(curl -s -o /dev/null -w '%{http_code}' -m 6 "${AUTH[@]}" \
+     -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+     -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
+     "http://$ADM/api/ws")"
+# 档三：WebUI 关、WS 开
+set_delivery '{"webui":false,"websocket":true}'
+sleep 1.5
+check "档三：WebUI 仍关闭" 'WebUI' "$(curl -s -m 6 "http://$ADM/")"
+# 恢复全功能（默认档二），别影响后面所有用 WebUI/WS 的用例
+set_delivery '{"webui":true,"websocket":true}'
+sleep 1.5
+check "恢复全功能后 / 返回 HTML 页面" '<!doctype html>' "$(curl -s -m 6 "http://$ADM/" | tr 'A-Z' 'a-z' | head -c 60)"
+
 echo "-- 基础转发 / 路由 / 后端池 --"
 check "默认上游转发" '"path":"/hello"' "$(curl -s -m 6 "http://$GW/hello?x=1")"
 check "路由命中并剥离前缀" '"path":"/v1/ping"' "$(curl -s -m 6 "http://$GW/api/v1/ping")"

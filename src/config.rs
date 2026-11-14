@@ -59,6 +59,8 @@ pub struct Config {
     pub appearance: crate::appearance::AppearanceConfig,
     /// 响应压缩：gzip / brotli
     pub compression: CompressionConfig,
+    /// 交付形态（WebUI / WebSocket 开关）
+    pub delivery: DeliveryConfig,
     /// 背压：连接级 + 请求级准入
     pub backpressure: BackpressureConfig,
     /// 维护与清理
@@ -424,6 +426,32 @@ impl Default for MaintenanceConfig {
             cache_low_pct: 70,
             cache_auto_purge: true,
         }
+    }
+}
+
+/// 交付形态：控制"给谁用"的面，不控制"能不能用"。
+///
+/// 三档对应（CLI 与数据面网关始终可用，不拆）：
+/// - 档一（网关 + CLI）       ：webui=false, websocket=false
+/// - 档二（全功能，默认）     ：webui=true,  websocket=true
+/// - 档三（网关 + WS + CLI）  ：webui=false, websocket=true（程序化/Ops 接入，不要人看的界面）
+///
+/// 注意：关 WebUI 只关**静态页面**，REST API 照常服务——CLI 和 WebSocket
+/// 都依赖 REST，把它们一起关掉等于把 CLI 也废了。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DeliveryConfig {
+    /// 是否提供 WebUI 静态页面（`/`）。false 时返回一段提示，
+    /// REST 与 WebSocket 不受影响。
+    pub webui: bool,
+    /// 是否提供 `/api/ws` 实时推送。false 时拒绝升级，
+    /// WebUI（若开启）会自动回退到 HTTP 轮询。
+    pub websocket: bool,
+}
+
+impl Default for DeliveryConfig {
+    fn default() -> Self {
+        Self { webui: true, websocket: true }
     }
 }
 
