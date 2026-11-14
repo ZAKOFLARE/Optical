@@ -694,6 +694,8 @@
               <th style="text-align:right" data-i18n="ov.rank.err">错误</th>
               <th data-i18n="ov.rank.pct">占比</th>
               <th style="text-align:right" data-i18n="ov.rank.avg">平均耗时</th>
+              <th style="text-align:right" title="50% 的请求慢于这个值">P50</th>
+              <th style="text-align:right" title="0.1% 的请求慢于这个值">P999</th>
             </tr></thead>
             <tbody id="rank-body"></tbody>
           </table>
@@ -1082,6 +1084,10 @@
                     <option value="self-signed" data-i18n="cf.degrade.self">self-signed（证书坏了退回自签继续服务）</option>
                     <option value="strict" data-i18n="cf.degrade.strict">strict（证书不可用就不开 HTTPS）</option>
                   </select></div>
+                <div class="field"><label>tls.session_cache_size<i class="q" data-i18n-tip="tip.tlssession">?</i></label>
+                  <input type="number" id="f-tls-session" min="0" step="64"></div>
+                <div class="field"><label>tls.session_tickets<i class="q" data-i18n-tip="tip.tlsticket">?</i></label>
+                  <select id="f-tls-tickets"><option value="true">true</option><option value="false">false</option></select></div>
                 <div class="field"><label>compression.enabled</label>
                   <select id="f-cmp-enabled"><option value="true">true</option><option value="false">false</option></select></div>
                 <div class="field"><label>compression.gzip</label>
@@ -1583,6 +1589,8 @@
       "cf.paths.resolved":"当前解析结果：data={data} · history={history} · audit={audit} · tls={tls} · errors={errors}",
       "cf.err.dir":"错误页目录：{dir}",
       "ph.autodir":"留空 = 配置文件所在目录","ph.subdir":"留空 = <data_dir>/子目录",
+      "tip.tlssession":"TLS 1.2 会话缓存的条数。会话恢复让老客户端免一次完整握手（省一个 RTT + 一次非对称计算）。0 = 关闭恢复。",
+      "tip.tlsticket":"TLS 1.3 会话票据：true = 客户端恢复时 1-RTT 直连；false = 每次完整握手。关掉更保守（前向保密窗口更短），但每次都要重新算密钥。",
       "ph.trusted":"10.0.0.0/8, 172.16.0.0/12（留空 = 不信任任何转发头）",
       "tip.trusted":"只有这些来源发来的 X-Forwarded-For / CF-Connecting-IP 才作数。留空 = 谁都不信：XFF 是客户端能随便写的头，无脑采信等于让任何人把自己伪装成任意 IP，IP 黑名单和按 IP 限流会同时失效。挂 CDN 时把它的出口网段填进来。",
       "ph.serverheader":"留空 = 不发送 Server 头",
@@ -1883,6 +1891,8 @@
       "cf.paths.resolved":"Resolved: data={data} · history={history} · audit={audit} · tls={tls} · errors={errors}",
       "cf.err.dir":"Error page dir: {dir}",
       "ph.autodir":"Empty = config file directory","ph.subdir":"Empty = <data_dir>/subdir",
+      "tip.tlssession":"TLS 1.2 session cache size. Resumption spares legacy clients a full handshake (one RTT + one asymmetric key computation). 0 = disabled.",
+      "tip.tlsticket":"TLS 1.3 session tickets: true = 1-RTT resumption; false = full handshake every time. Turning it off is more conservative (shorter forward-secrecy window) at the cost of recomputing keys each time.",
       "ph.trusted":"10.0.0.0/8, 172.16.0.0/12 (empty = trust no forwarding headers)",
       "tip.trusted":"Only these sources may set X-Forwarded-For / CF-Connecting-IP. Empty means trust none: XFF is client-writable, so trusting it blindly lets anyone impersonate any IP and defeats both the IP blocklist and per-IP rate limiting. Put your CDN egress ranges here.",
       "ph.serverheader":"Empty = do not send a Server header",
@@ -2765,6 +2775,8 @@
         '<td class="num"'+errStyle+'>'+r.errors+'</td>'+
         '<td><span class="pct"><i style="width:'+pct+'%"></i></span><b class="pct-n">'+pct.toFixed(1)+'%</b></td>'+
         '<td class="num" style="text-align:right">'+(r.avg_ms ? r.avg_ms + ' ms' : '—')+'</td>'+
+        '<td class="num" style="text-align:right">'+(r.p50_ms ? r.p50_ms + ' ms' : '—')+'</td>'+
+        '<td class="num" style="text-align:right">'+(r.p999_ms ? r.p999_ms + ' ms' : '—')+'</td>'+
       '</tr>';
     }).join("");
     // 每秒重建会把正在拖的选区、正在点的那一行一起抹掉（和 Top 表同一个坑）
@@ -5195,6 +5207,8 @@
     $("f-tls-min").value=c.tls.min_version; $("f-tls-cert").value=c.tls.cert||""; $("f-tls-key").value=c.tls.key||"";
     $("f-cache-enabled").value=String(!!c.cache.enabled); $("f-cache-ttl").value=c.cache.ttl_secs;
     if (c.tls) $("f-tls-degrade").value = c.tls.degrade === "strict" ? "strict" : "self-signed";
+    if (c.tls) $("f-tls-session").value = c.tls.session_cache_size == null ? 1024 : c.tls.session_cache_size;
+    if (c.tls) $("f-tls-tickets").value = String(c.tls.session_tickets !== false);
     var cmp = c.compression || {};
     $("f-cmp-enabled").value=String(cmp.enabled !== false);
     $("f-cmp-gzip").value=String(cmp.gzip !== false);
@@ -5280,6 +5294,8 @@
     cfg.cache.max_bytes=Number($("f-cache-bytes").value)||1048576;
     cfg.cache.max_entries=Number($("f-cache-entries").value)||128;
     cfg.tls.degrade=$("f-tls-degrade").value;
+    cfg.tls.session_cache_size=Math.max(0, Number($("f-tls-session").value)||0);
+    cfg.tls.session_tickets=$("f-tls-tickets").value==="true";
     cfg.compression = cfg.compression || {};
     cfg.compression.enabled=$("f-cmp-enabled").value==="true";
     cfg.compression.gzip=$("f-cmp-gzip").value==="true";

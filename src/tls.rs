@@ -149,6 +149,16 @@ fn build_config(cfg: &TlsConfig, cert_pem: &str, key_pem: &str) -> Result<Rustls
 
     // 只允许 HTTP/1.1 与 h2，别把 ALPN 交给默认值
     server.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+
+    // 会话复用显式配置，不依赖 rustls 默认值：
+    // 默认值改了（或某天被裁剪）会悄悄退化成"每次完整握手"，性能掉一截还没日志。
+    // TLS 1.2 会话缓存条数；0 = 关闭恢复
+    server.session_storage =
+        tokio_rustls::rustls::server::ServerSessionMemoryCache::new(cfg.session_cache_size);
+    // TLS 1.3 会话票据开关：rustls 用"发送票据数量"表达，0 = 关。
+    // 默认发 2 张，够客户端连开多条连接时各自恢复。
+    server.send_tls13_tickets = if cfg.session_tickets { 2 } else { 0 };
+
     Ok(server)
 }
 
@@ -800,6 +810,20 @@ mod tests {
         assert!(!m.self_signed);
         assert!(m.degraded.is_none());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn session_resumption_flags_are_applied() {
+        let (c, k) = test_pair(&["a.example.com"]);
+        let mut cfg = TlsConfig::default();
+        // 票据关闭 → rustls 发 0 张
+        cfg.session_tickets = false;
+        let sc = build_config(&cfg, &c, &k).unwrap();
+        assert_eq!(sc.send_tls13_tickets, 0, "session_tickets=false 时应发 0 张票据");
+        // 开启 → 默认发 2 张
+        cfg.session_tickets = true;
+        let sc = build_config(&cfg, &c, &k).unwrap();
+        assert_eq!(sc.send_tls13_tickets, 2, "session_tickets=true 时应发 2 张票据");
     }
 
     #[test]

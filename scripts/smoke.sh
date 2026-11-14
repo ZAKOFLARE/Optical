@@ -572,6 +572,8 @@ check "规则直接指定回源 URL" 'x-optical-upstream: 127.0.0.1:18082' \
 ROUTE_RANK="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/stats?by=route&range=3600&limit=20")"
 check "默认上游记为 default（不再是 -）" '"key":"default"' "$ROUTE_RANK"
 check "规则直接返回时记下规则名" '"key":"rule:custom"' "$ROUTE_RANK"
+check "排行榜返回 P50 分位" '"p50_ms"' "$ROUTE_RANK"
+check "排行榜返回 P999 分位" '"p999_ms"' "$ROUTE_RANK"
 
 echo "-- 规则级限速 / ALL 匹配 --"
 # ALL 条件 + 全程共享的令牌桶（key=rule），这样断言不受来源 IP 影响。
