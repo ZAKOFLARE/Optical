@@ -55,6 +55,10 @@ pub enum MatchOp {
     Wildcard,
     /// CIDR 网段，仅 client_ip 用
     Cidr,
+    /// 不在该 CIDR 网段内，仅 client_ip 用。与 Cidr 成对——
+    /// 之前只有"在网段内才命中"，想排除某段 IP 得写好几条反着拼，很别扭。
+    #[serde(rename = "ncidr")]
+    NCidr,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -351,6 +355,7 @@ fn one_match(m: &MatchRule, f: &ReqFacts<'_>) -> bool {
 
     match m.op {
         MatchOp::Cidr => cidr_match(&m.value, &subject),
+        MatchOp::NCidr => !cidr_match(&m.value, &subject),
         _ => {
             let (s, v) = (subject.to_lowercase(), m.value.to_lowercase());
             match m.op {
@@ -366,7 +371,7 @@ fn one_match(m: &MatchRule, f: &ReqFacts<'_>) -> bool {
                 }
                 MatchOp::Suffix => s.ends_with(&v),
                 MatchOp::Wildcard => wildcard_match(&v, &s),
-                MatchOp::Cidr => false,
+                MatchOp::Cidr | MatchOp::NCidr => false,
             }
         }
     }
@@ -575,6 +580,34 @@ mod tests {
             Actions::default(),
         );
         assert_eq!(resolve(&[wild], &f).hit.len(), 1);
+    }
+
+    #[test]
+    fn ncidr_is_negation_of_cidr() {
+        let h = http::HeaderMap::new();
+        let f = facts(&h); // client_ip = 192.168.1.20
+        // 不在 10.0.0.0/8 网段内 → ncidr 命中
+        let not_in = rule(
+            vec![m(MatchKind::ClientIp, MatchOp::NCidr, "10.0.0.0/8")],
+            Actions::default(),
+        );
+        assert_eq!(resolve(&[not_in], &f).hit.len(), 1);
+        // 就在 192.168.0.0/16 网段内 → ncidr 不该命中
+        let in_same = rule(
+            vec![m(MatchKind::ClientIp, MatchOp::NCidr, "192.168.0.0/16")],
+            Actions::default(),
+        );
+        assert_eq!(resolve(&[in_same], &f).hit.len(), 0);
+    }
+
+    #[test]
+    fn ncidr_serde_roundtrip() {
+        // 配置里写 "ncidr" 能反序列化出来，别只在内存里能用
+        let r: MatchRule = serde_json::from_str(
+            r#"{"kind":"client_ip","name":"","op":"ncidr","value":"10.0.0.0/8"}"#,
+        )
+        .unwrap();
+        assert_eq!(r.op, MatchOp::NCidr);
     }
 
     #[test]

@@ -1529,7 +1529,7 @@
       "mk.ext":"文件后缀","mk.filename":"文件名","mk.header":"请求头","mk.scheme":"请求协议",
       "mk.all":"全部请求","mk.client_ip":"客户端 IP","mk.method":"请求方法","mk.cookie":"Cookie",
       "mo.eq":"等于","mo.ne":"不等于","mo.contains":"包含","mo.ncontains":"不包含",
-      "mo.prefix":"前缀","mo.suffix":"后缀","mo.wildcard":"通配","mo.cidr":"网段","ov.rank.key":"名称","ov.rank.req":"请求","ov.rank.err":"错误",
+      "mo.prefix":"前缀","mo.suffix":"后缀","mo.wildcard":"通配","mo.cidr":"网段内","mo.ncidr":"网段外","ov.rank.key":"名称","ov.rank.req":"请求","ov.rank.err":"错误",
       "ov.rank.pct":"占比","ov.rank.avg":"平均耗时","ov.rank.add":"添加筛选","ov.rank.remove":"删除",
       "ov.rank.value":"值，如 2xx / api","ov.rank.nofilter":"暂无筛选条件，统计全部流量",
       "ov.rank.empty":"当前时间范围没有匹配的请求","ov.rank.total":"总计",
@@ -1828,7 +1828,7 @@
       "mk.ext":"Extension","mk.filename":"Filename","mk.header":"Header","mk.scheme":"Scheme",
       "mk.all":"All requests","mk.client_ip":"Client IP","mk.method":"Method","mk.cookie":"Cookie",
       "mo.eq":"equals","mo.ne":"not equals","mo.contains":"contains","mo.ncontains":"not contains",
-      "mo.prefix":"prefix","mo.suffix":"suffix","mo.wildcard":"wildcard","mo.cidr":"CIDR","ov.rank.key":"Name","ov.rank.req":"Requests","ov.rank.err":"Errors",
+      "mo.prefix":"prefix","mo.suffix":"suffix","mo.wildcard":"wildcard","mo.cidr":"in CIDR","mo.ncidr":"not in CIDR","ov.rank.key":"Name","ov.rank.req":"Requests","ov.rank.err":"Errors",
       "ov.rank.pct":"Share","ov.rank.avg":"Avg latency","ov.rank.add":"Add filter","ov.rank.remove":"Remove",
       "ov.rank.value":"value, e.g. 2xx / api","ov.rank.nofilter":"No filters — counting all traffic",
       "ov.rank.empty":"No matching requests in this range","ov.rank.total":"total",
@@ -3546,7 +3546,7 @@
   // 比如给全站加一道限速，不用再编个 / 前缀之类的近似条件
   var MATCH_KINDS = ["all","host","path","full_path","query","ext","filename","header","scheme","client_ip","method","cookie"];
   var LIMIT_KEYS = ["client_ip","rule","rule_ip"];
-  var MATCH_OPS = ["eq","ne","contains","ncontains","prefix","suffix","wildcard","cidr"];
+  var MATCH_OPS = ["eq","ne","contains","ncontains","prefix","suffix","wildcard","cidr","ncidr"];
 
   function blankRule(){
     return {
