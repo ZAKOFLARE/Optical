@@ -530,7 +530,15 @@ c['rules'] = [
    'actions':{'custom_response':{'status':200,'content_type':'text/plain','body':'RULE_OK'},'server_name':'rule-srv'}},
   {'name':'auth','enabled':True,'matches':[{'kind':'path','name':'','op':'prefix','value':'/r-auth'}],
    'actions':{'token_auth':{'name':'x-token','value':'s3cret','from_query':False}}},
-  {'name':'fail','enabled':False,'matches':[{'kind':'host','name':'','op':'eq','value':'nope'}],'actions':{}}
+  {'name':'fail','enabled':False,'matches':[{'kind':'host','name':'','op':'eq','value':'nope'}],'actions':{}},
+  {'name':'ncidr','enabled':True,
+   'matches':[{'kind':'path','name':'','op':'prefix','value':'/r-ncidr'},
+              {'kind':'client_ip','name':'','op':'ncidr','value':'8.8.8.8/32'}],
+   'actions':{'custom_response':{'status':200,'content_type':'text/plain','body':'NCIDR_OK'}}},
+  {'name':'ncidr-neg','enabled':True,
+   'matches':[{'kind':'path','name':'','op':'prefix','value':'/r-ncidr-neg'},
+              {'kind':'client_ip','name':'','op':'ncidr','value':'127.0.0.0/8'}],
+   'actions':{'custom_response':{'status':200,'content_type':'text/plain','body':'SHOULD_NOT_MATCH'}}}
 ]
 print(json.dumps(c))
 " 2>/dev/null
@@ -546,6 +554,9 @@ check "自定义 server 名" 'rule-srv' "$(curl -si -m 6 "http://$GW/r-custom/" 
 check "规则命中标记" 'custom' "$(curl -si -m 6 "http://$GW/r-custom/" | tr -d '\r' | grep -i '^x-optical-rule:')"
 check "Token 鉴权拦截无令牌请求" '401' "$(code "http://$GW/r-auth/")"
 check "Token 鉴权放行正确令牌" '200' "$(code -H 'x-token: s3cret' "http://$GW/r-auth/")"
+check "客户端 IP 不在网段内（ncidr）命中" 'NCIDR_OK' "$(curl -s -m 6 "http://$GW/r-ncidr/")"
+check "客户端 IP 在网段内（ncidr）不命中" 'yes' \
+  "$(curl -s -m 6 "http://$GW/r-ncidr-neg/" | grep -q SHOULD_NOT_MATCH && echo no || echo yes)"
 
 # 路由维度的语义：没配路由不等于 `-`
 ROUTE_RANK="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/stats?by=route&range=3600&limit=20")"
