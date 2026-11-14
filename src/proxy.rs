@@ -178,11 +178,8 @@ pub async fn handle(
     };
 
     let (mut parts, incoming) = req.into_parts();
-    let original_host = parts
-        .headers
-        .get(HOST)
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_owned);
+    let original_host = request_host(&parts.uri, &parts.headers);
+
     let path = parts.uri.path().to_string();
     let query = parts.uri.query().map(str::to_owned);
     let ua = parts
@@ -303,6 +300,25 @@ pub async fn handle(
     // 事实结构借了 parts.headers，所以必须在一个独立作用域里用完即弃，
     // 否则后面改写请求头时借用检查直接拦下来。
     let host_str = original_host.clone().unwrap_or_default();
+
+    // 统计记账：早于选路的出口只有域名，没有 route/backend。
+    // 以前这些地方调 record_profile（空维度），于是 WAF 拦截、限流、重定向、
+    // 上游失败在分析里全被归到 "—" 底下——Host 一栏 994 次只有一条 `-` 就是这么来的。
+    macro_rules! note {
+        ($status:expr) => {
+            state.record_hit(
+                &ua,
+                &ip_str,
+                $status,
+                crate::stats::ReqDims {
+                    route: "",
+                    backend: "",
+                    host: &host_str,
+                },
+                0,
+            )
+        };
+    }
     let method_str = parts.method.as_str().to_string();
     let query_str = query.clone().unwrap_or_default();
     let rule_hit = {
@@ -388,7 +404,7 @@ pub async fn handle(
     {
         state.metrics.waf_blocks.fetch_add(1, Ordering::Relaxed);
         state.record_rule_hit("dos-body-size");
-        state.record_profile(&ua, &ip_str, 413);
+        note!(413);
         state.audit.push(
             &cfg.storage,
             crate::storage::AuditEntry {
@@ -465,7 +481,7 @@ pub async fn handle(
                     rule: result.top_rule.unwrap_or("waf").into(),
                 },
             );
-            state.record_profile(&ua, &ip_str, 403);
+            note!(403);
             return error_response(
                 &state,
                 &cfg,
@@ -506,7 +522,7 @@ pub async fn handle(
                     .to_string()
             };
             if got != tk.value {
-                state.record_profile(&ua, &ip_str, 401);
+                note!(401);
                 return error_response(&state, &cfg, StatusCode::UNAUTHORIZED, "缺少或错误的访问令牌", Some("rule-token"));
             }
         }
@@ -518,20 +534,20 @@ pub async fn handle(
             Some(q) => format!("{}?{q}", path),
             None => path.clone(),
         };
-        state.record_profile(&ua, &ip_str, 301);
+        note!(301);
         return redirect_response(&state, &cfg, 301, &format!("https://{host}{uri}"));
     }
 
     if let Some(r) = &act.redirect {
         if !r.to.is_empty() {
             let target = crate::rules::expand(&r.to, &vars);
-            state.record_profile(&ua, &ip_str, r.status);
+            note!(r.status);
             return redirect_response(&state, &cfg, r.status.max(300), &target);
         }
     }
 
     if let Some(c) = &act.custom_response {
-        state.record_profile(&ua, &ip_str, c.status);
+        note!(c.status);
         let ct = if c.content_type.is_empty() {
             "text/html; charset=utf-8".to_string()
         } else {
@@ -555,7 +571,7 @@ pub async fn handle(
 
     if let Some(limit) = act.max_upload_bytes {
         if content_length as u64 > limit {
-            state.record_profile(&ua, &ip_str, 413);
+            note!(413);
             return error_response(
                 &state,
                 &cfg,
@@ -567,7 +583,7 @@ pub async fn handle(
     }
 
     if is_ws && act.ws == Some(false) {
-        state.record_profile(&ua, &ip_str, 403);
+        note!(403);
         return error_response(&state, &cfg, StatusCode::FORBIDDEN, "该路径不允许 WebSocket 升级", Some("rule-ws"));
     }
 
@@ -610,7 +626,7 @@ pub async fn handle(
             Some(q) => format!("{}?{q}", path),
             None => path.clone(),
         };
-        state.record_profile(&ua, &ip_str, 301);
+        note!(301);
         return redirect_response(&state, &cfg, 301, &format!("https://{host}{uri}"));
     }
 
@@ -810,12 +826,32 @@ pub async fn handle(
 
     // ---- 上游 URI ----
     let Ok(base) = decision.upstream.parse::<Uri>() else {
-        return fail(&state, &cfg, &ua, &ip_str, StatusCode::BAD_GATEWAY, "上游地址解析失败");
+        return fail(
+            &state,
+            &cfg,
+            &ua,
+            &ip_str,
+            &host_str,
+            decision.route_name.as_deref(),
+            StatusCode::BAD_GATEWAY,
+            "上游地址解析失败",
+        );
     };
     let up_scheme = base.scheme_str().unwrap_or("http").to_string();
     let authority = match base.authority() {
         Some(a) => a.as_str().to_string(),
-        None => return fail(&state, &cfg, &ua, &ip_str, StatusCode::BAD_GATEWAY, "上游缺少 host"),
+        None => {
+            return fail(
+                &state,
+                &cfg,
+                &ua,
+                &ip_str,
+                &host_str,
+                decision.route_name.as_deref(),
+                StatusCode::BAD_GATEWAY,
+                "上游缺少 host",
+            )
+        }
     };
 
     let mut new_path = path.clone();
@@ -867,7 +903,16 @@ pub async fn handle(
     {
         Ok(u) => u,
         Err(e) => {
-            return fail(&state, &cfg, &ua, &ip_str, StatusCode::BAD_GATEWAY, format!("构造上游 URI 失败: {e}"))
+            return fail(
+                &state,
+                &cfg,
+                &ua,
+                &ip_str,
+                &host_str,
+                decision.route_name.as_deref(),
+                StatusCode::BAD_GATEWAY,
+                format!("构造上游 URI 失败: {e}"),
+            )
         }
     };
 
@@ -907,7 +952,16 @@ pub async fn handle(
     let timeout = Duration::from_millis(timeout_ms);
     let resp = match tokio::time::timeout(timeout, client.request(upstream_req)).await {
         Err(_) => {
-            return fail(&state, &cfg, &ua, &ip_str, StatusCode::GATEWAY_TIMEOUT, format!("上游超时（{} ms）", timeout_ms))
+            return fail(
+                &state,
+                &cfg,
+                &ua,
+                &ip_str,
+                &host_str,
+                decision.route_name.as_deref(),
+                StatusCode::GATEWAY_TIMEOUT,
+                format!("上游超时（{} ms）", timeout_ms),
+            )
         }
         Ok(Err(e)) => {
             // 把目标写进去：只回一句 "连接上游失败" 的话，人只能去猜是证书、
@@ -917,6 +971,8 @@ pub async fn handle(
                 &cfg,
                 &ua,
                 &ip_str,
+                &host_str,
+                decision.route_name.as_deref(),
                 StatusCode::BAD_GATEWAY,
                 format!(
                     "连接上游失败: {e}（目标 {up_scheme}://{authority}；常见原因：后端没在监听、端口写错、回源协议该用 http 却写了 https）"
@@ -1237,7 +1293,17 @@ async fn websocket_tunnel(
     let status = resp.status();
     if status != StatusCode::SWITCHING_PROTOCOLS {
         state.metrics.errors.fetch_add(1, Ordering::Relaxed);
-        state.record_profile(ua, ip, status.as_u16());
+        state.record_hit(
+            ua,
+            ip,
+            status.as_u16(),
+            crate::stats::ReqDims {
+                route: "",
+                backend: "",
+                host: meta.authority,
+            },
+            0,
+        );
         let headers = resp.headers().clone();
         return Response::builder()
             .status(status)
@@ -1253,7 +1319,17 @@ async fn websocket_tunnel(
     let mut resp = resp;
     let upstream_upgrade = hyper::upgrade::on(&mut resp);
     state.metrics.ws_upgrades.fetch_add(1, Ordering::Relaxed);
-    state.record_profile(ua, ip, 101);
+    state.record_hit(
+        ua,
+        ip,
+        101,
+        crate::stats::ReqDims {
+            route: "",
+            backend: "",
+            host: meta.authority,
+        },
+        0,
+    );
 
     tokio::spawn(async move {
         match (client_upgrade.await, upstream_upgrade.await) {
@@ -1476,11 +1552,25 @@ fn fail(
     cfg: &Config,
     ua: &str,
     ip: &str,
+    // 域名与路由：没有它们，所有上游失败在分析里都会被归到 "—" 底下，
+    // 想查"哪个站点在报错"时一条都用不上
+    host: &str,
+    route: Option<&str>,
     status: StatusCode,
     msg: impl AsRef<str>,
 ) -> Response<ProxyBody> {
     state.metrics.errors.fetch_add(1, Ordering::Relaxed);
-    state.record_profile(ua, ip, status.as_u16());
+    state.record_hit(
+        ua,
+        ip,
+        status.as_u16(),
+        crate::stats::ReqDims {
+            route: route.unwrap_or(""),
+            backend: "",
+            host,
+        },
+        0,
+    );
     tracing::warn!(%status, reason = msg.as_ref(), "转发失败");
     error_response(state, cfg, status, msg.as_ref(), None)
 }
@@ -1596,6 +1686,26 @@ fn apply_rule_headers<B>(resp: &mut Response<B>, hit: &crate::rules::Resolved) {
 }
 
 /// 本地生成的错误响应：优先用运维自定义的错误页，绝不把内部细节原样吐给客户端。
+/// 取请求的域名。
+///
+/// 顺序：URI 的 authority → `Host` 头。
+///
+/// **不能反过来**：HTTP/2 客户端压根不发 `Host`，它用 `:authority`，
+/// 而 hyper 把这个值放进 URI 的 authority 里。只读 `Host` 头的话，
+/// 所有走 h2 的请求（浏览器 + 现代 CDN 回源基本都是）域名全是空的——
+/// 线上表现就是统计里 Host 那一栏只剩一条 `-`（994 次全是它），
+/// 站点/vhost 匹配、按域名分组的规则也一并落空。
+fn request_host(uri: &Uri, headers: &http::HeaderMap) -> Option<String> {
+    uri.authority()
+        .map(|a| a.as_str().to_string())
+        .or_else(|| {
+            headers
+                .get(HOST)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_owned)
+        })
+}
+
 /// 把几种限速维度映射成桶键。格式统一在这里定，查问题时才不用猜。
 fn limit_bucket(key: crate::rules::LimitKey, rule: &str, ip: &str) -> String {
     use crate::rules::LimitKey;
@@ -1693,6 +1803,43 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_comes_from_authority_when_there_is_no_host_header() {
+        // HTTP/2 就是这样：没有 Host 头，只有 :authority（hyper 放进 URI）。
+        // 线上踩过：只读 Host 头 → 统计里 Host 一栏 994 次全是 `-`。
+        let uri: Uri = "https://optical.zakoflare.com/api/x?y=1".parse().unwrap();
+        let h = http::HeaderMap::new();
+        assert_eq!(
+            request_host(&uri, &h).as_deref(),
+            Some("optical.zakoflare.com")
+        );
+    }
+
+    #[test]
+    fn host_falls_back_to_host_header_for_http1() {
+        // HTTP/1.1 的 origin-form 只有 path，域名仍在 Host 头里
+        let uri: Uri = "/api/x".parse().unwrap();
+        let mut h = http::HeaderMap::new();
+        h.insert(HOST, HeaderValue::from_static("example.com:8080"));
+        assert_eq!(request_host(&uri, &h).as_deref(), Some("example.com:8080"));
+    }
+
+    #[test]
+    fn host_is_none_when_neither_is_present() {
+        let uri: Uri = "/".parse().unwrap();
+        assert!(request_host(&uri, &http::HeaderMap::new()).is_none());
+    }
+
+    #[test]
+    fn authority_wins_over_conflicting_host_header() {
+        // 两者都有时以 authority 为准：h2 的 :authority 才是权威值，
+        // 中间件偶尔会塞一个不一致的 Host 头进来
+        let uri: Uri = "https://real.example/x".parse().unwrap();
+        let mut h = http::HeaderMap::new();
+        h.insert(HOST, HeaderValue::from_static("spoofed.example"));
+        assert_eq!(request_host(&uri, &h).as_deref(), Some("real.example"));
+    }
 
     #[test]
     fn hop_by_hop_and_connection_named_removed() {
