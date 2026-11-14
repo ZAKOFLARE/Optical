@@ -1579,6 +1579,10 @@
       "cf.paths.resolved":"当前解析结果：data={data} · history={history} · audit={audit} · tls={tls} · errors={errors}",
       "cf.err.dir":"错误页目录：{dir}",
       "ph.autodir":"留空 = 配置文件所在目录","ph.subdir":"留空 = <data_dir>/子目录",
+      "ph.trusted":"10.0.0.0/8, 172.16.0.0/12（留空 = 不信任任何转发头）",
+      "tip.trusted":"只有这些来源发来的 X-Forwarded-For / CF-Connecting-IP 才作数。留空 = 谁都不信：XFF 是客户端能随便写的头，无脑采信等于让任何人把自己伪装成任意 IP，IP 黑名单和按 IP 限流会同时失效。挂 CDN 时把它的出口网段填进来。",
+      "ph.trusted":"10.0.0.0/8, 172.16.0.0/12 (empty = trust no forwarding headers)",
+      "tip.trusted":"Only these sources may set X-Forwarded-For / CF-Connecting-IP. Empty means trust none: XFF is client-writable, so trusting it blindly lets anyone impersonate any IP and defeats both the IP blocklist and per-IP rate limiting. Put your CDN egress ranges here.",
       "ph.serverheader":"留空 = 不发送 Server 头",
       "ph.subfile":"留空 = <data_dir>/文件名","ph.errdir":"留空 = paths.error_pages_dir","ph.v6":"留空 = 不监听 IPv6",
       "ph.selfsigned":"留空 = 自动生成自签证书",
@@ -1876,6 +1880,8 @@
       "cf.paths.resolved":"Resolved: data={data} · history={history} · audit={audit} · tls={tls} · errors={errors}",
       "cf.err.dir":"Error page dir: {dir}",
       "ph.autodir":"Empty = config file directory","ph.subdir":"Empty = <data_dir>/subdir",
+      "ph.trusted":"10.0.0.0/8, 172.16.0.0/12 (empty = trust no forwarding headers)",
+      "tip.trusted":"Only these sources may set X-Forwarded-For / CF-Connecting-IP. Empty means trust none: XFF is client-writable, so trusting it blindly lets anyone impersonate any IP and defeats both the IP blocklist and per-IP rate limiting. Put your CDN egress ranges here.",
       "ph.serverheader":"Empty = do not send a Server header",
       "ph.subfile":"Empty = <data_dir>/file","ph.errdir":"Empty = paths.error_pages_dir","ph.v6":"Empty = no IPv6 listener",
       "ph.selfsigned":"Empty = auto-generate self-signed",
@@ -5177,6 +5183,7 @@
     $("f-listen-v6").value=c.server.listen_v6||""; $("f-admin-v6").value=c.server.admin_listen_v6||"";
     $("f-upstream").value=c.server.default_upstream; $("f-timeout").value=c.server.request_timeout_ms;
     $("f-server-header").value=c.server.server_header==null?"":c.server.server_header;
+    $("f-trusted").value=(c.server.trusted_proxies||[]).join(", ");
     $("f-loglevel").value=c.server.log_level;
     $("f-tls-enabled").value=String(!!c.tls.enabled); $("f-tls-listen").value=c.tls.listen;
     $("f-tls-listen-v6").value=c.tls.listen_v6||"";
@@ -5252,6 +5259,9 @@
     cfg.server.admin_listen_v6=$("f-admin-v6").value.trim();
     cfg.server.default_upstream=$("f-upstream").value.trim();
     cfg.server.server_header=$("f-server-header").value.trim();
+    cfg.server.trusted_proxies=$("f-trusted").value
+      .split(",").map(function(x){ return x.trim(); })
+      .filter(function(x){ return x.length>0; });
     cfg.server.request_timeout_ms=Number($("f-timeout").value)||1;
     cfg.server.log_level=$("f-loglevel").value;
     cfg.tls.enabled=$("f-tls-enabled").value==="true";

@@ -35,9 +35,12 @@ use tokio::net::{TcpListener, TcpStream};
 pub type ProxyBody = BoxBody<Bytes, hyper::Error>;
 pub type HttpClient = Client<HttpConnector, ProxyBody>;
 
-const HOP_BY_HOP: [&str; 8] = [
+const HOP_BY_HOP: [&str; 9] = [
     "connection",
     "keep-alive",
+    // 老代理客户端（部分 Java 库、旧 curl 配置）会发这个，它不是标准头，
+    // 原样转给上游只会让上游多一层误解
+    "proxy-connection",
     "proxy-authenticate",
     "proxy-authorization",
     "te",
@@ -167,7 +170,8 @@ pub async fn handle(
     state.metrics.requests.fetch_add(1, Ordering::Relaxed);
     let cfg = state.snapshot().await;
 
-    let client_ip = peer.ip();
+    // 真实客户端 IP：默认就取 TCP 对端；只有对端在 trusted_proxies 里才看转发头
+    let client_ip = client_ip(req.headers(), peer.ip(), &cfg.server.trusted_proxies);
     let ip_str = client_ip.to_string();
 
     // WS 必须在消费 request 之前把 upgrade future 取出来，hyper 只允许这一次
@@ -306,12 +310,17 @@ pub async fn handle(
     // 上游失败在分析里全被归到 "—" 底下——Host 一栏 994 次只有一条 `-` 就是这么来的。
     macro_rules! note {
         ($status:expr) => {
+            note!($status, "")
+        };
+        // 带 route 的版本：规则直接返回时用 `rule:<名字>`，
+        // 否则"路由"一栏只剩 `-`，看不出这条响应是谁给的
+        ($status:expr, $route:expr) => {
             state.record_hit(
                 &ua,
                 &ip_str,
                 $status,
                 crate::stats::ReqDims {
-                    route: "",
+                    route: $route,
                     backend: "",
                     host: &host_str,
                 },
@@ -343,6 +352,13 @@ pub async fn handle(
     // 动作是"最后一条命中的规则说了算"，所以 key 里的规则名也取最后那条——
     // 否则桶会挂在一个其实没生效的规则名下，查限额时对不上号。
     let hit_rule = rule_hit.hit.last().map(String::as_str).unwrap_or("-");
+    // 规则直接返回响应时，把它记进 route 维度：`rule:<名字>`。
+    // 这类请求根本没选路，留空只能是 `-`——排查时看不出是规则干的。
+    let rule_route = rule_hit
+        .hit
+        .last()
+        .map(|n| format!("rule:{n}"))
+        .unwrap_or_default();
     if let Some(rl) = &act.rate_limit {
         if rl.qps > 0 {
             let bucket = limit_bucket(rl.key, hit_rule, &ip_str);
@@ -534,20 +550,20 @@ pub async fn handle(
             Some(q) => format!("{}?{q}", path),
             None => path.clone(),
         };
-        note!(301);
+        note!(301, &rule_route);
         return redirect_response(&state, &cfg, 301, &format!("https://{host}{uri}"));
     }
 
     if let Some(r) = &act.redirect {
         if !r.to.is_empty() {
             let target = crate::rules::expand(&r.to, &vars);
-            note!(r.status);
+            note!(r.status, &rule_route);
             return redirect_response(&state, &cfg, r.status.max(300), &target);
         }
     }
 
     if let Some(c) = &act.custom_response {
-        note!(c.status);
+        note!(c.status, &rule_route);
         let ct = if c.content_type.is_empty() {
             "text/html; charset=utf-8".to_string()
         } else {
@@ -770,7 +786,9 @@ pub async fn handle(
                 &ip_str,
                 status.as_u16(),
                 crate::stats::ReqDims {
-                    route: decision.route_name.as_deref().unwrap_or(""),
+                    // 走默认上游时也要有名字：留空会让"路由"这一栏只剩 `-`，
+                    // 分不清"没配路由"和"配了但没命中"
+                    route: decision.route_name.as_deref().unwrap_or("default"),
                     backend: "",
                     host: original_host.as_deref().unwrap_or(""),
                 },
@@ -832,7 +850,7 @@ pub async fn handle(
             &ua,
             &ip_str,
             &host_str,
-            decision.route_name.as_deref(),
+            Some(decision.route_name.as_deref().unwrap_or("default")),
             StatusCode::BAD_GATEWAY,
             "上游地址解析失败",
         );
@@ -847,7 +865,7 @@ pub async fn handle(
                 &ua,
                 &ip_str,
                 &host_str,
-                decision.route_name.as_deref(),
+                Some(decision.route_name.as_deref().unwrap_or("default")),
                 StatusCode::BAD_GATEWAY,
                 "上游缺少 host",
             )
@@ -909,7 +927,7 @@ pub async fn handle(
                 &ua,
                 &ip_str,
                 &host_str,
-                decision.route_name.as_deref(),
+                Some(decision.route_name.as_deref().unwrap_or("default")),
                 StatusCode::BAD_GATEWAY,
                 format!("构造上游 URI 失败: {e}"),
             )
@@ -932,7 +950,7 @@ pub async fn handle(
             }
         }
     }
-    append_forwarded(&mut parts.headers, &peer, original_host.as_deref(), scheme);
+    append_forwarded(&mut parts.headers, client_ip, peer.ip(), original_host.as_deref(), scheme);
 
     // 压缩要在响应回来之后决定，但请求头马上就被 move 进上游请求了，先留住
     let accept_encoding = parts
@@ -958,7 +976,7 @@ pub async fn handle(
                 &ua,
                 &ip_str,
                 &host_str,
-                decision.route_name.as_deref(),
+                Some(decision.route_name.as_deref().unwrap_or("default")),
                 StatusCode::GATEWAY_TIMEOUT,
                 format!("上游超时（{} ms）", timeout_ms),
             )
@@ -972,7 +990,7 @@ pub async fn handle(
                 &ua,
                 &ip_str,
                 &host_str,
-                decision.route_name.as_deref(),
+                Some(decision.route_name.as_deref().unwrap_or("default")),
                 StatusCode::BAD_GATEWAY,
                 format!(
                     "连接上游失败: {e}（目标 {up_scheme}://{authority}；常见原因：后端没在监听、端口写错、回源协议该用 http 却写了 https）"
@@ -1143,7 +1161,7 @@ pub async fn handle(
         &ip_str,
         status.as_u16(),
         crate::stats::ReqDims {
-            route: decision.route_name.as_deref().unwrap_or(""),
+            route: decision.route_name.as_deref().unwrap_or("default"),
             backend: backend_name.as_deref().unwrap_or(""),
             host: original_host.as_deref().unwrap_or(""),
         },
@@ -1476,20 +1494,104 @@ fn apply_header_rules(
     applied
 }
 
+fn parse_trusted(list: &[String], ip: &std::net::IpAddr) -> bool {
+    let s = ip.to_string();
+    list.iter().any(|c| crate::rules::cidr_match(c, &s))
+}
+
+/// 客户端真实 IP。
+///
+/// 规则很简单，但顺序很关键：**只有直连对端在 `trusted_proxies` 里时才看转发头**。
+/// 否则任何人都能写一个 `X-Forwarded-For: 1.2.3.4` 把自己伪装掉——
+/// 那时 IP 黑名单和按 IP 限流会同时变成摆设。
+fn client_ip(
+    headers: &http::HeaderMap,
+    peer: std::net::IpAddr,
+    trusted: &[String],
+) -> std::net::IpAddr {
+    if trusted.is_empty() || !parse_trusted(trusted, &peer) {
+        return peer;
+    }
+    let mut chain: Vec<String> = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| {
+            v.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    if chain.is_empty() {
+        // 部分 CDN 只给专有头，不给标准 XFF
+        for name in ["cf-connecting-ip", "x-real-ip", "true-client-ip"] {
+            if let Some(v) = headers
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                chain.push(v.to_string());
+                break;
+            }
+        }
+    }
+    // 从右往左找第一个"不在可信段里"的地址：那是离我们最近的真实客户端。
+    // 从左往右取会被伪造链坑到（攻击者在最左边随便写）。
+    for candidate in chain.iter().rev() {
+        if let Ok(a) = candidate.parse::<std::net::IpAddr>() {
+            if !parse_trusted(trusted, &a) {
+                return a;
+            }
+        }
+    }
+    peer
+}
+
+/// 请求 ID：透传上游/客户端带来的，没有就生成一个。
+/// 长度要卡住——这东西会进日志和响应头，超长值属于给自己找麻烦。
+fn request_id(headers: &http::HeaderMap) -> String {
+    if let Some(v) = headers
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && s.len() <= 128)
+    {
+        return v.to_string();
+    }
+    use rand::RngCore;
+    let mut buf = [0u8; 8];
+    rand::thread_rng().fill_bytes(&mut buf);
+    buf.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// 给上游补齐全套"代理链"头。
+///
+/// 之前只有 XFF / X-Forwarded-Host / Proto 三个，实际部署里会缺：
+/// - `X-Real-IP`：nginx 生态的后端第一眼就看它，没有就拿 XFF 最后一跳猜；
+/// - `X-Forwarded-Port`：生成绝对 URL、判断是否需要跳转时要用；
+/// - `Forwarded`：RFC 7239 标准头，新一点的框架开始只看它；
+/// - `X-Request-Id`：没有就生成，全链路日志才有共同的串。
 fn append_forwarded(
     headers: &mut http::HeaderMap,
-    peer: &std::net::SocketAddr,
+    // client：解析出的真实客户端（可信代理链里最靠右的那个不可信地址）
+    // peer：直连对端。XFF 追加的是它，不是 client——
+    // 追加 client 会让 "1.2.3.4, 1.2.3.4" 这种自重复进链，
+    // 后面任何按跳数解析的中间件都会读错。
+    client: std::net::IpAddr,
+    peer: std::net::IpAddr,
     host: Option<&str>,
     scheme: &str,
 ) {
-    let ip = peer.ip().to_string();
+    let ip = client.to_string();
+    let hop = peer.to_string();
     let merged = match headers
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
         .filter(|s| !s.is_empty())
     {
-        Some(prev) => format!("{prev}, {ip}"),
-        None => ip,
+        Some(prev) => format!("{prev}, {hop}"),
+        None => hop.clone(),
     };
     if let Ok(v) = HeaderValue::from_str(&merged) {
         headers.insert(HeaderName::from_static("x-forwarded-for"), v);
@@ -1503,6 +1605,50 @@ fn append_forwarded(
         HeaderName::from_static("x-forwarded-proto"),
         HeaderValue::from_str(scheme).unwrap_or(HeaderValue::from_static("http")),
     );
+    // X-Real-IP：直接覆盖而不是追加。它语义是"单个客户端地址"，
+    // 追加成 "1.2.3.4, 5.6.7.8" 之后后端 parse 会直接失败。
+    if let Ok(v) = HeaderValue::from_str(&ip) {
+        headers.insert(HeaderName::from_static("x-real-ip"), v);
+    }
+
+    // X-Forwarded-Port：优先用原始 Host 里的端口，没有就按协议默认端口
+    let port = host
+        .and_then(|h| h.rsplit_once(':'))
+        .and_then(|(_, p)| p.parse::<u16>().ok())
+        .unwrap_or(if scheme == "https" { 443 } else { 80 });
+    headers.insert(
+        HeaderName::from_static("x-forwarded-port"),
+        HeaderValue::from_str(&port.to_string()).unwrap_or(HeaderValue::from_static("80")),
+    );
+
+    // Forwarded（RFC 7239）。IPv6 必须加引号并套方括号，否则分号分隔会解析错。
+    let for_part = if ip.contains(':') {
+        format!("\"[{ip}]\"")
+    } else {
+        ip.clone()
+    };
+    let mut fwd = format!("for={for_part};proto={scheme}");
+    if let Some(h) = host.filter(|h| !h.is_empty()) {
+        fwd.push_str(&format!(";host={h}"));
+    }
+    let merged_fwd = match headers
+        .get("forwarded")
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.is_empty())
+    {
+        Some(prev) => format!("{prev}, {fwd}"),
+        None => fwd,
+    };
+    if let Ok(v) = HeaderValue::from_str(&merged_fwd) {
+        headers.insert(HeaderName::from_static("forwarded"), v);
+    }
+
+    // 请求 ID：透传已有的，没有就生成一个
+    let rid = request_id(headers);
+    if let Ok(v) = HeaderValue::from_str(&rid) {
+        headers.insert(HeaderName::from_static("x-request-id"), v);
+    }
+
     let via = format!(
         "{} optical/{}",
         headers
@@ -1926,10 +2072,91 @@ mod tests {
     fn forwarded_headers_appended() {
         let mut h = http::HeaderMap::new();
         h.insert(HeaderName::from_static("x-forwarded-for"), HeaderValue::from_static("1.2.3.4"));
-        let peer: std::net::SocketAddr = "10.0.0.9:5555".parse().unwrap();
-        append_forwarded(&mut h, &peer, Some("api.local"), "https");
+        let client: std::net::IpAddr = "10.0.0.9".parse().unwrap();
+        append_forwarded(&mut h, client, "10.0.0.9".parse().unwrap(), Some("api.local"), "https");
         assert_eq!(h["x-forwarded-for"], "1.2.3.4, 10.0.0.9");
         assert_eq!(h["x-forwarded-proto"], "https");
+        // 后端最常读的那个头
+        assert_eq!(h["x-real-ip"], "10.0.0.9");
+        // 端口从 Host 里拿不到就按协议默认
+        assert_eq!(h["x-forwarded-port"], "443");
+        // RFC 7239
+        assert!(h["forwarded"].to_str().unwrap().contains("for=10.0.0.9"));
+        assert!(h["forwarded"].to_str().unwrap().contains("proto=https"));
+        // 请求 ID 必须存在，否则全链路日志串不起来
+        assert!(!h["x-request-id"].is_empty());
         assert!(h["via"].to_str().unwrap().contains("optical/"));
+    }
+
+    #[test]
+    fn forwarded_port_uses_host_port_when_present() {
+        let mut h = http::HeaderMap::new();
+        let client: std::net::IpAddr = "10.0.0.9".parse().unwrap();
+        append_forwarded(&mut h, client, "10.0.0.9".parse().unwrap(), Some("api.local:8443"), "https");
+        assert_eq!(h["x-forwarded-port"], "8443");
+    }
+
+    #[test]
+    fn forwarded_ipv6_is_quoted_for_rfc7239() {
+        // RFC 7239 要求 IPv6 用 "[::1]" 并加引号，否则分号分隔会解析错
+        let mut h = http::HeaderMap::new();
+        let client: std::net::IpAddr = "2001:db8::1".parse().unwrap();
+        append_forwarded(&mut h, client, "10.0.0.9".parse().unwrap(), Some("api.local"), "https");
+        let f = h["forwarded"].to_str().unwrap();
+        assert!(f.contains("for=\"[2001:db8::1]\""), "{f}");
+    }
+
+    #[test]
+    fn request_id_is_preserved_when_provided() {
+        let mut h = http::HeaderMap::new();
+        h.insert("x-request-id", HeaderValue::from_static("trace-abc-123"));
+        let client: std::net::IpAddr = "10.0.0.9".parse().unwrap();
+        append_forwarded(&mut h, client, "10.0.0.9".parse().unwrap(), None, "http");
+        assert_eq!(h["x-request-id"], "trace-abc-123");
+    }
+
+    #[test]
+    fn untrusted_peer_cannot_spoof_xff() {
+        // 默认不信任任何代理：客户端自带 XFF 也不能改变它在我们眼里的身份，
+        // 否则 IP 黑名单和按 IP 限流同时失效
+        let mut h = http::HeaderMap::new();
+        h.insert("x-forwarded-for", HeaderValue::from_static("1.2.3.4"));
+        let peer: std::net::IpAddr = "203.0.113.9".parse().unwrap();
+        assert_eq!(client_ip(&h, peer, &[]).to_string(), "203.0.113.9");
+        // 配了可信段，但对端不在里面，同样不采信
+        let trusted = vec!["10.0.0.0/8".to_string()];
+        assert_eq!(client_ip(&h, peer, &trusted).to_string(), "203.0.113.9");
+    }
+
+    #[test]
+    fn trusted_peer_uses_xff_and_takes_nearest_hop() {
+        let mut h = http::HeaderMap::new();
+        // 左边是攻击者伪造的，右边才是真实客户端
+        h.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("6.6.6.6, 198.51.100.7, 10.0.0.5"),
+        );
+        let peer: std::net::IpAddr = "10.0.0.9".parse().unwrap();
+        let trusted = vec!["10.0.0.0/8".to_string()];
+        // 从右往左找第一个不可信的：10.0.0.5 在可信段内，继续往左 → 198.51.100.7
+        assert_eq!(client_ip(&h, peer, &trusted).to_string(), "198.51.100.7");
+    }
+
+    #[test]
+    fn trusted_peer_falls_back_to_cdn_specific_header() {
+        // 有些 CDN 只给 CF-Connecting-IP，不给标准 XFF
+        let mut h = http::HeaderMap::new();
+        h.insert("cf-connecting-ip", HeaderValue::from_static("198.51.100.7"));
+        let peer: std::net::IpAddr = "10.0.0.9".parse().unwrap();
+        let trusted = vec!["10.0.0.0/8".to_string()];
+        assert_eq!(client_ip(&h, peer, &trusted).to_string(), "198.51.100.7");
+    }
+
+    #[test]
+    fn trusted_peer_without_headers_is_itself() {
+        let h = http::HeaderMap::new();
+        let peer: std::net::IpAddr = "10.0.0.9".parse().unwrap();
+        let trusted = vec!["10.0.0.0/8".to_string()];
+        assert_eq!(client_ip(&h, peer, &trusted).to_string(), "10.0.0.9");
     }
 }
