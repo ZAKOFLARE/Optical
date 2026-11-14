@@ -53,6 +53,10 @@ const HOP_BY_HOP: [&str; 9] = [
 pub struct Clients {
     h1: HttpClient,
     h2: HttpClient,
+    /// 连接池参数（所有客户端共享同一套，超时分池不影响池参数）
+    keepalive_secs: u64,
+    pool_idle_secs: u64,
+    pool_max_idle: usize,
     /// 按建连超时定制的客户端。
     ///
     /// 为什么不能只用一个全局 5 秒：`HttpConnector` 的建连超时是构造期固定的，
@@ -62,10 +66,13 @@ pub struct Clients {
 }
 
 impl Clients {
-    pub fn new() -> Self {
+    pub fn new(keepalive_secs: u64, pool_idle_secs: u64, pool_max_idle: usize) -> Self {
         Self {
-            h1: build_client(false, 5_000),
-            h2: build_client(true, 5_000),
+            h1: build_client(false, 5_000, keepalive_secs, pool_idle_secs, pool_max_idle),
+            h2: build_client(true, 5_000, keepalive_secs, pool_idle_secs, pool_max_idle),
+            keepalive_secs,
+            pool_idle_secs,
+            pool_max_idle,
             variants: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
@@ -84,27 +91,36 @@ impl Clients {
         if g.len() > 16 && !g.contains_key(&ms) {
             g.clear();
         }
-        let e = g
-            .entry(ms)
-            .or_insert_with(|| (build_client(false, ms), build_client(true, ms)));
+        let e = g.entry(ms).or_insert_with(|| {
+            (
+                build_client(false, ms, self.keepalive_secs, self.pool_idle_secs, self.pool_max_idle),
+                build_client(true, ms, self.keepalive_secs, self.pool_idle_secs, self.pool_max_idle),
+            )
+        });
         if http2_only { e.1.clone() } else { e.0.clone() }
     }
 }
 
 impl Default for Clients {
     fn default() -> Self {
-        Self::new()
+        Self::new(30, 30, 32)
     }
 }
 
-fn build_client(http2_only: bool, connect_ms: u64) -> HttpClient {
+fn build_client(
+    http2_only: bool,
+    connect_ms: u64,
+    keepalive_secs: u64,
+    pool_idle_secs: u64,
+    pool_max_idle: usize,
+) -> HttpClient {
     let mut connector = HttpConnector::new();
     connector.set_nodelay(true);
     connector.set_connect_timeout(Some(Duration::from_millis(connect_ms)));
-    connector.set_keepalive(Some(Duration::from_secs(30)));
+    connector.set_keepalive(Some(Duration::from_secs(keepalive_secs)));
     let mut b = Client::builder(TokioExecutor::new());
-    b.pool_idle_timeout(Duration::from_secs(30))
-        .pool_max_idle_per_host(32);
+    b.pool_idle_timeout(Duration::from_secs(pool_idle_secs))
+        .pool_max_idle_per_host(pool_max_idle);
     if http2_only {
         b.http2_only(true);
     }
@@ -121,7 +137,12 @@ pub async fn serve_with_scheme(
     listener: TcpListener,
     scheme: &'static str,
 ) -> anyhow::Result<()> {
-    let clients = Clients::new();
+    let cfg = state.snapshot().await;
+    let clients = Clients::new(
+        cfg.server.upstream_keepalive_secs,
+        cfg.server.upstream_pool_idle_secs,
+        cfg.server.upstream_pool_max_idle,
+    );
     loop {
         let (stream, peer) = match listener.accept().await {
             Ok(v) => v,
