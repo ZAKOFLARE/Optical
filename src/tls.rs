@@ -324,7 +324,12 @@ pub fn spawn_hot_reload(state: Arc<AppState>, hot: Arc<HotAcceptor>) {
 
 /// HTTPS 监听循环：先握手再交给同一套 handle。
 pub async fn serve(state: Arc<AppState>, listener: TcpListener, hot: Arc<HotAcceptor>) -> Result<()> {
-    let clients = Clients::new();
+    let cfg = state.snapshot().await;
+    let clients = Clients::new(
+        cfg.server.upstream_keepalive_secs,
+        cfg.server.upstream_pool_idle_secs,
+        cfg.server.upstream_pool_max_idle,
+    );
     loop {
         let (stream, peer) = match listener.accept().await {
             Ok(v) => v,

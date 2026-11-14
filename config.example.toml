@@ -19,6 +19,13 @@ max_inspect_bytes = 8192
 lb = "wrr"
 # 响应 Server 头：非空 = 统一覆盖（含转发响应），空串 = 删除该头
 server_header = "optical"
+# 上游连接复用（对象池）。三个值各自独立：
+#   keepalive：connector 层，连接空闲多久就关（长到吃到复用红利、短到不攥半死连接）
+#   pool_idle：池层，空闲连接多久被清出池
+#   pool_max ：每个上游 host 最多缓存多少空闲连接（太小复用率低、太大占 FD）
+upstream_keepalive_secs = 30
+upstream_pool_idle_secs = 30
+upstream_pool_max_idle = 32
 # 可信代理：只有这些来源发来的 X-Forwarded-For / CF-Connecting-IP 才作数。
 # 空 = 谁都不信（默认，安全取向）：XFF 是客户端能随便写的头，无脑采信
 # 等于让任何人把自己伪装成任意 IP，IP 黑名单和按 IP 限流会同时失效。

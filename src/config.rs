@@ -105,6 +105,26 @@ pub struct ServerConfig {
     /// 例如 ["10.0.0.0/8", "172.16.0.0/12", "2408:8000::/20"]。
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub trusted_proxies: Vec<String>,
+    /// 上游连接的空闲保活时长（秒）。connector 层：连接空闲这么久就关。
+    /// 默认 30——长到能吃到复用红利，短到不会在"后端已经关掉它"之后还攥着半死连接。
+    #[serde(default = "default_upstream_keepalive")]
+    pub upstream_keepalive_secs: u64,
+    /// 连接池里空闲连接的回收时长（秒）。与 keepalive 是两层：前者管"连接本身",
+    /// 这个管"池里还能复用多久"。默认 30。
+    #[serde(default = "default_upstream_keepalive")]
+    pub upstream_pool_idle_secs: u64,
+    /// 每个上游 host 最多缓存多少条空闲连接。太小复用率低、太大占 FD。
+    /// 默认 32。
+    #[serde(default = "default_upstream_pool_max_idle")]
+    pub upstream_pool_max_idle: usize,
+}
+
+fn default_upstream_keepalive() -> u64 {
+    30
+}
+
+fn default_upstream_pool_max_idle() -> usize {
+    32
 }
 
 /// 负载均衡策略。wrr / rr 需要游标，iphash 是纯函数，random 无状态。
@@ -844,6 +864,9 @@ impl Default for ServerConfig {
             lb: LbStrategy::Wrr,
             server_header: "optical".into(),
             trusted_proxies: Vec::new(),
+            upstream_keepalive_secs: default_upstream_keepalive(),
+            upstream_pool_idle_secs: default_upstream_keepalive(),
+            upstream_pool_max_idle: default_upstream_pool_max_idle(),
         }
     }
 }

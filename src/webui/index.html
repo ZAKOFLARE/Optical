@@ -1068,6 +1068,9 @@
                 <div class="field"><label>delivery.websocket<i class="q" data-i18n-tip="tip.delivery">?</i></label>
                   <select id="f-delivery-ws"><option value="true">true</option><option value="false">false</option></select></div>
                 <div class="field"><label>request_timeout_ms</label><input type="number" id="f-timeout" min="1"></div>
+                <div class="field"><label>server.upstream_keepalive_secs</label><input type="number" id="f-keepalive" min="1" step="5"></div>
+                <div class="field"><label>server.upstream_pool_idle_secs</label><input type="number" id="f-poolidle" min="1" step="5"></div>
+                <div class="field"><label>server.upstream_pool_max_idle</label><input type="number" id="f-poolmax" min="1" step="8"></div>
                 <div class="field"><label>log_level</label>
                   <select id="f-loglevel"><option>trace</option><option>debug</option><option>info</option><option>warn</option><option>error</option></select></div>
                 <div class="field"><label>tls.enabled</label>
@@ -5207,6 +5210,9 @@
     $("f-listen").value=c.server.listen; $("f-admin").value=c.server.admin_listen;
     $("f-listen-v6").value=c.server.listen_v6||""; $("f-admin-v6").value=c.server.admin_listen_v6||"";
     $("f-upstream").value=c.server.default_upstream; $("f-timeout").value=c.server.request_timeout_ms;
+    $("f-keepalive").value=c.server.upstream_keepalive_secs||30;
+    $("f-poolidle").value=c.server.upstream_pool_idle_secs||30;
+    $("f-poolmax").value=c.server.upstream_pool_max_idle||32;
     $("f-server-header").value=c.server.server_header==null?"":c.server.server_header;
     $("f-trusted").value=(c.server.trusted_proxies||[]).join(", ");
     var dl=c.delivery||{};
@@ -5296,6 +5302,9 @@
     cfg.delivery.webui=$("f-delivery-webui").value==="true";
     cfg.delivery.websocket=$("f-delivery-ws").value==="true";
     cfg.server.request_timeout_ms=Number($("f-timeout").value)||1;
+    cfg.server.upstream_keepalive_secs=Math.max(1, Number($("f-keepalive").value)||30);
+    cfg.server.upstream_pool_idle_secs=Math.max(1, Number($("f-poolidle").value)||30);
+    cfg.server.upstream_pool_max_idle=Math.max(1, Number($("f-poolmax").value)||32);
     cfg.server.log_level=$("f-loglevel").value;
     cfg.tls.enabled=$("f-tls-enabled").value==="true";
     cfg.tls.listen=$("f-tls-listen").value.trim();
