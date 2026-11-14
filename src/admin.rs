@@ -308,7 +308,19 @@ async fn api_set_password(
 
 // ---------- 静态 ----------
 
-async fn index() -> impl IntoResponse {
+async fn index(State(st): State<Arc<AppState>>) -> Response {
+    // 档一 / 档三：关掉 WebUI 只关静态页，REST 与 WS 照常。
+    // 给一行提示而不是 404——404 会被当成"服务没起"，提示才能说明是主动关的。
+    if !st.snapshot().await.delivery.webui {
+        return (
+            [
+                (header::CONTENT_TYPE, "text/plain; charset=utf-8"),
+                (header::CACHE_CONTROL, "no-store"),
+            ],
+            "WebUI 已关闭（delivery.webui = false）。请改用 CLI 或 WebSocket 接入。",
+        )
+            .into_response();
+    }
     (
         [
             (header::CONTENT_TYPE, "text/html; charset=utf-8"),
@@ -317,6 +329,7 @@ async fn index() -> impl IntoResponse {
         ],
         Html(INDEX_HTML),
     )
+        .into_response()
 }
 
 async fn favicon() -> StatusCode {
@@ -430,6 +443,14 @@ async fn api_ws(
     State(st): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Response {
+    // 档一：WS 也关。直接拒绝升级，别让客户端以为连上了一个永远不会推数据的洞。
+    if !st.snapshot().await.delivery.websocket {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "WebSocket 推送已关闭（delivery.websocket = false）",
+        )
+            .into_response();
+    }
     // 令牌在升级请求的 Cookie 里，握完手就拿不到了，先留住。
     // 会话列表要用它标出"当前这条"，否则每条都得靠猜。
     let token = cookie_value(&headers, COOKIE_NAME).unwrap_or_default();

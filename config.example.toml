@@ -25,6 +25,17 @@ server_header = "optical"
 # 前面挂了 CDN / nginx 时，把它们的出口网段填进来。
 # trusted_proxies = ["10.0.0.0/8", "172.16.0.0/12"]
 
+# ---------- 交付形态 ----------
+# 三档（CLI 与网关始终可用）：
+#   档一 网关 + CLI        ：webui=false, websocket=false
+#   档二 全功能（默认）    ：webui=true,  websocket=true
+#   档三 网关 + WS + CLI   ：webui=false, websocket=true（程序化接入，不要人看的界面）
+[delivery]
+webui = true
+# 关 WebUI 只关静态页，REST API 与 WS 照常——CLI 依赖 REST，一起关等于废了 CLI。
+websocket = true
+# 关 WS 后 WebUI 会自动回退到 HTTP 轮询。
+
 # ---------- 传输 ----------
 [tls]
 enabled = false

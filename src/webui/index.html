@@ -1063,6 +1063,10 @@
                 <!-- 可信代理：逗号分隔的 IP / CIDR。留空 = 谁都不信，防伪造 XFF -->
                 <div class="field wide"><label>server.trusted_proxies<i class="q" data-i18n-tip="tip.trusted">?</i></label>
                   <input type="text" id="f-trusted" data-i18n-ph="ph.trusted" placeholder="10.0.0.0/8, 172.16.0.0/12（留空 = 不信任任何转发头）"></div>
+                <div class="field"><label>delivery.webui<i class="q" data-i18n-tip="tip.delivery">?</i></label>
+                  <select id="f-delivery-webui"><option value="true">true</option><option value="false">false</option></select></div>
+                <div class="field"><label>delivery.websocket<i class="q" data-i18n-tip="tip.delivery">?</i></label>
+                  <select id="f-delivery-ws"><option value="true">true</option><option value="false">false</option></select></div>
                 <div class="field"><label>request_timeout_ms</label><input type="number" id="f-timeout" min="1"></div>
                 <div class="field"><label>log_level</label>
                   <select id="f-loglevel"><option>trace</option><option>debug</option><option>info</option><option>warn</option><option>error</option></select></div>
@@ -1589,6 +1593,7 @@
       "cf.paths.resolved":"当前解析结果：data={data} · history={history} · audit={audit} · tls={tls} · errors={errors}",
       "cf.err.dir":"错误页目录：{dir}",
       "ph.autodir":"留空 = 配置文件所在目录","ph.subdir":"留空 = <data_dir>/子目录",
+      "tip.delivery":"三档交付形态：档一 网关+CLI（webui=false, websocket=false）；档二 全功能（都 true，默认）；档三 网关+WS+CLI（webui=false, websocket=true）。关 WebUI 只关静态页，REST 与 WS 照常；关 WS 后 WebUI 自动回退轮询。",
       "tip.tlssession":"TLS 1.2 会话缓存的条数。会话恢复让老客户端免一次完整握手（省一个 RTT + 一次非对称计算）。0 = 关闭恢复。",
       "tip.tlsticket":"TLS 1.3 会话票据：true = 客户端恢复时 1-RTT 直连；false = 每次完整握手。关掉更保守（前向保密窗口更短），但每次都要重新算密钥。",
       "ph.trusted":"10.0.0.0/8, 172.16.0.0/12（留空 = 不信任任何转发头）",
@@ -1891,6 +1896,7 @@
       "cf.paths.resolved":"Resolved: data={data} · history={history} · audit={audit} · tls={tls} · errors={errors}",
       "cf.err.dir":"Error page dir: {dir}",
       "ph.autodir":"Empty = config file directory","ph.subdir":"Empty = <data_dir>/subdir",
+      "tip.delivery":"Three delivery tiers: minimal gateway+CLI (webui=false, websocket=false); full (both true, default); gateway+WS+CLI (webui=false, websocket=true). Disabling WebUI only hides the static page; REST and WS keep working. With WS off, the WebUI falls back to polling.",
       "tip.tlssession":"TLS 1.2 session cache size. Resumption spares legacy clients a full handshake (one RTT + one asymmetric key computation). 0 = disabled.",
       "tip.tlsticket":"TLS 1.3 session tickets: true = 1-RTT resumption; false = full handshake every time. Turning it off is more conservative (shorter forward-secrecy window) at the cost of recomputing keys each time.",
       "ph.trusted":"10.0.0.0/8, 172.16.0.0/12 (empty = trust no forwarding headers)",
@@ -5201,6 +5207,9 @@
     $("f-upstream").value=c.server.default_upstream; $("f-timeout").value=c.server.request_timeout_ms;
     $("f-server-header").value=c.server.server_header==null?"":c.server.server_header;
     $("f-trusted").value=(c.server.trusted_proxies||[]).join(", ");
+    var dl=c.delivery||{};
+    $("f-delivery-webui").value=String(dl.webui!==false);
+    $("f-delivery-ws").value=String(dl.websocket!==false);
     $("f-loglevel").value=c.server.log_level;
     $("f-tls-enabled").value=String(!!c.tls.enabled); $("f-tls-listen").value=c.tls.listen;
     $("f-tls-listen-v6").value=c.tls.listen_v6||"";
@@ -5281,6 +5290,9 @@
     cfg.server.trusted_proxies=$("f-trusted").value
       .split(",").map(function(x){ return x.trim(); })
       .filter(function(x){ return x.length>0; });
+    cfg.delivery=cfg.delivery||{};
+    cfg.delivery.webui=$("f-delivery-webui").value==="true";
+    cfg.delivery.websocket=$("f-delivery-ws").value==="true";
     cfg.server.request_timeout_ms=Number($("f-timeout").value)||1;
     cfg.server.log_level=$("f-loglevel").value;
     cfg.tls.enabled=$("f-tls-enabled").value==="true";
