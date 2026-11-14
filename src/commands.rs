@@ -66,6 +66,7 @@ pub async fn run_gateway(config_opt: Option<PathBuf>, args: crate::cli::RunArgs)
     spawn_watcher(state.clone());
     spawn_sampler(state.clone());
     crate::state::spawn_apps_supervisor(state.clone());
+    crate::state::spawn_maintenance(state.clone());
 
     // 后端健康检查：每秒扫一遍，各后端按自己的间隔执行
     {
@@ -154,18 +155,28 @@ pub async fn run_gateway(config_opt: Option<PathBuf>, args: crate::cli::RunArgs)
     );
 
     if let Some((listener, listener_v6, material)) = tls_setup {
-        let acceptor = material.acceptor.clone();
+        // 证书热载：续签交给 ACME 客户端，我们只负责"文件变了就重新装载"。
+        // 两个监听器共用同一个 HotAcceptor，换一次两边都生效。
+        let hot = std::sync::Arc::new(crate::tls::HotAcceptor::new(
+            &cfg.tls,
+            &state.paths.tls_dir,
+            state.base_dir(),
+            material,
+        ));
+        crate::tls::spawn_hot_reload(state.clone(), hot.clone());
+
         let st = state.clone();
+        let h = hot.clone();
         tokio::spawn(async move {
-            if let Err(e) = crate::tls::serve(st, listener, acceptor).await {
+            if let Err(e) = crate::tls::serve(st, listener, h).await {
                 tracing::error!(error = %e, "HTTPS 监听退出");
             }
         });
         if let Some(l6) = listener_v6 {
             let st = state.clone();
-            let acceptor = material.acceptor;
+            let h = hot;
             tokio::spawn(async move {
-                if let Err(e) = crate::tls::serve(st, l6, acceptor).await {
+                if let Err(e) = crate::tls::serve(st, l6, h).await {
                     tracing::error!(error = %e, "HTTPS IPv6 监听退出");
                 }
             });

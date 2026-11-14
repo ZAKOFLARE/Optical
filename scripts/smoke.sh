@@ -503,6 +503,47 @@ check "规则命中标记" 'custom' "$(curl -si -m 6 "http://$GW/r-custom/" | tr
 check "Token 鉴权拦截无令牌请求" '401' "$(code "http://$GW/r-auth/")"
 check "Token 鉴权放行正确令牌" '200' "$(code -H 'x-token: s3cret' "http://$GW/r-auth/")"
 
+echo "-- 规则级限速 / ALL 匹配 --"
+# ALL 条件 + 全程共享的令牌桶（key=rule），这样断言不受来源 IP 影响。
+# 测完必须立刻把规则摘掉，不然后面所有用例都会撞 429。
+add_limit_rule() {
+  curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config" | python3 -c "
+import sys, json
+c = json.load(sys.stdin)['config']
+c.setdefault('rules', []).append({
+  'name': 'smoke-limit', 'enabled': True,
+  'matches': [{'kind': 'all', 'name': '', 'op': 'eq', 'value': ''}],
+  'actions': {'rate_limit': {'qps': 1, 'burst': 1, 'key': 'rule', 'status_code': 429}},
+})
+print(json.dumps(c))
+" 2>/dev/null
+}
+LREV="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config" | python3 -c 'import sys,json;print(json.load(sys.stdin)["rev"])' 2>/dev/null)"
+check "写入 ALL 限速规则" '"applied":true' \
+  "$(curl -s -m 6 -X PUT "${AUTH[@]}" -H 'content-type: application/json' \
+     -H "x-optical-config-rev: $LREV" -d "$(add_limit_rule)" "http://$ADM/api/config")"
+sleep 1.5
+# burst=1：第一个放行，紧接着的第二个必须被限
+FIRST="$(code "http://$GW/hello")"
+SECOND="$(code "http://$GW/hello")"
+check "ALL 规则下的第一个请求放行" '200' "$FIRST"
+check "超过 QPS 被限速（429）" '429' "$SECOND"
+check "限速响应带 Retry-After" 'retry-after' \
+  "$(curl -si -m 6 "http://$GW/hello" | tr -d '\r' | tr 'A-Z' 'a-z' | grep -o '^retry-after')"
+
+# 摘掉限速规则：不能留给后面的用例
+LREV2="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config" | python3 -c 'import sys,json;print(json.load(sys.stdin)["rev"])' 2>/dev/null)"
+BODY_CLEAN="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config" | python3 -c '
+import sys, json
+c = json.load(sys.stdin)["config"]
+c["rules"] = [r for r in c.get("rules", []) if r.get("name") != "smoke-limit"]
+print(json.dumps(c))
+' 2>/dev/null)"
+curl -s -m 8 -X PUT "${AUTH[@]}" -H 'content-type: application/json' \
+  -H "x-optical-config-rev: $LREV2" --data-binary "$BODY_CLEAN" "http://$ADM/api/config" >/dev/null
+sleep 1.2
+check "移除限速规则后恢复正常" '200' "$(code "http://$GW/hello")"
+
 echo "-- 排行榜（维度 / 范围 / 筛选） --"
 STATS="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/stats?by=route&range=3600")"
 check "按路由出排行榜" '"by":"route"' "$STATS"
@@ -661,6 +702,31 @@ check "移除后回到内置" '"rail":""' "$(curl -s -m 6 "http://$ADM/api/appea
 curl -s -m 6 "${AUTH[@]}" -X PUT -H 'content-type: application/json' \
   -d '{"enabled":false}' "http://$ADM/api/appearance" >/dev/null
 
+echo "-- 维护与清理 --"
+# 不依赖前面用例留下的会话：它们可能改过安全设置、也可能顶掉过会话。
+# 清理类接口必须能在一个"刚登录"的干净会话上工作。
+curl -s -m 6 -D "$TMP/mhdr.txt" -X POST "http://$ADM/api/auth/login" \
+  -H 'content-type: application/json' -d "{\"username\":\"admin\",\"password\":\"$PASSWD\"}" >/dev/null
+COOKIE="$(grep -i '^set-cookie:' "$TMP/mhdr.txt" | sed 's/^[Ss]et-[Cc]ookie: //' | cut -d';' -f1 | tr -d '\r')"
+AUTH=(-H "cookie: $COOKIE")
+MT="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/maintenance")"
+check "维护接口给出缓存状态" '"entries"' "$MT"
+check "维护接口给出在途请求数" '"in_flight"' "$MT"
+check "维护接口给出限速桶数量" '"rate_buckets"' "$MT"
+check "维护接口给出水位阈值" '"high_water_bytes"' "$MT"
+check "手动清空代理缓存" '"ok":true' \
+  "$(curl -s -m 6 -X POST "${AUTH[@]}" -H 'content-type: application/json' -d '{"cache":true}' "http://$ADM/api/maintenance/purge")"
+check "手动清空排行榜统计" '"ok":true' \
+  "$(curl -s -m 6 -X POST "${AUTH[@]}" -H 'content-type: application/json' -d '{"stats":true}' "http://$ADM/api/maintenance/purge")"
+check "空选择被拒绝（避免误触成全清）" '"ok":false' \
+  "$(curl -s -m 6 -X POST "${AUTH[@]}" -H 'content-type: application/json' -d '{}' "http://$ADM/api/maintenance/purge")"
+check "清空后缓存条目归零" '"entries":0' "$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/maintenance")"
+
+echo "-- 背压配置 --"
+BP="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config")"
+check "背压字段出现在配置里" '"max_in_flight"' "$BP"
+check "维护字段出现在配置里" '"cache_high_pct"' "$BP"
+
 echo "-- 登录设备 / 单点登录 --"
 CJ1="$TMP/c1.txt"
 CJ2="$TMP/c2.txt"
@@ -727,6 +793,8 @@ curl -s -b "$CJ2" -m 8 -X PUT -H 'content-type: application/json' \
   -H "x-optical-config-rev: $REV4" --data-binary "$BODY4" "http://$ADM/api/config" >/dev/null
 check "单点登录可关回去" '"single_session":false' \
   "$(curl -s -b "$CJ2" -m 6 "http://$ADM/api/config")"
+
+
 
 echo
 if [ "$FAIL" -eq 0 ]; then

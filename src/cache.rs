@@ -144,11 +144,60 @@ impl ResponseCache {
         }
     }
 
+    /// 全清。手动"清空缓存"用这个。
     pub fn purge(&self) {
         let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         g.map.clear();
         g.order.clear();
         g.bytes = 0;
+    }
+
+    /// 只清已经过期的条目。
+    ///
+    /// 以前过期条目只在 lookup 命中同一个键时才被删——没人再访问的键会一直
+    /// 占着内存，直到容量淘汰才让位。定时扫一遍比"等它自己撞上"靠谱。
+    pub fn purge_expired(&self) -> usize {
+        let now = Instant::now();
+        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let before = g.map.len();
+        let mut freed = 0usize;
+        g.map.retain(|_, e| {
+            if e.expires <= now {
+                freed += e.body.len();
+                false
+            } else {
+                true
+            }
+        });
+        if freed > 0 {
+            g.bytes = g.bytes.saturating_sub(freed);
+            // 顺序表里现在混着已删的键，重建成"只含存活键"的顺序，
+            // 否则 LRU 淘汰会一直弹到空键上，白转好几圈。
+            let kept: Vec<String> = g
+                .order
+                .iter()
+                .filter(|k| g.map.contains_key(*k))
+                .cloned()
+                .collect();
+            g.order = kept.into();
+        }
+        before - g.map.len()
+    }
+
+    /// 按 LRU 顺序清到容量阈值以下。水位清理用这个：
+    /// 一次清到底会打穿缓存命中率，压回低水位才是正常做法。
+    pub fn purge_to(&self, max_bytes: usize, max_entries: usize) -> usize {
+        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut removed = 0usize;
+        while (g.bytes > max_bytes || g.map.len() > max_entries) && g.map.len() > 1 {
+            let Some(victim) = g.order.pop_front() else { break };
+            if let Some(e) = g.map.remove(&victim) {
+                g.bytes = g.bytes.saturating_sub(e.body.len());
+                g.evictions += 1;
+                removed += 1;
+            }
+        }
+        removed
     }
 }
 

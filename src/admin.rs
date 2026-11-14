@@ -49,6 +49,8 @@ pub async fn serve(state: Arc<AppState>, listener: TcpListener) -> anyhow::Resul
         .route("/api/snapshots/{id}/restore", post(api_restore_snapshot))
         .route("/api/audit", get(api_audit).delete(api_clear_audit))
         .route("/api/cache/purge", post(api_cache_purge))
+        .route("/api/maintenance", get(api_maintenance))
+        .route("/api/maintenance/purge", post(api_maintenance_purge))
         .route("/api/totp/new", post(api_totp_new))
         .route("/api/totp/check", post(api_totp_check))
         .route("/api/totp/qr", get(api_totp_qr))
@@ -385,6 +387,11 @@ async fn status_payload(st: &Arc<AppState>) -> Value {
             "sessions": st.auth.active_sessions(),
         },
         "cache": { "enabled": cfg.cache.enabled, "ttl_secs": cfg.cache.ttl_secs },
+        "backpressure": {
+            "enabled": cfg.backpressure.enabled,
+            "max_in_flight": cfg.backpressure.max_in_flight,
+            "max_in_flight_per_ip": cfg.backpressure.max_in_flight_per_ip,
+        },
         "metrics": st.metrics_snapshot(),
         "conns": { "active": st.active_conns(), "ips": st.active_ips() },
         "extensions": cfg.extensions,
@@ -1873,6 +1880,87 @@ async fn api_clear_audit(State(st): State<Arc<AppState>>) -> Json<Value> {
 async fn api_cache_purge(State(st): State<Arc<AppState>>) -> Json<Value> {
     st.cache.purge();
     Json(json!({ "ok": true, "purged": true }))
+}
+
+/// 维护现状：缓存占用与水位、限速桶、在途请求。
+///
+/// 这些数字放在一起是有原因的——"内存涨了"这类问题的第一诊断顺序就是：
+/// 在途请求是不是堆着、缓存是不是顶满、限速桶是不是漏了。
+async fn api_maintenance(State(st): State<Arc<AppState>>) -> Json<Value> {
+    let cfg = st.snapshot().await;
+    let cache = st.cache.stats();
+    let high = percent_of(cfg.cache.max_bytes, cfg.maintenance.cache_high_pct);
+    Json(json!({
+        "ok": true,
+        "cache": {
+            "stats": cache,
+            "max_bytes": cfg.cache.max_bytes,
+            "max_entries": cfg.cache.max_entries,
+            "high_water_bytes": high,
+            "high_pct": cfg.maintenance.cache_high_pct,
+            "low_pct": cfg.maintenance.cache_low_pct,
+            "auto_purge": cfg.maintenance.cache_auto_purge,
+        },
+        "rate_buckets": st.rate_limiter.len(),
+        "in_flight": st.backpressure.current(),
+        "rule_in_flight": st.rule_inflight.current(),
+        "backpressure_rejects": st.metrics.backpressure_rejects.load(std::sync::atomic::Ordering::Relaxed),
+        "rate_limited": st.metrics.rate_limited.load(std::sync::atomic::Ordering::Relaxed),
+        "config": cfg.maintenance,
+    }))
+}
+
+#[derive(Deserialize)]
+struct PurgeReq {
+    #[serde(default)]
+    cache: bool,
+    #[serde(default)]
+    stats: bool,
+    #[serde(default)]
+    history: bool,
+}
+
+/// 手动清空。三个开关分开是因为它们的代价完全不同：
+/// 清缓存只影响命中率，清统计会让排行榜归零，清历史会让曲线断掉。
+/// 合成一个"全部清理"按钮，等于逼人为了清缓存而丢掉历史。
+async fn api_maintenance_purge(
+    State(st): State<Arc<AppState>>,
+    Json(req): Json<PurgeReq>,
+) -> Json<Value> {
+    if !req.cache && !req.stats && !req.history {
+        return Json(json!({ "ok": false, "error": "没有选择要清理的内容" }));
+    }
+    let cfg = st.snapshot().await;
+    let mut detail = Vec::new();
+    if req.cache {
+        let before = st.cache.stats();
+        st.cache.purge();
+        detail.push(format!("缓存 {} 条 / {} KB", before.entries, before.bytes / 1024));
+    }
+    if req.stats {
+        st.clear_stats();
+        detail.push("排行榜统计".to_string());
+    }
+    if req.history {
+        st.clear_history();
+        detail.push("历史曲线".to_string());
+    }
+    st.audit.push(
+        &cfg.storage,
+        crate::storage::AuditEntry {
+            ts_ms: crate::storage::now_ms(),
+            kind: "maintenance.purge".into(),
+            detail: format!("手动清理：{}", detail.join("，")),
+            identity: String::new(),
+            path: "/api/maintenance/purge".into(),
+            rule: "maintenance".into(),
+        },
+    );
+    Json(json!({ "ok": true, "cleared": detail }))
+}
+
+fn percent_of(total: usize, pct: u8) -> usize {
+    (total as u128 * pct.min(100) as u128 / 100) as usize
 }
 
 // ---------- 错误 ----------

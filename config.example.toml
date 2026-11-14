@@ -63,6 +63,53 @@ max_entries = 512
 cacheable_status = [200]
 cacheable_exts = [".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".woff2"]
 
+# ---------- 背压 ----------
+[backpressure]
+enabled = true
+# 请求级：同时在处理的上限。这是防内存被打爆的那道闸——
+# 每个在途请求都握着一份请求头、缓冲区和上游连接。按机器内存估：
+# 一个在途请求约 32~64 KB 常驻，1 万在途大致 300~600 MB。
+max_in_flight = 4096
+max_in_flight_per_ip = 128
+# 连接级：0 = 回落到 waf.dos 里的同名阈值
+conn_per_ip = 0
+conn_burst_per_sec = 0
+# 被拒时建议多久后重试（秒），以及用什么状态码：
+# 503 是"暂时不行，稍后再来"的标准语义；想更像限流可以用 429。
+retry_after_secs = 2
+status_code = 503
+
+# ---------- 维护与清理 ----------
+[maintenance]
+enabled = true
+interval_secs = 60            # 0 = 只做手动清理
+cache_high_pct = 90           # 占用超过 max_bytes 的 90% 就动手
+cache_low_pct = 70            # 按 LRU 压回 70%，不是一次清空
+cache_auto_purge = true
+
+# ---------- 自定义规则示例 ----------
+# 条件里 kind 支持 all（恒真）、host、path、query、ext、filename、header、
+# scheme、client_ip、method、cookie；动作里这几项和"保护自己"相关：
+#
+# [[rules]]
+# name = "全站限速"
+# enabled = true
+# matches = [{ kind = "all", op = "eq", value = "" }]
+# [rules.actions.rate_limit]
+# qps = 50          # 每个客户端 IP 每秒 50 个
+# burst = 100
+# key = "client_ip"  # client_ip | rule | rule_ip
+# status_code = 429
+#
+# [[rules]]
+# name = "接口在途上限"
+# matches = [{ kind = "path", op = "prefix", value = "/api" }]
+# [rules.actions.max_in_flight]
+# limit = 32
+# key = "client_ip"
+# [rules.actions]
+# connect_timeout_ms = 1500   # 只管建连，总超时仍由 request_timeout_ms 决定
+
 # ---------- 存储配额（按磁盘大小收紧） ----------
 [storage]
 config_history_keep = 20             # 保留多少份配置快照

@@ -50,14 +50,41 @@ const HOP_BY_HOP: [&str; 8] = [
 pub struct Clients {
     h1: HttpClient,
     h2: HttpClient,
+    /// 按建连超时定制的客户端。
+    ///
+    /// 为什么不能只用一个全局 5 秒：`HttpConnector` 的建连超时是构造期固定的，
+    /// 没有 per-request 入口。要么改全局（影响所有请求），要么按超时值分池——
+    /// 而且分池本身是对的：不同超时的连接不该混在一个池里复用。
+    variants: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, (HttpClient, HttpClient)>>>,
 }
 
 impl Clients {
     pub fn new() -> Self {
         Self {
-            h1: build_client(false),
-            h2: build_client(true),
+            h1: build_client(false, 5_000),
+            h2: build_client(true, 5_000),
+            variants: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         }
+    }
+
+    /// 取一个建连超时为 `connect_ms` 的客户端。None / 0 用默认那一对。
+    fn pick(&self, http2_only: bool, connect_ms: Option<u64>) -> HttpClient {
+        let ms = match connect_ms {
+            Some(v) => v.clamp(50, 60_000),
+            None => return if http2_only { self.h2.clone() } else { self.h1.clone() },
+        };
+        if ms == 5_000 {
+            return if http2_only { self.h2.clone() } else { self.h1.clone() };
+        }
+        let mut g = self.variants.lock().unwrap_or_else(|e| e.into_inner());
+        // 上限 16 组：规则里乱填一堆不同的毫秒数也不能让这里长成内存泄漏
+        if g.len() > 16 && !g.contains_key(&ms) {
+            g.clear();
+        }
+        let e = g
+            .entry(ms)
+            .or_insert_with(|| (build_client(false, ms), build_client(true, ms)));
+        if http2_only { e.1.clone() } else { e.0.clone() }
     }
 }
 
@@ -67,10 +94,10 @@ impl Default for Clients {
     }
 }
 
-fn build_client(http2_only: bool) -> HttpClient {
+fn build_client(http2_only: bool, connect_ms: u64) -> HttpClient {
     let mut connector = HttpConnector::new();
     connector.set_nodelay(true);
-    connector.set_connect_timeout(Some(Duration::from_secs(5)));
+    connector.set_connect_timeout(Some(Duration::from_millis(connect_ms)));
     connector.set_keepalive(Some(Duration::from_secs(30)));
     let mut b = Client::builder(TokioExecutor::new());
     b.pool_idle_timeout(Duration::from_secs(30))
@@ -206,6 +233,45 @@ pub async fn handle(
         }
     }
 
+    // ---- 全局背压：在途请求闸门 ----
+    // 放在 IP 名单之后：被名单拒掉的请求不该占额度。
+    // 放在读 body 之前：真正省资源的是"还没开始缓冲就拒绝"。
+    //
+    // 关于粒度：这里数的是"正在处理中的请求"，不是"整个响应传完"。
+    // 流式响应的 body 由 hyper 的流控管着，不会因为我们不计数就无限堆积；
+    // 而把 body 也纳入在途统计，就得给每个响应包一层，代价大于收益。
+    let bp = &cfg.backpressure;
+    let _bp_guard = if bp.enabled
+        && (bp.max_in_flight > 0 || bp.max_in_flight_per_ip > 0)
+    {
+        match state
+            .backpressure
+            .try_enter(Some(&ip_str), bp.max_in_flight, bp.max_in_flight_per_ip)
+        {
+            Some(g) => Some(g),
+            None => {
+                state
+                    .metrics
+                    .backpressure_rejects
+                    .fetch_add(1, Ordering::Relaxed);
+                let status = StatusCode::from_u16(bp.status_code)
+                    .unwrap_or(StatusCode::SERVICE_UNAVAILABLE);
+                return throttle_response(
+                    &state,
+                    &cfg,
+                    status,
+                    format!(
+                        "网关当前在途请求过多（全局上限 {}，单 IP 上限 {}），先拒后放",
+                        bp.max_in_flight, bp.max_in_flight_per_ip
+                    ),
+                    bp.retry_after_secs,
+                );
+            }
+        }
+    } else {
+        None
+    };
+
     let content_type = parts
         .headers
         .get(CONTENT_TYPE)
@@ -255,13 +321,66 @@ pub async fn handle(
     // 不计的话，这一栏永远只有内置的 dos-body-size —— 用户自己写的规则
     // 明明在改行为，却在流量分析里一条都看不到。
     state.record_rule_hits(&rule_hit.hit);
+    let act = &rule_hit.actions;
+
+    // ---- 规则级限速 / 背压 ----
+    // 动作是"最后一条命中的规则说了算"，所以 key 里的规则名也取最后那条——
+    // 否则桶会挂在一个其实没生效的规则名下，查限额时对不上号。
+    let hit_rule = rule_hit.hit.last().map(String::as_str).unwrap_or("-");
+    if let Some(rl) = &act.rate_limit {
+        if rl.qps > 0 {
+            let bucket = limit_bucket(rl.key, hit_rule, &ip_str);
+            let burst = if rl.burst > 0 { rl.burst } else { rl.qps };
+            let v = state.rate_limiter.allow(&bucket, rl.qps, burst);
+            if !v.allowed {
+                state.metrics.rate_limited.fetch_add(1, Ordering::Relaxed);
+                let status =
+                    StatusCode::from_u16(rl.status_code).unwrap_or(StatusCode::TOO_MANY_REQUESTS);
+                return throttle_response(
+                    &state,
+                    &cfg,
+                    status,
+                    format!(
+                        "触发规则「{hit_rule}」的限速：{}/s，突发 {}",
+                        rl.qps, burst
+                    ),
+                    v.retry_after,
+                );
+            }
+        }
+    }
+    // 规则级在途：guard 必须活到本函数结束，所以绑在函数作用域的变量上
+    let _rule_guard = match &act.max_in_flight {
+        Some(il) if il.limit > 0 => {
+            let key = limit_bucket(il.key, hit_rule, &ip_str);
+            match state.rule_inflight.try_enter(Some(&key), 0, il.limit) {
+                Some(g) => Some(g),
+                None => {
+                    state
+                        .metrics
+                        .backpressure_rejects
+                        .fetch_add(1, Ordering::Relaxed);
+                    let status = StatusCode::from_u16(il.status_code)
+                        .unwrap_or(StatusCode::SERVICE_UNAVAILABLE);
+                    return throttle_response(
+                        &state,
+                        &cfg,
+                        status,
+                        format!("触发规则「{hit_rule}」的在途上限（{}）", il.limit),
+                        cfg.backpressure.retry_after_secs.max(1),
+                    );
+                }
+            }
+        }
+        _ => None,
+    };
+
     let vars = crate::rules::Vars {
         host: &host_str,
         path: &path,
         query: &query_str,
         method: &method_str,
     };
-    let act = &rule_hit.actions;
 
     // ---- DoS 体积闸门（读 body 之前就拦）----
     if cfg.waf.enabled && cfg.waf.dos.enabled && cfg.waf.dos.max_body_bytes > 0
@@ -783,7 +902,7 @@ pub async fn handle(
     parts.version = if is_h2 { Version::HTTP_2 } else { Version::HTTP_11 };
     let upstream_req = Request::from_parts(parts, forward_body);
 
-    let client = if is_h2 { clients.h2 } else { clients.h1 };
+    let client = clients.pick(is_h2, act.connect_timeout_ms);
     let timeout_ms = act.upstream_timeout_ms.unwrap_or(decision.timeout_ms);
     let timeout = Duration::from_millis(timeout_ms);
     let resp = match tokio::time::timeout(timeout, client.request(upstream_req)).await {
@@ -1477,6 +1596,34 @@ fn apply_rule_headers<B>(resp: &mut Response<B>, hit: &crate::rules::Resolved) {
 }
 
 /// 本地生成的错误响应：优先用运维自定义的错误页，绝不把内部细节原样吐给客户端。
+/// 把几种限速维度映射成桶键。格式统一在这里定，查问题时才不用猜。
+fn limit_bucket(key: crate::rules::LimitKey, rule: &str, ip: &str) -> String {
+    use crate::rules::LimitKey;
+    match key {
+        LimitKey::ClientIp => format!("ip:{ip}"),
+        LimitKey::Rule => format!("rule:{rule}"),
+        LimitKey::RuleIp => format!("ri:{rule}|{ip}"),
+    }
+}
+
+/// 限速/背压的响应。和普通错误页共用渲染，但必须带 `Retry-After`：
+/// 没有它，客户端只能瞎重试，等于把限速变成压测。
+fn throttle_response(
+    state: &AppState,
+    cfg: &Config,
+    status: StatusCode,
+    msg: String,
+    retry_after: u64,
+) -> Response<ProxyBody> {
+    let mut r = error_response(state, cfg, status, &msg, None);
+    // 上限 60 秒：回一个很大的数字没人等，反而让人以为服务挂了
+    let secs = retry_after.clamp(1, 60);
+    if let Ok(v) = HeaderValue::from_str(&secs.to_string()) {
+        r.headers_mut().insert(http::header::RETRY_AFTER, v);
+    }
+    r
+}
+
 fn error_response(
     state: &AppState,
     cfg: &Config,
@@ -1507,9 +1654,31 @@ fn error_response(
 
 impl AppState {
     /// accept 循环读限流参数：绝不在热路径上等配置锁。
+    /// 连接级闸门的阈值：(单 IP 并发, 单 IP 每秒新建)。
+    ///
+    /// 优先级：`[backpressure]` 显式配了就用它；没配（0）回落到 `waf.dos`。
+    /// 这样既能把"连接准入"和"攻击检测"分开调，也不会让老配置突然失去保护。
     pub fn config_for_limits(&self) -> (usize, u32) {
         match self.try_config() {
             Some(c) => {
+                let bp = &c.backpressure;
+                if bp.enabled {
+                    let conn = if bp.conn_per_ip > 0 {
+                        bp.conn_per_ip
+                    } else if c.waf.enabled && c.waf.dos.enabled {
+                        c.waf.dos.conn_per_ip
+                    } else {
+                        0
+                    };
+                    let burst = if bp.conn_burst_per_sec > 0 {
+                        bp.conn_burst_per_sec
+                    } else if c.waf.enabled && c.waf.dos.enabled {
+                        c.waf.dos.conn_burst_per_sec
+                    } else {
+                        0
+                    };
+                    return (conn, burst);
+                }
                 if c.waf.enabled && c.waf.dos.enabled {
                     (c.waf.dos.conn_per_ip, c.waf.dos.conn_burst_per_sec)
                 } else {

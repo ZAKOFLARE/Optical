@@ -80,6 +80,14 @@ impl History {
         self.coarse.len()
     }
 
+    /// 全清（手动"清空统计数据"用）。两条环一起清——
+    /// 只清细粒度那条的话，图上会突然只剩几根按小时的点，看着像丢了数据。
+    pub fn clear(&mut self) {
+        self.points.clear();
+        self.coarse.clear();
+        self.coarse_pending = None;
+    }
+
     pub fn bucket_ms(&self) -> u64 {
         self.bucket_ms
     }

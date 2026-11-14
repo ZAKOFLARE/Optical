@@ -41,6 +41,11 @@ pub struct Metrics {
     pub waf_skipped: AtomicU64,
     /// 被 IP 名单挡掉的请求数（与 WAF 拦截分开算，混在一起就说不清查的是什么）
     pub ip_blocks: AtomicU64,
+    /// 被背压拒掉的请求数（在途上限）。和 WAF 拦截分开：
+    /// 这个数是"资源不够"而不是"请求可疑"，处理方式完全不同。
+    pub backpressure_rejects: AtomicU64,
+    /// 被规则限速拒掉的请求数（QPS 令牌桶）
+    pub rate_limited: AtomicU64,
     pub ws_upgrades: AtomicU64,
     /// 当前管理面 WebSocket 连接数（0 = 前端已回退到轮询）
     pub ws_clients: AtomicU64,
@@ -95,6 +100,12 @@ pub struct MetricsSnapshot {
     pub ws_upgrades: u64,
     pub tls_handshakes: u64,
     pub bytes_saved: u64,
+    /// 背压拒掉的数量（资源不够，不是请求可疑）
+    pub backpressure_rejects: u64,
+    /// 规则限速拒掉的数量
+    pub rate_limited: u64,
+    /// 当前在途请求数——这个数是"现在"，不是累计
+    pub in_flight: usize,
     pub status: Vec<(u16, u64)>,
 }
 
@@ -170,6 +181,14 @@ pub struct AppState {
     /// TLS 证书降级的原因（证书坏了退回自签时非空）。
     /// 存在这里而不是只打日志：状态页要能直接看到"你现在用的是兜底证书"。
     tls_degraded: std::sync::RwLock<Option<String>>,
+    /// 全局在途请求（总闸 + 单 IP 闸）。每个在途请求都压着缓冲区和上游连接，
+    /// 没有上限时"越慢越占内存"，最后 OOM——这是背压要解决的核心问题。
+    pub backpressure: Arc<crate::limits::InFlight>,
+    /// 规则级在途：键是"规则名|IP"，按规则收窄作用域。
+    /// 和全局那个分开，是因为两者上限的语义完全不同，混在一张表里没法解释。
+    pub rule_inflight: Arc<crate::limits::InFlight>,
+    /// 规则级 QPS 令牌桶
+    pub rate_limiter: Arc<crate::limits::RateLimiter>,
 }
 
 #[derive(Default)]
@@ -243,6 +262,9 @@ impl AppState {
             ip_remote: std::sync::RwLock::new(Arc::new(crate::ipfilter::load_cache(&data_dir))),
             ip_remote_gen: AtomicU64::new(1),
             tls_degraded: std::sync::RwLock::new(None),
+            backpressure: Arc::new(crate::limits::InFlight::new()),
+            rule_inflight: Arc::new(crate::limits::InFlight::new()),
+            rate_limiter: Arc::new(crate::limits::RateLimiter::new()),
         }
     }
 
@@ -404,6 +426,9 @@ impl AppState {
             ws_upgrades: self.metrics.ws_upgrades.load(Ordering::Relaxed),
             tls_handshakes: self.metrics.tls_handshakes.load(Ordering::Relaxed),
             bytes_saved: self.metrics.bytes_saved.load(Ordering::Relaxed),
+            backpressure_rejects: self.metrics.backpressure_rejects.load(Ordering::Relaxed),
+            rate_limited: self.metrics.rate_limited.load(Ordering::Relaxed),
+            in_flight: self.backpressure.current(),
             status,
         }
     }
@@ -717,6 +742,25 @@ impl AppState {
             .clone()
     }
 
+    /// 清空统计桶（手动"清空统计数据"）。版本号跟着 +1，
+    /// 否则 WebUI 会以为没变化，继续显示上一秒算出来的排行榜。
+    pub fn clear_stats(&self) {
+        self.stats
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        self.stats_rev.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// 清空历史曲线（细粒度环 + 小时环）。
+    pub fn clear_history(&self) {
+        self.history
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        self.sample_rev.fetch_add(1, Ordering::Relaxed);
+    }
+
     /// 长期环里有几个点（每小时一个）。
     pub fn history_coarse_len(&self) -> usize {
         self.history
@@ -787,6 +831,80 @@ pub fn now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+/// 维护循环：定时清过期缓存、按水位清理、回收限速桶。
+///
+/// 为什么单独一个循环而不是塞进采样器：两者的周期差一个数量级
+/// （采样 15 秒 / 维护 60 秒），塞在一起就得在两套节拍之间互相将就。
+pub fn spawn_maintenance(state: Arc<AppState>) {
+    tokio::spawn(async move {
+        loop {
+            // 配置可能随时被改：每轮都重新读，改完下一轮生效，不用重启
+            let cfg = state.snapshot().await;
+            let m = cfg.maintenance.clone();
+            if !m.enabled || m.interval_secs == 0 {
+                // 关掉时低频空转，别退化成"每 60 秒醒一次什么都不干"
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                continue;
+            }
+            tokio::time::sleep(Duration::from_secs(m.interval_secs.clamp(5, 86_400))).await;
+
+            let cfg = state.snapshot().await;
+            let m = cfg.maintenance.clone();
+            if !m.enabled {
+                continue;
+            }
+
+            // 1) 过期条目：没人访问的键也得清
+            let expired = state.cache.purge_expired();
+
+            // 2) 水位：超过高水位就压回低水位。一次清空会把命中率打穿，
+            //    压回 70% 才是正常做法——留一部分热的，丢掉冷的那头。
+            let mut purged = 0usize;
+            let stats = state.cache.stats();
+            let high = percent_of(cfg.cache.max_bytes, m.cache_high_pct);
+            if m.cache_auto_purge && cfg.cache.max_bytes > 0 && stats.bytes > high {
+                let low = percent_of(cfg.cache.max_bytes, m.cache_low_pct);
+                let low_n = percent_of(cfg.cache.max_entries, m.cache_low_pct).max(1);
+                purged = state.cache.purge_to(low, low_n);
+                if purged > 0 {
+                    state.audit.push(
+                        &cfg.storage,
+                        crate::storage::AuditEntry {
+                            ts_ms: crate::storage::now_ms(),
+                            kind: "maintenance.cache".into(),
+                            detail: format!(
+                                "缓存占用 {} MB 超过水位 {}%，按 LRU 清掉 {} 条",
+                                stats.bytes / 1024 / 1024,
+                                m.cache_high_pct,
+                                purged
+                            ),
+                            identity: String::new(),
+                            path: "/maintenance".into(),
+                            rule: "cache-watermark".into(),
+                        },
+                    );
+                }
+            }
+
+            // 3) 限速桶：没流量的键不能永远躺着
+            let gc = state.rate_limiter.gc();
+
+            if expired + purged + gc > 0 {
+                tracing::debug!(
+                    expired,
+                    purged,
+                    rate_buckets = gc,
+                    "维护：过期 {expired} 条、水位清理 {purged} 条、回收桶 {gc} 个"
+                );
+            }
+        }
+    });
+}
+
+fn percent_of(total: usize, pct: u8) -> usize {
+    (total as u128 * pct.min(100) as u128 / 100) as usize
 }
 
 /// 动态项目的守护循环：回收僵尸、按策略拉起。

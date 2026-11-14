@@ -152,8 +152,168 @@ fn build_config(cfg: &TlsConfig, cert_pem: &str, key_pem: &str) -> Result<Rustls
     Ok(server)
 }
 
+/// 可热替换的 acceptor。
+///
+/// 定位很明确：**续签是 ACME 客户端的事，我们只负责从指定路径读**。
+/// 所以这里不做签发、不做 OCSP、不碰文件写入——只盯着 cert/key 的
+/// (长度, mtime) 指纹，变了就重新装载，握手继续用新证书。
+///
+/// 两条硬规矩：
+/// 1. 新证书装载失败时**保留旧的那个**。ACME 客户端写文件不是原子的，
+///    某一刻读到半截 PEM 是常态，这时候要是退回自签，等于把线上证书
+///    换成了浏览器不认的那种——比不热载更糟。
+/// 2. 指纹只在成功替换后更新。失败就下一轮重试，不会因为"试过了"而放弃。
+pub struct HotAcceptor {
+    inner: std::sync::RwLock<Arc<TlsAcceptor>>,
+    cfg: TlsConfig,
+    tls_dir: PathBuf,
+    base_dir: PathBuf,
+    /// 要盯的文件
+    watch: Vec<PathBuf>,
+    /// 上次成功装载时的指纹
+    fp: std::sync::Mutex<String>,
+    /// 当前生效的是不是自签（决定"新证书坏掉"要不要拦住）
+    self_signed: std::sync::atomic::AtomicBool,
+    /// 配置里是否显式指定了证书
+    configured: bool,
+}
+
+impl HotAcceptor {
+    pub fn new(cfg: &TlsConfig, tls_dir: &Path, base_dir: &Path, m: TlsMaterial) -> Self {
+        let configured = !(cfg.cert.trim().is_empty() || cfg.key.trim().is_empty());
+        let watch = if configured {
+            vec![
+                crate::config::resolve_one(&cfg.cert, base_dir),
+                crate::config::resolve_one(&cfg.key, base_dir),
+            ]
+        } else {
+            // 没配证书时也会重签（覆盖 dev-cert.pem），同样要能感知
+            vec![tls_dir.join("dev-cert.pem"), tls_dir.join("dev-key.pem")]
+        };
+        let me = Self {
+            inner: std::sync::RwLock::new(Arc::new(m.acceptor)),
+            cfg: cfg.clone(),
+            tls_dir: tls_dir.to_path_buf(),
+            base_dir: base_dir.to_path_buf(),
+            watch,
+            fp: std::sync::Mutex::new(String::new()),
+            self_signed: std::sync::atomic::AtomicBool::new(m.self_signed),
+            configured,
+        };
+        // 基线必须在**建对象时**就取，不能留到第一次检查：
+        // 启动后到第一次检查之间的 20 秒里，ACME 客户端完全可能已经把文件换了，
+        // 那时再取基线，等于把新指纹当成起点，之后永远不触发替换
+        // （线上实测踩过：touch 完等半分钟什么都没发生）。
+        *me.fp.lock().unwrap_or_else(|e| e.into_inner()) = me.fingerprint();
+        me
+    }
+
+    pub fn acceptor(&self) -> Arc<TlsAcceptor> {
+        self.inner
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    fn fingerprint(&self) -> String {
+        let mut out = String::new();
+        for p in &self.watch {
+            match std::fs::metadata(p) {
+                Ok(m) => {
+                    let mtime = m
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_nanos())
+                        .unwrap_or(0);
+                    out.push_str(&format!("{}:{mtime}:{}|", p.display(), m.len()));
+                }
+                Err(_) => out.push_str(&format!("{}:missing|", p.display())),
+            }
+        }
+        out
+    }
+
+    /// 文件变了就重新装载。`None` = 没变化；`Some(Ok)` = 已换新；`Some(Err)` = 试过但保留旧证书。
+    pub fn maybe_reload(&self) -> Option<std::result::Result<String, String>> {
+        let fp = self.fingerprint();
+        {
+            let cur = self.fp.lock().unwrap_or_else(|e| e.into_inner());
+            // 首次检查：把当前指纹记下来当基线，不做替换
+            if cur.is_empty() {
+                drop(cur);
+                *self.fp.lock().unwrap_or_else(|e| e.into_inner()) = fp;
+                return None;
+            }
+            if *cur == fp {
+                return None;
+            }
+        }
+
+        match build_acceptor(&self.cfg, &self.tls_dir, &self.base_dir) {
+            Ok(m) => {
+                // 配置了真证书，但这次装出来的是自签 —— 说明新文件读不了或对不上，
+                // 典型场景是 ACME 客户端正写到一半。保留旧证书，下一轮再看。
+                if self.configured && m.self_signed {
+                    let why = m.degraded.unwrap_or_else(|| "新证书暂时不可用".into());
+                    return Some(Err(format!("证书文件已变化但无法装载，继续使用当前证书：{why}")));
+                }
+                let was = self
+                    .self_signed
+                    .load(std::sync::atomic::Ordering::Relaxed);
+                *self.inner.write().unwrap_or_else(|e| e.into_inner()) =
+                    Arc::new(m.acceptor);
+                self.self_signed
+                    .store(m.self_signed, std::sync::atomic::Ordering::Relaxed);
+                *self.fp.lock().unwrap_or_else(|e| e.into_inner()) = fp;
+                let msg = if was && !m.self_signed {
+                    "已从自签切换为配置的证书".to_string()
+                } else {
+                    format!("证书已重新装载（{}）", m.versions)
+                };
+                Some(Ok(msg))
+            }
+            Err(e) => Some(Err(format!("重新装载证书失败：{e:#}"))),
+        }
+    }
+}
+
+/// 证书热载循环。20 秒一轮：ACME 续签是"天"级别的事，
+/// 这里只是让"换了文件"到"生效"之间的窗口足够短，又不至于每秒 stat 一遍。
+pub fn spawn_hot_reload(state: Arc<AppState>, hot: Arc<HotAcceptor>) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+            match hot.maybe_reload() {
+                None => {}
+                Some(Ok(msg)) => {
+                    tracing::info!(%msg, "TLS 证书已热更新");
+                    state.set_tls_degraded(None);
+                    let cfg = state.snapshot().await;
+                    state.audit.push(
+                        &cfg.storage,
+                        crate::storage::AuditEntry {
+                            ts_ms: crate::storage::now_ms(),
+                            kind: "tls.reload".into(),
+                            detail: msg,
+                            identity: String::new(),
+                            path: "/tls".into(),
+                            rule: "tls-hot-reload".into(),
+                        },
+                    );
+                }
+                Some(Err(e)) => {
+                    // 只是 warn，不动 degraded：旧证书还在正常服务，
+                    // 这时候标成"降级"会误导人以为线上已经换成自签了
+                    tracing::warn!(error = %e, "证书文件变了但未能热更新，继续使用当前证书");
+                }
+            }
+        }
+    });
+}
+
 /// HTTPS 监听循环：先握手再交给同一套 handle。
-pub async fn serve(state: Arc<AppState>, listener: TcpListener, acceptor: TlsAcceptor) -> Result<()> {
+pub async fn serve(state: Arc<AppState>, listener: TcpListener, hot: Arc<HotAcceptor>) -> Result<()> {
     let clients = Clients::new();
     loop {
         let (stream, peer) = match listener.accept().await {
@@ -170,7 +330,8 @@ pub async fn serve(state: Arc<AppState>, listener: TcpListener, acceptor: TlsAcc
             continue;
         };
 
-        let acceptor = acceptor.clone();
+        // 每次 accept 现取：热更新换的是里面那个 Arc，已经建立的连接不受影响
+        let acceptor = hot.acceptor();
         let state = state.clone();
         let clients = clients.clone();
 
@@ -638,6 +799,61 @@ mod tests {
         let m = build_acceptor(&cfg, &dir, &dir).unwrap();
         assert!(!m.self_signed);
         assert!(m.degraded.is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn hot_acceptor_picks_up_replaced_certificate() {
+        let dir = tmpdir("hot-ok");
+        let (c1, k1) = test_pair(&["one.example.com"]);
+        std::fs::write(dir.join("c.pem"), &c1).unwrap();
+        std::fs::write(dir.join("k.pem"), &k1).unwrap();
+        let mut cfg = TlsConfig::default();
+        cfg.enabled = true;
+        cfg.cert = dir.join("c.pem").display().to_string();
+        cfg.key = dir.join("k.pem").display().to_string();
+
+        let m = build_acceptor(&cfg, &dir, &dir).unwrap();
+        let hot = HotAcceptor::new(&cfg, &dir, &dir, m);
+        assert!(hot.maybe_reload().is_none(), "第一次只建基线，不做替换");
+
+        // 模拟 ACME 客户端换上新证书
+        let (c2, k2) = test_pair(&["two.example.com"]);
+        std::fs::write(dir.join("c.pem"), &c2).unwrap();
+        std::fs::write(dir.join("k.pem"), &k2).unwrap();
+        let r = hot.maybe_reload().expect("文件变了就该尝试");
+        assert!(r.is_ok(), "{r:?}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn hot_acceptor_keeps_old_cert_when_new_file_is_broken() {
+        // ACME 客户端写文件不是原子的：读到半截 PEM 是常态。
+        // 这时候必须继续用旧的，绝不能退回自签把线上证书换掉。
+        let dir = tmpdir("hot-broken");
+        let (c1, k1) = test_pair(&["one.example.com"]);
+        std::fs::write(dir.join("c.pem"), &c1).unwrap();
+        std::fs::write(dir.join("k.pem"), &k1).unwrap();
+        let mut cfg = TlsConfig::default();
+        cfg.enabled = true;
+        cfg.cert = dir.join("c.pem").display().to_string();
+        cfg.key = dir.join("k.pem").display().to_string();
+        cfg.degrade = "self-signed".into();
+
+        let m = build_acceptor(&cfg, &dir, &dir).unwrap();
+        let hot = HotAcceptor::new(&cfg, &dir, &dir, m);
+        hot.maybe_reload();
+        let before = hot.acceptor();
+
+        std::fs::write(dir.join("c.pem"), "-----BEGIN CERTIFICATE-----\ntrunc").unwrap();
+        let r = hot.maybe_reload().expect("文件变了就该尝试");
+        assert!(r.is_err(), "坏文件不该被接受：{r:?}");
+        assert!(
+            std::sync::Arc::ptr_eq(&before, &hot.acceptor()),
+            "装载失败必须保留旧的 acceptor"
+        );
+
+        // 下一轮还能重试（指纹没被错误地更新成新值）
         std::fs::remove_dir_all(&dir).ok();
     }
 

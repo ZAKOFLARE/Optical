@@ -22,6 +22,7 @@ mod echo;
 mod errors;
 mod history;
 mod ipfilter;
+mod limits;
 mod proxy;
 mod route;
 mod rules;

@@ -1088,11 +1088,28 @@
                 <div class="field"><label>compression.level</label><input type="number" id="f-cmp-level" min="1" max="9"></div>
                 <div class="field"><label>compression.min_bytes</label><input type="number" id="f-cmp-min" min="0" step="128"></div>
                 <div class="field"><label>compression.max_bytes</label><input type="number" id="f-cmp-max" min="1024" step="1024"></div>
+                <div class="field"><label>backpressure.enabled<i class="q" data-i18n-tip="tip.bp">?</i></label>
+                  <select id="f-bp-enabled"><option value="true">true</option><option value="false">false</option></select></div>
+                <div class="field"><label>backpressure.max_in_flight</label><input type="number" id="f-bp-total" min="0" step="64"></div>
+                <div class="field"><label>backpressure.max_in_flight_per_ip</label><input type="number" id="f-bp-ip" min="0" step="8"></div>
+                <div class="field"><label>backpressure.conn_per_ip</label><input type="number" id="f-bp-conn" min="0"></div>
+                <div class="field"><label>backpressure.conn_burst_per_sec</label><input type="number" id="f-bp-burst" min="0"></div>
+                <div class="field"><label>backpressure.retry_after_secs</label><input type="number" id="f-bp-retry" min="1" max="60"></div>
+                <div class="field"><label>maintenance.enabled</label>
+                  <select id="f-mt-enabled"><option value="true">true</option><option value="false">false</option></select></div>
+                <div class="field"><label>maintenance.interval_secs</label><input type="number" id="f-mt-interval" min="0" step="5"></div>
+                <div class="field"><label>maintenance.cache_high_pct</label><input type="number" id="f-mt-high" min="1" max="100"></div>
+                <div class="field"><label>maintenance.cache_low_pct</label><input type="number" id="f-mt-low" min="1" max="100"></div>
+                <div class="field"><label>maintenance.cache_auto_purge</label>
+                  <select id="f-mt-auto"><option value="true">true</option><option value="false">false</option></select></div>
               </div>
+              <p class="note" id="mt-stat" style="margin-top:8px"></p>
               <div class="formfoot">
                 <span class="note" id="lock-note"></span>
                 <span class="spacer"></span>
                 <button class="btn btn-sm" id="btn-cache-purge" data-i18n="cf.purge">清空缓存</button>
+                <button class="btn btn-sm" id="btn-purge-stats" data-i18n="cf.purge.stats">清空统计</button>
+                <button class="btn btn-sm" id="btn-purge-history" data-i18n="cf.purge.history">清空历史曲线</button>
                 <button class="btn btn-primary btn-sm" id="btn-server-save" data-i18n="btn.save">保存</button>
               </div>
             </div>
@@ -1493,18 +1510,21 @@
       "rl.unsupported":"暂时没做：分片回源、OCSP、下行限速。这三个要改数据面结构，先不给空开关骗人。",
       "rl.name.ph":"规则名，如 静态资源长缓存","rl.enabled":"启用","rl.remove":"删除",
       "rl.when":"匹配条件（全部满足）","rl.then":"执行动作","rl.add.cond":"添加条件",
-      "rl.value":"匹配值","rl.header.name":"头/Cookie 名","rl.keep":"不改","rl.yes":"是","rl.no":"否",
+      "rl.value":"匹配值","rl.header.name":"头/Cookie 名","rl.keep":"遵循全局配置","rl.yes":"是","rl.no":"否",
       "rl.empty":"还没有规则。点右上角「新建规则」，例如：路径前缀 /static → 缓存 1 天。",
       "rl.saved":"规则已保存",
       "act.cache_ttl":"节点缓存 TTL（秒）","act.browser_ttl":"浏览器缓存 TTL（秒）",
       "act.cache_key":"自定义 cache key","act.server":"server 名","act.force_https":"强制 HTTPS",
       "act.ws":"WebSocket","act.max_upload":"最大上传（字节）","act.timeout":"回源超时（ms）",
+      "act.rate":"限速 QPS / 突发","act.rate.key":"限速维度",
+      "act.inflight":"在途上限","act.connect_timeout":"建连超时（ms）",
+      "lk.client_ip":"按客户端 IP","lk.rule":"按规则总额","lk.rule_ip":"按规则 + IP",
       "act.host_rewrite":"Host 头改写","act.url_rewrite":"回源 URL 重写",
       "act.redirect":"URL 重定向（状态码 / 目标）","act.custom":"自定义返回（状态码 / 内容）",
       "act.token":"Token 鉴权（名 / 值）",
       "mk.host":"域名","mk.path":"路径前缀","mk.full_path":"完整路径","mk.query":"查询字符串",
       "mk.ext":"文件后缀","mk.filename":"文件名","mk.header":"请求头","mk.scheme":"请求协议",
-      "mk.client_ip":"客户端 IP","mk.method":"请求方法","mk.cookie":"Cookie",
+      "mk.all":"全部请求","mk.client_ip":"客户端 IP","mk.method":"请求方法","mk.cookie":"Cookie",
       "mo.eq":"等于","mo.ne":"不等于","mo.contains":"包含","mo.ncontains":"不包含",
       "mo.prefix":"前缀","mo.suffix":"后缀","mo.wildcard":"通配","mo.cidr":"网段","ov.rank.key":"名称","ov.rank.req":"请求","ov.rank.err":"错误",
       "ov.rank.pct":"占比","ov.rank.avg":"平均耗时","ov.rank.add":"添加筛选","ov.rank.remove":"删除",
@@ -1546,6 +1566,10 @@
       "be.grp.dup":"分组名重复","be.grp.hint.strategy":"本组策略",
       "cf.title":"配置","cf.server":"服务 / 传输","cf.storage":"存储配额与路径","cf.toml":"原始配置 (TOML)",
       "cf.purge":"清空缓存","cf.quota":"三重配额取最严者：条数 / 字节 / 天数。",
+      "cf.purge.stats":"清空统计","cf.purge.history":"清空历史曲线",
+      "cf.purge.failed":"清理失败","cf.purged":"已清理：{what}",
+      "cf.mt.stat":"缓存 {n} 条 / {kb} KB，命中率 {hit}%；限速桶 {buckets} 个，在途 {fly}；背压拒绝 {bp}，限速拒绝 {rl}",
+      "tip.bp":"连接级闸门挡的是\"包\"，请求级在途上限挡的是\"内存\"。每个在途请求都会握着一份缓冲区和上游连接，没有上限时慢客户端就能把内存吃干；超限立刻 503 + Retry-After，不排队（排队只会把内存问题变成延迟问题）。",
       "cf.errorpages":"自定义错误页","cf.err.preview":"预览 502","cf.err.add":"+ 内联页",
       "cf.err.hint":"优先级：目录下的 <status>.html → 这里的行内模板 → 内置模板。占位符 {{status}} {{reason}} {{message}} {{footer}}。",
       "cf.server.saved":"服务配置已保存","cf.storage.saved":"存储与路径配置已保存",
@@ -1783,18 +1807,21 @@
       "rl.unsupported":"Not supported yet: slice origin, OCSP, downstream throttling (needs data-plane work; no fake switches).",
       "rl.name.ph":"Rule name, e.g. static long cache","rl.enabled":"Enabled","rl.remove":"Delete",
       "rl.when":"Match (all must hold)","rl.then":"Actions","rl.add.cond":"Add condition",
-      "rl.value":"value","rl.header.name":"header/cookie name","rl.keep":"unchanged","rl.yes":"yes","rl.no":"no",
+      "rl.value":"value","rl.header.name":"header/cookie name","rl.keep":"use global setting","rl.yes":"yes","rl.no":"no",
       "rl.empty":"No rules yet. Click \"New rule\" — e.g. path prefix /static → cache 1 day.",
       "rl.saved":"Rules saved",
       "act.cache_ttl":"Edge cache TTL (s)","act.browser_ttl":"Browser TTL (s)",
       "act.cache_key":"Custom cache key","act.server":"Server name","act.force_https":"Force HTTPS",
       "act.ws":"WebSocket","act.max_upload":"Max upload (bytes)","act.timeout":"Origin timeout (ms)",
+      "act.rate":"Rate limit QPS / burst","act.rate.key":"Rate limit key",
+      "act.inflight":"In-flight cap","act.connect_timeout":"Connect timeout (ms)",
+      "lk.client_ip":"per client IP","lk.rule":"per rule","lk.rule_ip":"per rule + IP",
       "act.host_rewrite":"Host header rewrite","act.url_rewrite":"Origin URL rewrite",
       "act.redirect":"Redirect (status / target)","act.custom":"Custom response (status / body)",
       "act.token":"Token auth (name / value)",
       "mk.host":"Host","mk.path":"Path prefix","mk.full_path":"Full path","mk.query":"Query",
       "mk.ext":"Extension","mk.filename":"Filename","mk.header":"Header","mk.scheme":"Scheme",
-      "mk.client_ip":"Client IP","mk.method":"Method","mk.cookie":"Cookie",
+      "mk.all":"All requests","mk.client_ip":"Client IP","mk.method":"Method","mk.cookie":"Cookie",
       "mo.eq":"equals","mo.ne":"not equals","mo.contains":"contains","mo.ncontains":"not contains",
       "mo.prefix":"prefix","mo.suffix":"suffix","mo.wildcard":"wildcard","mo.cidr":"CIDR","ov.rank.key":"Name","ov.rank.req":"Requests","ov.rank.err":"Errors",
       "ov.rank.pct":"Share","ov.rank.avg":"Avg latency","ov.rank.add":"Add filter","ov.rank.remove":"Remove",
@@ -1836,6 +1863,10 @@
       "be.grp.dup":"Duplicate group name","be.grp.hint.strategy":"Group strategy",
       "cf.title":"Configuration","cf.server":"Server / Transport","cf.storage":"Storage & Paths","cf.toml":"Raw config (TOML)",
       "cf.purge":"Purge cache","cf.quota":"Strictest of count / bytes / days wins.",
+      "cf.purge.stats":"Purge stats","cf.purge.history":"Purge history",
+      "cf.purge.failed":"Purge failed","cf.purged":"Cleared: {what}",
+      "cf.mt.stat":"Cache {n} entries / {kb} KB, hit rate {hit}%; {buckets} rate buckets, {fly} in flight; backpressure rejects {bp}, rate-limit rejects {rl}",
+      "tip.bp":"The connection gate stops packets; the in-flight cap stops memory. Every in-flight request holds a buffer and an upstream connection, so without a cap a slow client can eat all RAM. Over the limit returns 503 + Retry-After immediately — queueing only turns a memory problem into a latency problem.",
       "cf.errorpages":"Custom Error Pages","cf.err.preview":"Preview 502","cf.err.add":"+ Inline page",
       "cf.err.hint":"Priority: <status>.html on disk → inline template here → built-in. Placeholders: {{status}} {{reason}} {{message}} {{footer}}.",
       "cf.server.saved":"Server config saved","cf.storage.saved":"Storage & paths saved",
@@ -3504,7 +3535,10 @@
   }
 
   // ---------- 自定义规则 ----------
-  var MATCH_KINDS = ["host","path","full_path","query","ext","filename","header","scheme","client_ip","method","cookie"];
+  // all 放第一个：它的用途就是"这条规则对所有请求生效"，
+  // 比如给全站加一道限速，不用再编个 / 前缀之类的近似条件
+  var MATCH_KINDS = ["all","host","path","full_path","query","ext","filename","header","scheme","client_ip","method","cookie"];
+  var LIMIT_KEYS = ["client_ip","rule","rule_ip"];
   var MATCH_OPS = ["eq","ne","contains","ncontains","prefix","suffix","wildcard","cidr"];
 
   function blankRule(){
@@ -3560,7 +3594,8 @@
           MATCH_OPS.map(function(o){
             return '<option value="'+o+'"'+(o===m.op?' selected':'')+'>'+esc(t("mo."+o))+'</option>';
           }).join("")+'</select>'+
-        '<input data-ri="'+i+'" data-path="matches.'+j+'.value" data-type="text" value="'+esc(m.value||"")+'" placeholder="'+esc(t("rl.value"))+'">'+
+        '<input data-ri="'+i+'" data-path="matches.'+j+'.value" data-type="text" value="'+esc(m.value||"")+'" '+
+          'placeholder="'+esc(t("rl.value"))+'"'+(m.kind==="all"?' style="display:none"':'')+'>'+
         '<button class="f-del" data-act="del-match" data-ri="'+i+'" data-mi="'+j+'" title="'+esc(t("ov.rank.remove"))+'">×</button>'+
       '</div>';
     }).join("");
@@ -3569,6 +3604,8 @@
     var redirect = a.redirect || {};
     var custom = a.custom_response || {};
     var token = a.token_auth || {};
+    var rl = a.rate_limit || {};
+    var il = a.max_in_flight || {};
 
     return '<div class="card rule-card'+(r.enabled?"":" off")+'" data-card="rule-'+i+'">'+
       '<div class="rule-head">'+
@@ -3606,6 +3643,33 @@
           '<label class="af"><span>'+esc(t("act.token"))+'</span>'+
             '<div class="pair"><input type="text" data-ri="'+i+'" data-path="actions.token_auth.name" data-type="text" value="'+esc(token.name||"")+'" placeholder="x-token">'+
             '<input type="text" data-ri="'+i+'" data-path="actions.token_auth.value" data-type="text" value="'+esc(token.value||"")+'" placeholder="'+esc(t("rl.value"))+'"></div></label>'+
+        '</div>'+
+        // 限速 / 背压 / 建连超时：这三个是"保护自己"的那组，
+        // 放在同一行里，填的时候不用在卡片上下找
+        '<div class="agrid">'+
+          '<label class="af"><span>'+esc(t("act.rate"))+'</span>'+
+            '<div class="pair">'+
+              '<input type="number" data-ri="'+i+'" data-path="actions.rate_limit.qps" data-type="num" value="'+esc(rl.qps==null?"":String(rl.qps))+'" placeholder="qps">'+
+              '<input type="number" data-ri="'+i+'" data-path="actions.rate_limit.burst" data-type="num" value="'+esc(rl.burst==null?"":String(rl.burst))+'" placeholder="burst">'+
+            '</div></label>'+
+          '<label class="af"><span>'+esc(t("act.rate.key"))+'</span>'+
+            '<select data-ri="'+i+'" data-path="actions.rate_limit.key" data-type="text">'+
+              '<option value=""'+(rl.key?"":" selected")+'>'+esc(t("rl.keep"))+'</option>'+
+              LIMIT_KEYS.map(function(k){
+                return '<option value="'+k+'"'+(rl.key===k?' selected':'')+'>'+esc(t("lk."+k))+'</option>';
+              }).join("")+
+            '</select></label>'+
+          '<label class="af"><span>'+esc(t("act.inflight"))+'</span>'+
+            '<div class="pair">'+
+              '<input type="number" data-ri="'+i+'" data-path="actions.max_in_flight.limit" data-type="num" value="'+esc(il.limit==null?"":String(il.limit))+'" placeholder="limit">'+
+              '<select data-ri="'+i+'" data-path="actions.max_in_flight.key" data-type="text">'+
+                '<option value=""'+(il.key?"":" selected")+'>'+esc(t("rl.keep"))+'</option>'+
+                LIMIT_KEYS.map(function(k){
+                  return '<option value="'+k+'"'+(il.key===k?' selected':'')+'>'+esc(t("lk."+k))+'</option>';
+                }).join("")+
+              '</select>'+
+            '</div></label>'+
+          actionField(r, i, "actions.connect_timeout_ms", t("act.connect_timeout"), "num")+
         '</div>'+
       '</div>'+
       // 面板展开状态存在 state 里，不是只挂在 DOM 上：
@@ -4485,7 +4549,9 @@
       else if (type === "bool") val = el.value === "" ? null : el.value === "1";
       else if (type === "num") val = el.value === "" ? null : Number(el.value);
       else val = el.value;
-      if (path.indexOf("actions.redirect.") === 0 || path.indexOf("actions.custom_response.") === 0 || path.indexOf("actions.token_auth.") === 0){
+      // 所有三层路径（actions.<对象>.<字段>）都按"子对象整块赋值"处理：
+      // 写死三个对象名，加一个 rate_limit 就得再改一次这里，早晚漏。
+      if (path.indexOf("actions.") === 0 && path.split(".").length === 3){
         // 子对象整块赋值，避免出现 {} 空壳
         var kind = path.split(".")[1];
         var field = path.split(".")[2];
@@ -4501,6 +4567,9 @@
         var mi = path.split(".")[1];
         var nm = box.querySelector('[data-path="matches.'+mi+'.name"]');
         if (nm) nm.style.display = (val === "header" || val === "cookie") ? "" : "none";
+        // ALL 不需要匹配值：留着输入框只会让人以为还得填点什么
+        var mv = box.querySelector('[data-path="matches.'+mi+'.value"]');
+        if (mv) mv.style.display = (val === "all") ? "none" : "";
       }
     });
     box.addEventListener("click", function(ev){
@@ -5121,6 +5190,19 @@
     $("f-cmp-level").value = cmp.level || 5;
     $("f-cmp-min").value = cmp.min_bytes == null ? 512 : cmp.min_bytes;
     $("f-cmp-max").value = cmp.max_bytes || 1048576;
+    var bp = c.backpressure || {};
+    $("f-bp-enabled").value = String(bp.enabled !== false);
+    $("f-bp-total").value = bp.max_in_flight == null ? 4096 : bp.max_in_flight;
+    $("f-bp-ip").value = bp.max_in_flight_per_ip == null ? 128 : bp.max_in_flight_per_ip;
+    $("f-bp-conn").value = bp.conn_per_ip || 0;
+    $("f-bp-burst").value = bp.conn_burst_per_sec || 0;
+    $("f-bp-retry").value = bp.retry_after_secs || 2;
+    var mt = c.maintenance || {};
+    $("f-mt-enabled").value = String(mt.enabled !== false);
+    $("f-mt-interval").value = mt.interval_secs == null ? 60 : mt.interval_secs;
+    $("f-mt-high").value = mt.cache_high_pct || 90;
+    $("f-mt-low").value = mt.cache_low_pct || 70;
+    $("f-mt-auto").value = String(mt.cache_auto_purge !== false);
     $("f-cache-bytes").value=c.cache.max_bytes; $("f-cache-entries").value=c.cache.max_entries;
     $("f-sh-keep").value=c.storage.config_history_keep; $("f-sh-bytes").value=c.storage.config_history_max_bytes;
     $("f-sh-days").value=c.storage.config_history_keep_days; $("f-au-keep").value=c.storage.audit_keep;
@@ -5190,6 +5272,19 @@
     cfg.compression.level=Math.max(1, Math.min(9, Number($("f-cmp-level").value)||5));
     cfg.compression.min_bytes=Math.max(0, Number($("f-cmp-min").value)||0);
     cfg.compression.max_bytes=Math.max(1024, Number($("f-cmp-max").value)||1048576);
+    cfg.backpressure = cfg.backpressure || {};
+    cfg.backpressure.enabled=$("f-bp-enabled").value==="true";
+    cfg.backpressure.max_in_flight=Math.max(0, Number($("f-bp-total").value)||0);
+    cfg.backpressure.max_in_flight_per_ip=Math.max(0, Number($("f-bp-ip").value)||0);
+    cfg.backpressure.conn_per_ip=Math.max(0, Number($("f-bp-conn").value)||0);
+    cfg.backpressure.conn_burst_per_sec=Math.max(0, Number($("f-bp-burst").value)||0);
+    cfg.backpressure.retry_after_secs=Math.max(1, Math.min(60, Number($("f-bp-retry").value)||2));
+    cfg.maintenance = cfg.maintenance || {};
+    cfg.maintenance.enabled=$("f-mt-enabled").value==="true";
+    cfg.maintenance.interval_secs=Math.max(0, Number($("f-mt-interval").value)||0);
+    cfg.maintenance.cache_high_pct=Math.max(1, Math.min(100, Number($("f-mt-high").value)||90));
+    cfg.maintenance.cache_low_pct=Math.max(1, Math.min(100, Number($("f-mt-low").value)||70));
+    cfg.maintenance.cache_auto_purge=$("f-mt-auto").value==="true";
     save(cfg, t("cf.server.saved"), this);
   });
 
@@ -5376,11 +5471,44 @@
       .catch(function(e){ toast(e.message,"err"); });
   });
   $("btn-toml-refresh").addEventListener("click", function(){ loadConfig(); });
-  $("btn-cache-purge").addEventListener("click", function(){
-    call("cache.purge", {payload:{}, http:function(){ return api("/api/cache/purge", {method:"POST"}); }})
-      .then(function(){ toast(t("cf.cache.purged"),"ok"); refresh(); })
-      .catch(function(e){ toast(e.message,"err"); });
-  });
+  // ---- 清理：三个按钮分开，因为代价完全不同 ----
+  // 清缓存只掉命中率；清统计会让排行榜归零；清历史会让曲线断掉。
+  // 合成一个"全部清理"，等于逼人为了清缓存把历史一起丢掉。
+  function purge(targets, btn){
+    setBusy(btn, true);
+    api("/api/maintenance/purge", {
+      method: "POST", headers: {"content-type": "application/json"},
+      body: JSON.stringify(targets)
+    }).then(function(d){
+      if (!d.ok) throw new Error(d.error || t("cf.purge.failed"));
+      toast(t("cf.purged", {what: (d.cleared || []).join("，")}), "ok");
+      return loadMaintenance();
+    }).catch(function(e){ toast(e.message, "err"); })
+      .finally(function(){ setBusy(btn, false); });
+  }
+
+  function loadMaintenance(){
+    if (!$("mt-stat")) return Promise.resolve();
+    return api("/api/maintenance").then(function(d){
+      var st = d.cache.stats || {};
+      $("mt-stat").textContent = t("cf.mt.stat", {
+        n: st.entries || 0,
+        kb: Math.round((st.bytes || 0) / 1024),
+        hit: (st.hit_rate || 0).toFixed(1),
+        buckets: d.rate_buckets || 0,
+        fly: d.in_flight || 0,
+        bp: d.backpressure_rejects || 0,
+        rl: d.rate_limited || 0
+      });
+      return d;
+    }).catch(function(){});
+  }
+
+  if ($("btn-cache-purge")){
+    $("btn-cache-purge").addEventListener("click", function(){ purge({cache: true}, this); });
+    $("btn-purge-stats").addEventListener("click", function(){ purge({stats: true}, this); });
+    $("btn-purge-history").addEventListener("click", function(){ purge({history: true}, this); });
+  }
 
   // ---------- 历史 ----------
   function renderHistory(){
@@ -5707,6 +5835,7 @@
       if (id==="p-look"){ loadAppearance(); }
       if (id==="p-security"){ loadSessions(); }
       if (id==="p-backends"){ loadConfig(); }
+      if (id==="p-config"){ loadMaintenance(); }
     });
   });
 
