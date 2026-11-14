@@ -59,6 +59,10 @@ pub struct Config {
     pub appearance: crate::appearance::AppearanceConfig,
     /// 响应压缩：gzip / brotli
     pub compression: CompressionConfig,
+    /// 背压：连接级 + 请求级准入
+    pub backpressure: BackpressureConfig,
+    /// 维护与清理
+    pub maintenance: MaintenanceConfig,
     pub extensions: ExtensionsConfig,
 }
 
@@ -322,6 +326,78 @@ impl Default for CompressionConfig {
             min_bytes: 512,
             max_bytes: 1024 * 1024,
             level: 5,
+        }
+    }
+}
+
+/// 背压。两层，缺一不可：
+///
+/// - **连接级**（`conn_per_ip` / `conn_burst_per_sec`）：包刚进来就挡，最省资源。
+/// - **请求级**（`max_in_flight` / `max_in_flight_per_ip`）：真正压住内存的那道。
+///   每个在途请求都握着一份请求头、缓冲区和上游连接，没有上限时，
+///   慢客户端 + 大响应就能把内存吃干净，而且表现为"越慢越占内存"的死循环。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BackpressureConfig {
+    pub enabled: bool,
+    /// 全局在途请求上限，0 = 不限。按机器内存估：一个在途请求约 32~64 KB 常驻，
+    /// 1 万在途大致 300~600 MB，按这个数量级设。
+    pub max_in_flight: usize,
+    /// 单 IP 在途请求上限，0 = 不限
+    pub max_in_flight_per_ip: usize,
+    /// 单 IP 并发连接上限（0 = 回落到 waf.dos.conn_per_ip）
+    pub conn_per_ip: usize,
+    /// 单 IP 每秒新建连接上限（0 = 回落到 waf.dos.conn_burst_per_sec）
+    pub conn_burst_per_sec: u32,
+    /// 被背压拒绝时建议多久后重试
+    pub retry_after_secs: u64,
+    /// 被背压拒绝时返回的状态码。503 是"暂时不行，稍后再来"的标准语义；
+    /// 想让它更像限流可以用 429。
+    pub status_code: u16,
+}
+
+impl Default for BackpressureConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            // 默认给一个宽松的上限：不配也不能等于没闸。
+            max_in_flight: 4096,
+            max_in_flight_per_ip: 128,
+            conn_per_ip: 0,
+            conn_burst_per_sec: 0,
+            retry_after_secs: 2,
+            status_code: 503,
+        }
+    }
+}
+
+/// 维护与清理：缓存、统计数据、历史曲线。
+///
+/// 缓存过期条目原来只在 lookup 命中同一个键时才清——没人访问的键会一直躺着，
+/// 直到容量淘汰才让位。定时扫一遍比"等它自己撞上"靠谱。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MaintenanceConfig {
+    pub enabled: bool,
+    /// 定时清理间隔（秒）。0 = 不做定时清理，只保留手动清理。
+    pub interval_secs: u64,
+    /// 缓存占用超过 max_bytes 的这个百分比就主动清理
+    pub cache_high_pct: u8,
+    /// 清理时压回到这个百分比
+    pub cache_low_pct: u8,
+    /// 触发水位时是否自动清理。关掉就只告警不动手。
+    pub cache_auto_purge: bool,
+}
+
+impl Default for MaintenanceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval_secs: 60,
+            // 90/70 是常见的水位对：留 10% 余量给"清理期间又写进来的"
+            cache_high_pct: 90,
+            cache_low_pct: 70,
+            cache_auto_purge: true,
         }
     }
 }
@@ -1450,6 +1526,11 @@ impl Config {
                 ));
             }
             for (j, m) in r.matches.iter().enumerate() {
+                // ALL 是"对所有请求成立"，本来就没有值可填。
+                // 在这里放行，前端才不用为了通过校验给 all 编一个占位值。
+                if m.kind == crate::rules::MatchKind::All {
+                    continue;
+                }
                 if m.value.trim().is_empty() {
                     errs.push(format!("rules[{i}].matches[{j}] 的 value 为空"));
                 }

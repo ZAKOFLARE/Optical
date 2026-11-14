@@ -213,6 +213,7 @@ impl Bucket {
         keep_small(&mut self.ips);
         keep_small(&mut self.uas);
         keep_small(&mut self.rules);
+        keep_small(&mut self.wafs);
     }
 }
 
@@ -240,6 +241,16 @@ struct Ring {
 }
 
 impl Ring {
+    /// 清空但保留池子：桶本身是 HashMap，回收进 pool 而不是 drop 掉。
+    fn clear(&mut self) {
+        while let Some(mut b) = self.buckets.pop_front() {
+            b.reset(0);
+            if self.pool.len() < self.cap {
+                self.pool.push(b);
+            }
+        }
+    }
+
     fn new(span: i64, cap: usize) -> Self {
         Self {
             span,
@@ -294,6 +305,15 @@ pub struct StatsStore {
     minute: Ring,
     /// 1 小时 × 168：近 7 天
     hour: Ring,
+}
+
+impl StatsStore {
+    /// 清空全部统计桶。清空的桶回到池里照样复用，不走"清空后重新分配"那条路
+    /// ——每分钟重建四张 HashMap 再整批 drop，是 RSS 只涨不回的经典写法。
+    pub fn clear(&mut self) {
+        self.minute.clear();
+        self.hour.clear();
+    }
 }
 
 impl Default for StatsStore {

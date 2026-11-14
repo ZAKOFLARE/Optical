@@ -15,6 +15,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MatchKind {
+    /// 恒真。给"所有请求"加一条限速/改写时用它——
+    /// 否则只能编个 `path 前缀 /` 之类的近似条件，读的人还得猜你为什么这么写。
+    All,
     /// 域名（不含端口）
     Host,
     /// 路径前缀
@@ -107,6 +110,65 @@ pub struct Actions {
     pub ws: Option<bool>,
     /// 附加响应头
     pub response_headers: Vec<(String, String)>,
+    /// QPS 限速
+    pub rate_limit: Option<RateLimitAction>,
+    /// 规则级在途上限
+    pub max_in_flight: Option<InFlightAction>,
+    /// 回源**建连**超时（毫秒），与总超时分开：
+    /// 建连慢通常意味着后端或网络有问题，早点失败比等满总超时更好排查。
+    pub connect_timeout_ms: Option<u64>,
+}
+
+/// 限速的计数维度。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LimitKey {
+    /// 按客户端 IP 分桶。默认：一个人刷爆不该连累别人。
+    ClientIp,
+    /// 按规则名分桶：整条规则的总额度，用来保护后端的硬上限。
+    Rule,
+    /// 按规则 + IP：同一规则下每个 IP 各自的额度。
+    RuleIp,
+}
+
+impl Default for LimitKey {
+    fn default() -> Self {
+        Self::ClientIp
+    }
+}
+
+/// QPS 限速（令牌桶）。`qps = 0` 视为不限制。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RateLimitAction {
+    pub qps: u32,
+    /// 允许的突发量，0 时取 `qps`（1 秒的额度）
+    pub burst: u32,
+    pub key: LimitKey,
+    /// 超限时返回的状态码，默认 429
+    pub status_code: u16,
+}
+
+impl Default for RateLimitAction {
+    fn default() -> Self {
+        Self { qps: 0, burst: 0, key: LimitKey::ClientIp, status_code: 429 }
+    }
+}
+
+/// 规则级背压：命中这条规则的请求，同时在途的数量上限。
+/// 和全局背压是一回事，只是作用域收窄到"被这条规则选中的请求"。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct InFlightAction {
+    pub limit: usize,
+    pub key: LimitKey,
+    pub status_code: u16,
+}
+
+impl Default for InFlightAction {
+    fn default() -> Self {
+        Self { limit: 0, key: LimitKey::ClientIp, status_code: 503 }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -264,7 +326,13 @@ fn cidr_match(cidr: &str, ip: &str) -> bool {
 }
 
 fn one_match(m: &MatchRule, f: &ReqFacts<'_>) -> bool {
+    // ALL 不看 value，也不参与 op：它就是"这条规则对所有请求成立"。
+    // 放在空值检查之前，否则 value 为空会被判成不匹配。
+    if m.kind == MatchKind::All {
+        return true;
+    }
     let subject = match m.kind {
+        MatchKind::All => unreachable!("上面已经处理"),
         MatchKind::Host => f.host.split(':').next().unwrap_or("").to_string(),
         MatchKind::Path | MatchKind::FullPath => f.path.to_string(),
         MatchKind::Query => f.query.to_string(),
@@ -331,6 +399,15 @@ pub fn resolve(rules: &[Rule], f: &ReqFacts<'_>) -> Resolved {
 fn merge(dst: &mut Actions, src: &Actions) {
     if src.cache_ttl_secs.is_some() {
         dst.cache_ttl_secs = src.cache_ttl_secs;
+    }
+    if src.rate_limit.is_some() {
+        dst.rate_limit = src.rate_limit.clone();
+    }
+    if src.max_in_flight.is_some() {
+        dst.max_in_flight = src.max_in_flight.clone();
+    }
+    if src.connect_timeout_ms.is_some() {
+        dst.connect_timeout_ms = src.connect_timeout_ms;
     }
     if src.browser_ttl_secs.is_some() {
         dst.browser_ttl_secs = src.browser_ttl_secs;
