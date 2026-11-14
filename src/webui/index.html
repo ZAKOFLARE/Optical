@@ -1058,6 +1058,9 @@
                 <div class="field"><label>server.admin_listen_v6</label><input type="text" id="f-admin-v6" data-i18n-ph="ph.v6" placeholder="留空 = 不监听 IPv6"></div>
                 <div class="field wide"><label>default_upstream</label><input type="text" id="f-upstream"></div>
                 <div class="field wide"><label>server.server_header</label><input type="text" id="f-server-header" data-i18n-ph="ph.serverheader" placeholder="留空 = 不发送 Server 头"></div>
+                <!-- 可信代理：逗号分隔的 IP / CIDR。留空 = 谁都不信，防伪造 XFF -->
+                <div class="field wide"><label>server.trusted_proxies<i class="q" data-i18n-tip="tip.trusted">?</i></label>
+                  <input type="text" id="f-trusted" data-i18n-ph="ph.trusted" placeholder="10.0.0.0/8, 172.16.0.0/12（留空 = 不信任任何转发头）"></div>
                 <div class="field"><label>request_timeout_ms</label><input type="number" id="f-timeout" min="1"></div>
                 <div class="field"><label>log_level</label>
                   <select id="f-loglevel"><option>trace</option><option>debug</option><option>info</option><option>warn</option><option>error</option></select></div>
@@ -1581,8 +1584,6 @@
       "ph.autodir":"留空 = 配置文件所在目录","ph.subdir":"留空 = <data_dir>/子目录",
       "ph.trusted":"10.0.0.0/8, 172.16.0.0/12（留空 = 不信任任何转发头）",
       "tip.trusted":"只有这些来源发来的 X-Forwarded-For / CF-Connecting-IP 才作数。留空 = 谁都不信：XFF 是客户端能随便写的头，无脑采信等于让任何人把自己伪装成任意 IP，IP 黑名单和按 IP 限流会同时失效。挂 CDN 时把它的出口网段填进来。",
-      "ph.trusted":"10.0.0.0/8, 172.16.0.0/12 (empty = trust no forwarding headers)",
-      "tip.trusted":"Only these sources may set X-Forwarded-For / CF-Connecting-IP. Empty means trust none: XFF is client-writable, so trusting it blindly lets anyone impersonate any IP and defeats both the IP blocklist and per-IP rate limiting. Put your CDN egress ranges here.",
       "ph.serverheader":"留空 = 不发送 Server 头",
       "ph.subfile":"留空 = <data_dir>/文件名","ph.errdir":"留空 = paths.error_pages_dir","ph.v6":"留空 = 不监听 IPv6",
       "ph.selfsigned":"留空 = 自动生成自签证书",

@@ -58,6 +58,11 @@ echo
 
 [ -x "$BIN" ] || { echo "找不到可执行文件：$BIN（先 cargo build）"; exit 1; }
 
+echo "-- WebUI 静态校验 --"
+# 悬空 id 会让页面在某个 tab 上直接抛 "Cannot set properties of null"，
+# 浏览器里只有控制台一行红字，肉眼看到的是"点进去就卡住"。放最前面查。
+check "JS 引用的元素 id 都存在" 'OK' "$(python3 scripts/check_webui.py 2>&1 | tail -1)"
+
 # ---------- 配置 ----------
 cat > "$CFG" <<EOF
 [server]
