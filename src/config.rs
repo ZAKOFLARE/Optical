@@ -165,6 +165,23 @@ pub struct TlsConfig {
     /// - `strict`：拒绝启动 HTTPS 监听（只有明确要求"没证书就别服务"时才用）。
     #[serde(default = "default_tls_degrade")]
     pub degrade: String,
+    /// TLS 1.2 会话缓存的条数。会话恢复能让老客户端免一次完整握手
+    /// （省一个 RTT + 一次非对称密钥计算）。0 = 关闭恢复。
+    #[serde(default = "default_tls_session_cache")]
+    pub session_cache_size: usize,
+    /// TLS 1.3 会话票据。true = 发送票据（客户端恢复时 1-RTT 直连），
+    /// false = 每次都是完整握手。票据让恢复不需要服务端存任何状态，
+    /// 但代价是前向保密窗口拉长——关掉更保守。
+    #[serde(default = "default_tls_tickets")]
+    pub session_tickets: bool,
+}
+
+fn default_tls_session_cache() -> usize {
+    1024
+}
+
+fn default_tls_tickets() -> bool {
+    true
 }
 
 fn default_tls_degrade() -> String {
@@ -816,6 +833,8 @@ impl Default for TlsConfig {
             san: Vec::new(),
             http_redirect: false,
             degrade: default_tls_degrade(),
+            session_cache_size: default_tls_session_cache(),
+            session_tickets: default_tls_tickets(),
         }
     }
 }

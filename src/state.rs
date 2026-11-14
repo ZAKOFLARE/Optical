@@ -466,12 +466,13 @@ impl AppState {
         *g.entry(status).or_insert(0) += 1;
         drop(g);
 
-        let counters = crate::stats::Counters {
+        let mut counters = crate::stats::Counters {
             requests: 1,
             errors: u32::from(status >= 400),
             upstream_us,
             ..Default::default()
         };
+        counters.push_latency(upstream_us);
         let minute = now_ms() / 60_000;
         self.stats
             .lock()

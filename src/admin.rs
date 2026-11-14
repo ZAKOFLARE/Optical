@@ -998,6 +998,11 @@ fn stats_json(st: &AppState, q: &StatsQuery) -> Value {
                 "errors": c.errors,
                 // 微秒 → 毫秒，保留 1 位小数：echo 上游 0.3ms 也能看出来
                 "avg_ms": (c.avg_us() as f64 / 100.0).round() / 10.0,
+                // 分位只统计真正回源的请求（缓存命中/本地拒绝的 0 不计入），
+                // 0 表示这组还没有可计算的分位（如纯缓存流量）
+                "p50_ms": pct_ms(c.percentile_us(0.5)),
+                "p99_ms": pct_ms(c.percentile_us(0.99)),
+                "p999_ms": pct_ms(c.percentile_us(0.999)),
                 "pct": if total == 0 { 0.0 } else {
                     (c.requests as f64 * 1000.0 / total as f64).round() / 10.0
                 },
@@ -1019,6 +1024,10 @@ fn stats_json(st: &AppState, q: &StatsQuery) -> Value {
         // 当前维度用不上的筛选条件（比如 IP 表按路由筛），前端要如实提示而不是装作生效
         "dropped_filters": r.dropped,
     })
+}
+
+fn pct_ms(us: u64) -> f64 {
+    (us as f64 / 100.0).round() / 10.0
 }
 
 /// 历史曲线：`?gran=60&range=3600` 是查询参数，不落到配置里。

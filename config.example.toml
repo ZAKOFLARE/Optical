@@ -45,6 +45,10 @@ http_redirect = false
 # 默认选 self-signed 的原因很实在：证书路径写错、文件被 ACME 客户端换坏、
 # 私钥不配对，都会让 443 直接消失；前面挂了 CDN 的话，用户看到的就是一个 502。
 degrade = "self-signed"
+# TLS 1.2 会话缓存条数：老客户端恢复会话能省一次完整握手。0 = 关闭恢复。
+session_cache_size = 1024
+# TLS 1.3 会话票据：true = 恢复时 1-RTT 直连；false = 每次完整握手（更保守）。
+session_tickets = true
 
 # ---------- 管理面认证 ----------
 [admin]

@@ -146,6 +146,10 @@ pub struct Counters {
     pub waf_blocks: u32,
     /// 上游耗时累计（微秒）——毫秒精度下 echo 上游全是 0，看着像没数据
     pub upstream_us: u64,
+    /// 上游耗时 log2 直方图：hist[i] 计数耗时落在 [2^i, 2^(i+1)) 微秒的请求。
+    /// 只数真正回源的（us > 0），缓存命中/本地拒绝不计入，否则分位会被 0 拉低。
+    /// 不参与 serde：序列化走 admin 手写 JSON，这里只给查询用。
+    pub(crate) hist: [u32; 32],
 }
 
 impl Counters {
@@ -158,6 +162,9 @@ impl Counters {
         self.cache_miss += o.cache_miss;
         self.waf_blocks += o.waf_blocks;
         self.upstream_us += o.upstream_us;
+        for i in 0..self.hist.len() {
+            self.hist[i] += o.hist[i];
+        }
     }
 
     /// 平均耗时（微秒）；0 表示这批请求压根没走上游（缓存命中/本地拒绝）
@@ -167,6 +174,35 @@ impl Counters {
         } else {
             self.upstream_us / self.requests as u64
         }
+    }
+
+    /// 记一次上游耗时到直方图。
+    pub fn push_latency(&mut self, us: u64) {
+        if us == 0 {
+            return;
+        }
+        let i = (us.ilog2() as usize).min(self.hist.len() - 1);
+        self.hist[i] += 1;
+    }
+
+    /// 分位耗时（微秒），只统计真正回源的请求。p 取 0~1。
+    ///
+    /// 用桶下界 2^i 作近似值：P99 用来"抓慢的那一小撮"，log2 尺度上的误差
+    /// 对运维判断够用，且省掉每个维度存一份排序数组的内存。
+    pub fn percentile_us(&self, p: f64) -> u64 {
+        let total: u64 = self.hist.iter().map(|&n| n as u64).sum();
+        if total == 0 {
+            return 0;
+        }
+        let target = (total as f64 * p).ceil() as u64;
+        let mut acc = 0u64;
+        for (i, &n) in self.hist.iter().enumerate() {
+            acc += n as u64;
+            if acc >= target {
+                return 1u64 << i;
+            }
+        }
+        1u64 << 31
     }
 }
 
@@ -549,6 +585,27 @@ fn trim<K: std::hash::Hash + Eq + Clone, V>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn percentiles_from_histogram() {
+        let mut c = Counters::default();
+        // 9 个 1ms + 1 个 64ms：P50 落在 1ms 桶，P99 落在 64ms 桶
+        for _ in 0..9 {
+            c.push_latency(1_000);
+        }
+        c.push_latency(64_000);
+        assert_eq!(c.percentile_us(0.5), 512, "P50 应落在 512us 桶（1ms 的 log2 下界）");
+        assert!(c.percentile_us(0.99) >= 32_768, "P99 应落在 64ms 附近");
+        // 0 不计入：缓存命中的请求不拉低分位
+        c.push_latency(0);
+        assert_eq!(c.percentile_us(0.5), 512);
+    }
+
+    #[test]
+    fn empty_histogram_is_zero() {
+        let c = Counters::default();
+        assert_eq!(c.percentile_us(0.99), 0);
+    }
 
     fn c(req: u32, err: u32) -> Counters {
         Counters {
