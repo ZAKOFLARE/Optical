@@ -291,7 +291,7 @@ fn wildcard_match(pat: &str, s: &str) -> bool {
     pi == p.len()
 }
 
-fn cidr_match(cidr: &str, ip: &str) -> bool {
+pub fn cidr_match(cidr: &str, ip: &str) -> bool {
     let (net, bits) = match cidr.split_once('/') {
         Some((n, b)) => (n, b.parse::<u32>().unwrap_or(32)),
         None => (cidr, 32),

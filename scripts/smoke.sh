@@ -247,6 +247,42 @@ for _ in $(seq 1 20); do
 done
 check "后端池探活标记 up（异步，最多等 10s）" 'yes' "$BE_UP"
 
+echo "-- 回源请求头 --"
+EH="$(curl -s -m 6 -H 'X-Forwarded-For: 1.2.3.4' "http://$GW/hello")"
+check "回源带 X-Real-IP" '"x-real-ip"' "$EH"
+check "回源带 X-Forwarded-Port" '"x-forwarded-port"' "$EH"
+check "回源带 X-Forwarded-Proto" '"x-forwarded-proto"' "$EH"
+check "回源带标准 Forwarded（RFC 7239）" '"forwarded"' "$EH"
+check "回源带 X-Request-Id" '"x-request-id"' "$EH"
+# 默认谁都不信：客户端自带 XFF 不能改变它在我们眼里的身份
+check "默认不采信伪造的 XFF" '"x-real-ip":"127.0.0.1"' "$EH"
+
+# 配了可信代理才采信
+set_trusted() {
+  local rev body
+  rev="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config" | python3 -c 'import sys,json;print(json.load(sys.stdin)["rev"])')"
+  # WANT 必须挂在 python 上：管道另一端的进程看不到 curl 的环境变量，
+  # 挂错地方会得到一个空 body，PUT 直接失败，然后断言只能看着旧配置发呆
+  body="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config" | WANT="$1" python3 -c '
+import sys, json, os
+c = json.load(sys.stdin)["config"]
+c.setdefault("server", {})["trusted_proxies"] = json.loads(os.environ["WANT"])
+print(json.dumps(c))
+')"
+  curl -s -m 8 -X PUT "${AUTH[@]}" -H 'content-type: application/json' \
+    -H "x-optical-config-rev: $rev" --data-binary "$body" "http://$ADM/api/config" >/dev/null
+}
+set_trusted '["127.0.0.1/32"]'
+sleep 1.5
+EH2="$(curl -s -m 6 -H 'X-Forwarded-For: 1.2.3.4' "http://$GW/hello")"
+check "可信代理下采信 XFF" '"x-real-ip":"1.2.3.4"' "$EH2"
+check "XFF 链保留原值并追加对端" '"x-forwarded-for":"1.2.3.4, 127.0.0.1"' "$EH2"
+# 必须恢复：否则后面所有用例的 IP 维度都会变成 1.2.3.4
+set_trusted '[]'
+sleep 1.5
+check "恢复后不再采信伪造 XFF" '"x-real-ip":"127.0.0.1"' \
+  "$(curl -s -m 6 -H 'X-Forwarded-For: 1.2.3.4' "http://$GW/hello")"
+
 echo "-- 分组负载均衡 / 错误页 / 非固化路径 --"
 WEB_BE="$(for _ in $(seq 1 24); do curl -si -m 3 "http://$GW/web/x" | tr -d '\r' | grep -i '^x-optical-backend:' | awk '{print $2}'; done | sort | uniq -c)"
 check "分组内两台都被轮询到（app-1）" 'app-1' "$WEB_BE"
@@ -279,8 +315,11 @@ check "gzip：响应带 content-encoding" 'content-encoding: gzip' "$H_GZ"
 check "gzip：Vary 带上 accept-encoding（CDN 才不会串味）" 'vary: .*accept-encoding' "$H_GZ"
 # hyper 会按实际 body 重算 Content-Length，所以"必须没有这个头"是错的期待；
 # 要断言的是"声明值 = 实际压缩后的字节数"。
-CL="$(printf '%s' "$H_GZ" | awk -F': *' '/^content-length/{print $2}' | tr -d ' \r')"
-BL="$(curl -s -m 8 -H 'Accept-Encoding: gzip' "http://$GW/hello?big=$BIG" | wc -c | tr -d ' ')"
+# 必须同一次请求里取头和体：两次请求的响应头里带随机 request-id，
+# 拿 A 的声明长度去比 B 的实体长度，差几个字节永远说不清是谁的错
+curl -s -m 8 -D "$TMP/gzh.txt" -o "$TMP/gzb.bin" -H 'Accept-Encoding: gzip' "http://$GW/hello?big=$BIG"
+CL="$(tr -d '\r' < "$TMP/gzh.txt" | awk -F': *' 'tolower($1)=="content-length"{print $2}')"
+BL="$(wc -c < "$TMP/gzb.bin" | tr -d ' ')"
 check "gzip：声明的长度就是压缩后的字节数" 'yes' "$([ -n "$CL" ] && [ "$CL" = "$BL" ] && echo yes || echo "no($CL/$BL)")"
 H_BR="$(HDR 'Accept-Encoding: br, gzip')"
 check "br：两种都支持时优先 brotli" 'content-encoding: br' "$H_BR"
@@ -502,6 +541,11 @@ check "自定义 server 名" 'rule-srv' "$(curl -si -m 6 "http://$GW/r-custom/" 
 check "规则命中标记" 'custom' "$(curl -si -m 6 "http://$GW/r-custom/" | tr -d '\r' | grep -i '^x-optical-rule:')"
 check "Token 鉴权拦截无令牌请求" '401' "$(code "http://$GW/r-auth/")"
 check "Token 鉴权放行正确令牌" '200' "$(code -H 'x-token: s3cret' "http://$GW/r-auth/")"
+
+# 路由维度的语义：没配路由不等于 `-`
+ROUTE_RANK="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/stats?by=route&range=3600&limit=20")"
+check "默认上游记为 default（不再是 -）" '"key":"default"' "$ROUTE_RANK"
+check "规则直接返回时记下规则名" '"key":"rule:custom"' "$ROUTE_RANK"
 
 echo "-- 规则级限速 / ALL 匹配 --"
 # ALL 条件 + 全程共享的令牌桶（key=rule），这样断言不受来源 IP 影响。

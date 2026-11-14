@@ -95,6 +95,14 @@ pub struct ServerConfig {
     /// 响应里的 Server 头。非空则统一覆盖（含转发响应），空串则删除该头。
     /// 默认 "optical"：网关是链路上唯一对客户端负责的一跳，版本号不该由上游泄露。
     pub server_header: String,
+    /// 可信代理：这些来源发来的 `X-Forwarded-For` / `CF-Connecting-IP` 才作数。
+    ///
+    /// 空 = 谁都不信（默认）。这个默认是安全取向：XFF 是客户端能随便写的头，
+    /// 无脑采信等于让任何人把自己伪装成 1.2.3.4——IP 黑名单和按 IP 限流会同时失效。
+    /// 前面挂了 CDN / nginx 时，把它们的出口网段填进来：
+    /// 例如 ["10.0.0.0/8", "172.16.0.0/12", "2408:8000::/20"]。
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub trusted_proxies: Vec<String>,
 }
 
 /// 负载均衡策略。wrr / rr 需要游标，iphash 是纯函数，random 无状态。
@@ -790,6 +798,7 @@ impl Default for ServerConfig {
             max_inspect_bytes: 8192,
             lb: LbStrategy::Wrr,
             server_header: "optical".into(),
+            trusted_proxies: Vec::new(),
         }
     }
 }
