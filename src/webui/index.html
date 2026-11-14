@@ -1519,6 +1519,7 @@
       "act.cache_ttl":"节点缓存 TTL（秒）","act.browser_ttl":"浏览器缓存 TTL（秒）",
       "act.cache_key":"自定义 cache key","act.server":"server 名","act.force_https":"强制 HTTPS",
       "act.ws":"WebSocket","act.max_upload":"最大上传（字节）","act.timeout":"回源超时（ms）",
+      "act.origin_group":"源站组","act.upstream":"回源 URL",
       "act.rate":"限速 QPS / 突发","act.rate.key":"限速维度",
       "act.inflight":"在途上限","act.connect_timeout":"建连超时（ms）",
       "lk.client_ip":"按客户端 IP","lk.rule":"按规则总额","lk.rule_ip":"按规则 + IP",
@@ -1818,6 +1819,7 @@
       "act.cache_ttl":"Edge cache TTL (s)","act.browser_ttl":"Browser TTL (s)",
       "act.cache_key":"Custom cache key","act.server":"Server name","act.force_https":"Force HTTPS",
       "act.ws":"WebSocket","act.max_upload":"Max upload (bytes)","act.timeout":"Origin timeout (ms)",
+      "act.origin_group":"Origin group","act.upstream":"Upstream URL",
       "act.rate":"Rate limit QPS / burst","act.rate.key":"Rate limit key",
       "act.inflight":"In-flight cap","act.connect_timeout":"Connect timeout (ms)",
       "lk.client_ip":"per client IP","lk.rule":"per rule","lk.rule_ip":"per rule + IP",
@@ -3639,6 +3641,8 @@
           actionField(r, i, "actions.upstream_timeout_ms", t("act.timeout"), "num")+
           actionField(r, i, "actions.host_rewrite", t("act.host_rewrite"), "text", "origin.internal")+
           actionField(r, i, "actions.upstream_url_rewrite", t("act.url_rewrite"), "text", "/static{path}")+
+          actionField(r, i, "actions.origin_group", t("act.origin_group"), "text", "backend-group")+
+          actionField(r, i, "actions.upstream", t("act.upstream"), "text", "https://ip:port")+
         '</div>'+
         '<div class="agrid">'+
           '<label class="af"><span>'+esc(t("act.redirect"))+'</span>'+

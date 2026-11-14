@@ -102,6 +102,12 @@ pub struct Actions {
     pub upstream_timeout_ms: Option<u64>,
     /// 回源 Host 头改写
     pub host_rewrite: Option<String>,
+    /// 回源到指定源站组（引用后端组的 group 名）。规则级覆盖，高于路由选路。
+    /// 源站组直接复用后端组：同一套 pick、同一套 LB 与探活，
+    /// 不另造一套并行机制——两套负载均衡迟早打架。
+    pub origin_group: Option<String>,
+    /// 直接指定回源 URL（scheme://host[:port]），优先级最高，连源站组都盖过。
+    pub upstream: Option<String>,
     /// 回源 URL 重写，支持 {path} {query} {uri}
     pub upstream_url_rewrite: Option<String>,
     /// URL 重定向：目标地址 + 状态码（301/302/307/308）
@@ -413,6 +419,12 @@ fn merge(dst: &mut Actions, src: &Actions) {
     }
     if src.connect_timeout_ms.is_some() {
         dst.connect_timeout_ms = src.connect_timeout_ms;
+    }
+    if src.origin_group.is_some() {
+        dst.origin_group = src.origin_group.clone();
+    }
+    if src.upstream.is_some() {
+        dst.upstream = src.upstream.clone();
     }
     if src.browser_ttl_secs.is_some() {
         dst.browser_ttl_secs = src.browser_ttl_secs;

@@ -538,7 +538,13 @@ c['rules'] = [
   {'name':'ncidr-neg','enabled':True,
    'matches':[{'kind':'path','name':'','op':'prefix','value':'/r-ncidr-neg'},
               {'kind':'client_ip','name':'','op':'ncidr','value':'127.0.0.0/8'}],
-   'actions':{'custom_response':{'status':200,'content_type':'text/plain','body':'SHOULD_NOT_MATCH'}}}
+   'actions':{'custom_response':{'status':200,'content_type':'text/plain','body':'SHOULD_NOT_MATCH'}}},
+  {'name':'origin-group','enabled':True,
+   'matches':[{'kind':'path','name':'','op':'prefix','value':'/r-origin'}],
+   'actions':{'origin_group':'app'}},
+  {'name':'upstream-url','enabled':True,
+   'matches':[{'kind':'path','name':'','op':'prefix','value':'/r-up'}],
+   'actions':{'upstream':'http://127.0.0.1:18082'}}
 ]
 print(json.dumps(c))
 " 2>/dev/null
@@ -557,6 +563,10 @@ check "Token 鉴权放行正确令牌" '200' "$(code -H 'x-token: s3cret' "http:
 check "客户端 IP 不在网段内（ncidr）命中" 'NCIDR_OK' "$(curl -s -m 6 "http://$GW/r-ncidr/")"
 check "客户端 IP 在网段内（ncidr）不命中" 'yes' \
   "$(curl -s -m 6 "http://$GW/r-ncidr-neg/" | grep -q SHOULD_NOT_MATCH && echo no || echo yes)"
+check "规则回源到源站组（app 组）" 'x-optical-backend: app-' \
+  "$(curl -si -m 6 "http://$GW/r-origin/x" | tr -d '\r' | grep -i '^x-optical-backend:')"
+check "规则直接指定回源 URL" 'x-optical-upstream: 127.0.0.1:18082' \
+  "$(curl -si -m 6 "http://$GW/r-up/x" | tr -d '\r' | grep -i '^x-optical-upstream:')"
 
 # 路由维度的语义：没配路由不等于 `-`
 ROUTE_RANK="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/stats?by=route&range=3600&limit=20")"
