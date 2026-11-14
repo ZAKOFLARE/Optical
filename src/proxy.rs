@@ -747,6 +747,34 @@ pub async fn handle(
         }
     }
 
+    // ---- 规则级回源：优先级最高，盖过路由的后端选择 ----
+    // 源站组复用后端组（同一个 pick、同一套 LB 与探活），不另造一套并行机制。
+    if let Some(u) = act.upstream.as_deref().filter(|s| !s.trim().is_empty()) {
+        decision.upstream = u.to_string();
+        backend_name = None;
+        lb_used = None;
+    } else if let Some(g) = act.origin_group.as_deref().filter(|s| !s.trim().is_empty()) {
+        let strategy = cfg.resolve_lb(None, Some(g));
+        if let Some(p) = state.backends.pick(
+            &cfg,
+            crate::config::TargetSpec::Group(g),
+            strategy,
+            Some(client_ip),
+        ) {
+            decision.upstream = p.backend.url.clone();
+            if p.backend.timeout_ms > 0 {
+                decision.timeout_ms = p.backend.timeout_ms;
+            }
+            backend_name = Some(p.backend.name.clone());
+            lb_used = Some(p.strategy.label());
+            if p.degraded {
+                tracing::warn!(group = %g, backend = %p.backend.name, "源站组无健康成员，降级转发");
+            }
+        } else {
+            tracing::warn!(group = %g, "规则引用的源站组没有可用后端，回退默认上游");
+        }
+    }
+
     // ---- 缓存查找 ----
     let enc = parts
         .headers
