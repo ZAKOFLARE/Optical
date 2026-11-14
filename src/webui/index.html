@@ -4144,7 +4144,9 @@
     cfg.ip_filter = cfg.ip_filter || {};
     cfg.ip_filter.enabled = $("f-acl-enabled").value === "1";
     cfg.ip_filter.default_action = $("f-acl-default").value;
-    cfg.ip_filter.status_code = Math.min(599, Math.max(400, Number($("f-acl-status").value) || 403));
+    // 拒绝状态码不加限制：想要 444 直接断开、302 重定向、418 卖萌都行，
+    // 只要落在 HTTP 合法范围（100~599）后端照单全收；空值回落 403。
+    cfg.ip_filter.status_code = Number($("f-acl-status").value) || 403;
     cfg.ip_filter.remote = ($("f-acl-remote").value || "").split("\n")
       .map(function(x){ return x.trim(); }).filter(Boolean);
     cfg.ip_filter.remote_refresh_secs = Math.max(60, Number($("f-acl-every").value) || 3600);
