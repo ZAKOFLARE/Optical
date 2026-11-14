@@ -451,10 +451,6 @@ impl AppState {
 
     /// 单请求的画像记录（UA / IP / 状态码）+ 排行榜聚合。
     /// 不知道路由/后端的调用点（体积闸门、WAF 早拦）传 ReqDims::default()，排行榜里显示为「—」。
-    pub fn record_profile(&self, ua: &str, ip: &str, status: u16) {
-        self.record_hit(ua, ip, status, crate::stats::ReqDims::default(), 0);
-    }
-
     /// 带维度与耗时的记录：概览排行榜按它做按路由/后端的细分。
     pub fn record_hit(
         &self,
@@ -1077,9 +1073,9 @@ mod tests {
     fn top_n_sorted_desc() {
         let s = state();
         for _ in 0..3 {
-            s.record_profile("curl/8", "1.1.1.1", 200);
+            s.record_hit("curl/8", "1.1.1.1", 200, crate::stats::ReqDims::default(), 0);
         }
-        s.record_profile("Mozilla/5.0", "2.2.2.2", 200);
+        s.record_hit("Mozilla/5.0", "2.2.2.2", 200, crate::stats::ReqDims::default(), 0);
         let top = s.top_ua(2);
         assert_eq!(top[0].0, "curl/8");
         assert_eq!(top[0].1, 3);
