@@ -743,6 +743,22 @@ EXP="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/ipfilter/export")"
 check "导出包含 allow 行" 'allow 127.0.0.1/32' "$EXP"
 check "导出包含 IPv6 行" 'deny 2001:db8::/32' "$EXP"
 
+# 拒绝状态码不加限制：设成 444（nginx"直接断开"语义，非标准但合法），
+# 让本机命中 deny 验证真实响应状态码——这才是"没被夹到 400~599"的硬证据。
+curl -s -m 6 "${AUTH[@]}" -X POST -H 'content-type: application/json' \
+  -d '{"text":"deny 127.0.0.1/32","mode":"replace"}' "http://$ADM/api/ipfilter/import" >/dev/null
+REV3="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config" | python3 -c 'import sys,json;print(json.load(sys.stdin)["rev"])')"
+BODY3="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config" | python3 -c '
+import sys, json
+d = json.load(sys.stdin)["config"]
+d.setdefault("ip_filter", {})["status_code"] = 444
+print(json.dumps(d))
+')"
+curl -s -m 8 "${AUTH[@]}" -X PUT -H 'content-type: application/json' \
+  -H "x-optical-config-rev: $REV3" --data-binary "$BODY3" "http://$ADM/api/config" >/dev/null
+sleep 1.2
+check "拒绝状态码不被夹到 4xx~5xx（444 原样生效）" '444' "$(code "http://$GW/hello")"
+
 # 关掉，别影响后面的用例
 IDX="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/ipfilter")"
 REV2="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/config" | python3 -c 'import sys,json;print(json.load(sys.stdin)["rev"])')"
