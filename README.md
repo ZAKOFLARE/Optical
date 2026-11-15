@@ -121,7 +121,8 @@ Windows 和 Linux 上都交叉不出来。这是所有带 ring 的 Rust 项目�
 要出 macOS 产物，在 mac 上跑 `./scripts/build.sh macos-arm64` / `macos-x64`，或挂 macOS CI runner。
 
 > 已验证：`x86_64-unknown-linux-gnu`（本机）、`x86_64-unknown-linux-musl`、
-> `x86_64-pc-windows-gnu`。macOS 两系芯片待 macOS 本机 / CI 验证。
+> `x86_64-pc-windows-gnu`。macOS 两系芯片走 CI：`.github/workflows/build.yml` 的
+> macOS runner 编译 `aarch64-apple-darwin` + `x86_64-apple-darwin`（打 `v*` tag 或手动触发）。
 
 ---
 
