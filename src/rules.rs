@@ -108,6 +108,11 @@ pub struct Actions {
     pub origin_group: Option<String>,
     /// 直接指定回源 URL（scheme://host[:port]），优先级最高，连源站组都盖过。
     pub upstream: Option<String>,
+    /// 该规则命中的响应是否允许 gzip 压缩。None = 跟随全局 compression.gzip。
+    /// 某些路径（下载站、已经预压好的静态文件）单独关掉比改全局更干净。
+    pub gzip: Option<bool>,
+    /// 同上，brotli。None = 跟随全局 compression.brotli。
+    pub brotli: Option<bool>,
     /// 回源 URL 重写，支持 {path} {query} {uri}
     pub upstream_url_rewrite: Option<String>,
     /// URL 重定向：目标地址 + 状态码（301/302/307/308）
@@ -425,6 +430,12 @@ fn merge(dst: &mut Actions, src: &Actions) {
     }
     if src.upstream.is_some() {
         dst.upstream = src.upstream.clone();
+    }
+    if src.gzip.is_some() {
+        dst.gzip = src.gzip;
+    }
+    if src.brotli.is_some() {
+        dst.brotli = src.brotli;
     }
     if src.browser_ttl_secs.is_some() {
         dst.browser_ttl_secs = src.browser_ttl_secs;

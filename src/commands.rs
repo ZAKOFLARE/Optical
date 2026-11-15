@@ -281,27 +281,31 @@ async fn bind(addr: &str, label: &str) -> Result<tokio::net::TcpListener> {
         .parse()
         .with_context(|| format!("{label}监听地址非法（{addr}），需要 IP:PORT"))?;
 
+    // 统一走 socket2，IPv4 / IPv6 都设 SO_REUSEADDR。
+    //
+    // 之前 IPv4 直接 TcpListener::bind 没设这个，于是"重启后立刻再启"会撞上
+    // TIME_WAIT 里的旧 socket，报"端口已被占用"（IPv6 分支设了、IPv4 漏了——
+    // 同一套代码两种行为）。SO_REUSEADDR 让刚关掉的监听端口能立刻复用，
+    // 这是网关注定要"反复重启"场景下的必需品。
+    //
     // v6 通配默认是双栈：`[::]:80` 会把 v4 的 0.0.0.0:80 一起占了，
     // 于是同样配了 0.0.0.0:80 的进程直接 Address in use。
     // 显式 V6ONLY 之后两族各管各的，v4 客户端也不会被 v6 通配悄悄吃掉。
+    use socket2::{Domain, Protocol, Socket, Type};
+    let domain = if sa.is_ipv6() { Domain::IPV6 } else { Domain::IPV4 };
+    let sock = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
     if sa.is_ipv6() {
-        use socket2::{Domain, Protocol, Socket, Type};
-        let sock = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP))?;
         sock.set_only_v6(true)?;
-        sock.set_reuse_address(true)?;
-        sock.set_nonblocking(true)?;
-        sock.bind(&sa.into())
-            .with_context(|| format!("{label}监听失败（{addr}），端口可能已被占用"))?;
-        sock.listen(1024)
-            .with_context(|| format!("{label}开始监听失败（{addr}）"))?;
-        let std_listener: std::net::TcpListener = sock.into();
-        return tokio::net::TcpListener::from_std(std_listener)
-            .with_context(|| format!("{label}注册到事件循环失败（{addr}）"));
     }
-
-    tokio::net::TcpListener::bind(addr)
-        .await
-        .with_context(|| format!("{label}监听失败（{addr}），端口可能已被占用"))
+    sock.set_reuse_address(true)?;
+    sock.set_nonblocking(true)?;
+    sock.bind(&sa.into())
+        .with_context(|| format!("{label}监听失败（{addr}），端口可能已被占用"))?;
+    sock.listen(1024)
+        .with_context(|| format!("{label}开始监听失败（{addr}）"))?;
+    let std_listener: std::net::TcpListener = sock.into();
+    tokio::net::TcpListener::from_std(std_listener)
+        .with_context(|| format!("{label}注册到事件循环失败（{addr}）"))
 }
 
 fn banner(cfg: &Config, path: &Path, generated_pw: Option<&str>, tls: Option<&crate::tls::TlsMaterial>) {

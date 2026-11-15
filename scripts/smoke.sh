@@ -578,7 +578,10 @@ c['rules'] = [
    'actions':{'origin_group':'app'}},
   {'name':'upstream-url','enabled':True,
    'matches':[{'kind':'path','name':'','op':'prefix','value':'/r-up'}],
-   'actions':{'upstream':'http://127.0.0.1:18082'}}
+   'actions':{'upstream':'http://127.0.0.1:18082'}},
+  {'name':'no-compress','enabled':True,
+   'matches':[{'kind':'path','name':'','op':'prefix','value':'/r-nocompress'}],
+   'actions':{'gzip':False,'brotli':False}}
 ]
 print(json.dumps(c))
 " 2>/dev/null
@@ -604,6 +607,9 @@ check "规则回源到源站组（app 组）" 'x-optical-backend: app-' \
   "$(curl -si -m 6 "http://$GW/r-origin/x" | tr -d '\r' | grep -i '^x-optical-backend:')"
 check "规则直接指定回源 URL" 'x-optical-upstream: 127.0.0.1:18082' \
   "$(curl -si -m 6 "http://$GW/r-up/x" | tr -d '\r' | grep -i '^x-optical-upstream:')"
+# 规则关掉 gzip/brotli：即使客户端声明要 gzip，响应也不得带 Content-Encoding
+check "规则关闭压缩后响应不压（无 content-encoding）" '^0$' \
+  "$(curl -si -m 6 -H 'Accept-Encoding: gzip, br' "http://$GW/r-nocompress/hello?big=$BIG" | tr -d '\r' | grep -ci '^content-encoding:' || true)"
 
 # 路由维度的语义：没配路由不等于 `-`
 ROUTE_RANK="$(curl -s -m 6 "${AUTH[@]}" "http://$ADM/api/stats?by=route&range=3600&limit=20")"

@@ -1118,7 +1118,20 @@ pub async fn handle(
     // ---- 响应压缩（gzip / brotli）----
     // 只在"长度已知且落在区间内、上游没压过、类型是文本"时才考虑；
     // 其余直传——压错了比不压更糟，尤其是把已经压过的再压一遍。
-    let enc = crate::compress::negotiate(&accept_encoding, &cfg.compression);
+    // 规则可单独关/开 gzip、brotli（None = 跟随全局），这里按需覆盖一份再决策。
+    let compression = if act.gzip.is_some() || act.brotli.is_some() {
+        let mut c = cfg.compression.clone();
+        if let Some(v) = act.gzip {
+            c.gzip = v;
+        }
+        if let Some(v) = act.brotli {
+            c.brotli = v;
+        }
+        c
+    } else {
+        cfg.compression.clone()
+    };
+    let enc = crate::compress::negotiate(&accept_encoding, &compression);
     let content_type = rparts
         .headers
         .get(CONTENT_TYPE)
@@ -1126,7 +1139,7 @@ pub async fn handle(
         .map(|s| s.to_string());
     let want_compress = enc.is_some()
         && crate::compress::should_compress(
-            &cfg.compression,
+            &compression,
             status.as_u16(),
             content_type.as_deref(),
             Some(body_len as u64),
