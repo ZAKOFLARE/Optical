@@ -485,6 +485,42 @@
   .loginbox .field{margin-bottom:10px}
   .loginerr{font-size:12px;color:var(--red);min-height:18px;margin-top:6px}
   .loginbox .btn{width:100%;height:34px;margin-top:4px}
+
+  /* ---- 移动端 ---- */
+  @media (max-width:680px){
+    /* 侧栏收成底部导航栏：竖屏手机上 76px 侧栏太奢侈 */
+    .app{flex-direction:column}
+    .rail{width:100%;height:56px;flex:0 0 56px;flex-direction:row;align-items:stretch;
+      border-right:none;border-top:1px solid var(--line);order:2;padding:0}
+    .rail-logo,.rail-foot{display:none}
+    .rail-nav{flex-direction:row;justify-content:flex-start;width:100%;height:100%;
+      overflow-x:auto;overflow-y:hidden;padding:0 2px}
+    .rail-item{flex:0 0 auto;min-width:54px;flex-direction:column;gap:2px;padding:7px 4px}
+    .rail-item span{font-size:10px}
+    /* active 指示条从左侧竖条改成顶部横条 */
+    .rail-item.active::before{left:0;right:0;top:0;bottom:auto;width:auto;height:2px}
+    .main{order:1;flex:1;min-height:0}
+    .content{padding:12px 12px 36px}
+    .topbar{height:44px;flex:0 0 44px;padding:0 10px}
+    .topbar-right{gap:6px}
+    .topbar-right .live{display:none}
+    .btn-sm{padding:5px 9px;font-size:12px}
+    .iconbtn{width:28px;height:28px}
+    /* 规则编辑器：匹配行、头部别挤成一团 */
+    .mrow{flex-wrap:wrap}
+    .mrow select,.mrow input{min-width:0}
+    .rule-head{flex-wrap:wrap;row-gap:6px}
+    .rule-head .rname{flex:1 1 100%}
+    /* 登录框：340px 在 320px 屏会溢出 */
+    .loginbox{width:100%;max-width:340px;padding:20px 16px}
+    /* 卡片内边距收紧，给内容多留点地方 */
+    .card-head{padding:9px 12px}
+    .card-body{padding:10px 12px}
+    .sec-head h2{font-size:16px}
+    /* toast 别在窄屏上横着超宽 */
+    #toast{right:10px;left:10px;bottom:10px}
+    .toast{max-width:none}
+  }
 </style>
 </head>
 <body>
@@ -561,7 +597,7 @@
         <span data-i18n="nav.look">外观</span>
       </button>
     </nav>
-    <div class="rail-foot" id="rail-ver">v0.2.0</div>
+    <div class="rail-foot" id="rail-ver">v0.3.0</div>
   </aside>
 
   <div class="main">
@@ -5759,7 +5795,7 @@
 
   function refresh(){
     return Promise.all([
-      api("/api/status").then(function(s){ state.status = s; fillViewSelects(); $("dot").className="on"; $("conn").textContent = t("status.live") + " · " + s.listen; renderOverview(); renderKpis(); })
+      api("/api/status").then(function(s){ state.status = s; if(s.version) $("rail-ver").textContent = "v" + s.version; fillViewSelects(); $("dot").className="on"; $("conn").textContent = t("status.live") + " · " + s.listen; renderOverview(); renderKpis(); })
         .catch(function(e){
           $("dot").className="off";
           // 把原因带出来：只显示"离线"等于让人猜
