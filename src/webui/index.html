@@ -538,8 +538,9 @@
     .sec-head h2{font-size:16px;flex:0 0 auto;white-space:nowrap}
     .sec-head .sec-hint{flex:1 1 100%;order:9;line-height:1.6}
     .sec-head > span:empty{display:none}
-    /* toast 别在窄屏上横着超宽 */
-    #toast{right:10px;left:10px;bottom:10px}
+    /* toast 在移动端改顶部弹出：底部是导航栏，压在 bottom 上会把导航挡住没法点。
+       column-reverse 让新弹的贴在最顶上，旧的往下推。 */
+    #toast{top:10px;right:10px;left:10px;bottom:auto;flex-direction:column-reverse}
     .toast{max-width:none}
   }
 </style>
