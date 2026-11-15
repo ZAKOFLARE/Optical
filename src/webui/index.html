@@ -499,7 +499,9 @@
     .rail-item span{font-size:10px}
     /* active 指示条从左侧竖条改成顶部横条 */
     .rail-item.active::before{left:0;right:0;top:0;bottom:auto;width:auto;height:2px}
-    .main{order:1;flex:1;min-height:0}
+    /* height:auto 很关键：原 .main 是 height:100%，在纵向 flex 下会占满 100vh，
+       把 order:2 的 rail 挤出视口，再被 .app 的 overflow:hidden 裁掉——导航栏就"消失"了 */
+    .main{order:1;flex:1;min-height:0;height:auto}
     .content{padding:12px 12px 36px}
     .topbar{height:44px;flex:0 0 44px;padding:0 10px}
     .topbar-right{gap:6px}
