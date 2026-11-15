@@ -62,7 +62,8 @@ TLS 1.2/1.3、WebSocket 隧道、gRPC 透传，配 CLI + WebUI 双操作面（�
 optical/
 ├── Cargo.toml
 ├── config.example.toml          全量配置样例（每项带注释；默认不含演示路由/后端）
-├── scripts/smoke.sh             68 项端到端断言
+├── scripts/build.sh             跨平台构建（含 macOS 两系芯片）
+├── scripts/smoke.sh             211 项端到端断言
 └── src/
     ├── main.rs                  入口
     ├── cli.rs / commands.rs     clap 命令与实现（run / config / route / passwd / status / upstream-echo）
@@ -79,7 +80,7 @@ optical/
     ├── tls.rs                   rustls 终止 + 自签证书生成
     ├── admin.rs                 管理面 REST + 认证中间件
     ├── echo.rs                  演示上游（含 /ws 升级端点）
-    └── webui/index.html         单页控制台（7 个标签页，内嵌）
+    └── webui/index.html         单页控制台（14 个标签页，内嵌）
 ```
 
 ---
@@ -87,22 +88,40 @@ optical/
 ## 构建
 
 ```bash
-cargo build --release          # 产物 target/release/optical
-cargo test                     # 63 个单元测试
+cargo build --release          # 本机目标，产物 target/release/optical
+cargo test                     # 177 个单元测试
 ```
 
-交叉编译（在 Linux 构建机上实测通过）：
+统一入口 `scripts/build.sh`（Linux / macOS / Windows Git Bash 通用）：
 
 ```bash
-rustup target add x86_64-pc-windows-gnu x86_64-unknown-linux-musl
-cargo build --release --target x86_64-unknown-linux-musl   # 静态链接，扔到任何发行版都能跑
-cargo build --release --target x86_64-pc-windows-gnu       # 需要 mingw-w64
+./scripts/build.sh               # 本机目标
+./scripts/build.sh windows       # Windows x64（gnu，需 mingw-w64）
+./scripts/build.sh linux-musl    # Linux x64 静态（任何发行版都能跑）
+./scripts/build.sh linux-arm64   # Linux arm64 静态
+./scripts/build.sh macos-arm64   # Apple Silicon（M 系列，仅 macOS）
+./scripts/build.sh macos-x64     # Intel（仅 macOS）
+./scripts/build.sh all           # 本机能编的都编，编不动的跳过并提示
 ```
 
-> macOS（`aarch64-apple-darwin`）在 Linux 上**过不了**：TLS 后端 ring 需要为目标平台
-> 编译 C/asm，必须有 macOS SDK + 对应 clang。这是所有带 TLS 的 Rust 项目共同的限制，
-> 在 mac 上或在 CI 里用 macOS runner 构建即可，不是代码问题。
-> 已验证：`x86_64-unknown-linux-gnu`（本机）、`x86_64-unknown-linux-musl`、`x86_64-pc-windows-gnu`。
+### 目标矩阵
+
+| 目标 | 平台 | 在哪编 |
+| --- | --- | --- |
+| `x86_64-pc-windows-gnu` | Windows x64 | Linux/macOS 交叉（需 mingw-w64）；Windows 本机直接 MSVC |
+| `x86_64-unknown-linux-musl` | Linux x64 静态 | 任意平台交叉（需 musl） |
+| `aarch64-unknown-linux-musl` | Linux arm64 静态 | 任意平台交叉（需 musl + 交叉工具链） |
+| `aarch64-apple-darwin` | macOS Apple Silicon | **仅 macOS 本机 / macOS CI** |
+| `x86_64-apple-darwin` | macOS Intel | **仅 macOS 本机 / macOS CI** |
+
+### 苹果两系芯片为什么不能在 Windows/Linux 上交叉
+
+TLS 后端 ring 需要为目标平台编译 C/asm，macOS 目标必须有 **macOS SDK + clang**，
+Windows 和 Linux 上都交叉不出来。这是所有带 ring 的 Rust 项目的共同限制，不是本项目的问题。
+要出 macOS 产物，在 mac 上跑 `./scripts/build.sh macos-arm64` / `macos-x64`，或挂 macOS CI runner。
+
+> 已验证：`x86_64-unknown-linux-gnu`（本机）、`x86_64-unknown-linux-musl`、
+> `x86_64-pc-windows-gnu`。macOS 两系芯片待 macOS 本机 / CI 验证。
 
 ---
 
@@ -217,18 +236,24 @@ chunked 或超限请求直接跳过并计入 `waf_skipped`。
 
 ## WebUI
 
-`http://<admin_listen>/`，7 个标签页：
+`http://<admin_listen>/`，14 个标签页：
 
 | 页 | 内容 |
 | --- | --- |
-| 概览 | 采样粒度下拉（500ms/1s/2s/5s）+ 8 格 KPI（请求/带宽入出/缓存命中率/规则命中率/时长/TLS/路由后端/上游）+ 4 组图表（请求、带宽、缓存、拦截，**带 Y 轴刻度、时间轴、十字准线与悬浮读数**）+ Top UA / Top IP / Top 规则 |
-| 路由 | 行内编辑（输入框平时无边框）、backend 下拉引用、筛选、整表保存 |
-| WAF | 总开关 + 模式 + 阈值 + 检查上限；10 个规则族卡片（每族独立开关与参数）；头改写表 |
-| 后端 | 分组（备注 + 策略 + 实时成员健康）、后端 CRUD、状态徽标；轮询只更新徽标，不打断编辑与选区 |
-| 配置 | 服务/传输、存储配额+路径、自定义错误页、原始 TOML |
-| WAF | 每个字段带 `?` 解析提示（悬停显示），每个规则族有一句功能说明 |
+| 概览 | 采样粒度 + 8 格 KPI（请求/带宽/缓存命中率/规则命中率/时长/TLS/路由后端/上游）+ 状态码与缓存两个环形图 + 本进程资源占用 + 全局检索 |
+| 分析 | 流量曲线 + 排行榜独立成页（路由/后端/域名/状态码/IP/UA/规则 多维分组，交叉筛选，P50/P999 分位） |
+| 路由 | 行内编辑、backend / 分组下拉引用、筛选、整表保存 |
+| 站点 | `[[sites]]` 静态站点直出，ETag/304、SPA 回退、缓存策略、额外响应头 |
+| 应用 | `[[apps]]` 动态项目：启停/重启/日志尾巴、端口映射、CORS |
+| 端口 | 端口放行（nft / iptables / ufw，只 ACCEPT 不 DROP） |
+| WAF | 总开关 + 模式 + 阈值；九族规则卡片（每族独立开关与参数，悬停 `?` 说明） |
+| 访问控制 | IP 黑白名单（CIDR/IPv6、远程订阅、状态码可自定义不限 4xx~5xx） |
+| 自定义 | 规则编辑器：匹配维度 × 操作符、源站组/回源 URL/压缩开关/限速/鉴权等动作 |
+| 后端 | 分组（备注 + 策略 + 实时成员健康）、后端 CRUD、状态徽标；轮询只更新徽标不打断编辑 |
+| 配置 | 服务/传输/交付形态（三档）、TLS 会话复用、存储配额、自定义错误页、原始 TOML |
 | 历史 | 配置快照（回滚/删除）+ 审计日志 |
-| 安全 | 认证开关、改口令、TOTP 生成与启用、会话数 |
+| 安全 | 认证开关、改口令、TOTP 生成与启用、会话列表、单点登录 |
+| 外观 | 主题色/图表样式/面板不透明度（1%~100%）+ 四张图（本地上传或外链 URL） |
 
 顶栏：连接状态、中/EN、明/暗、热重载、退出。全部资源内嵌，**不依赖任何 CDN**。
 
@@ -240,7 +265,7 @@ chunked 或超限请求直接跳过并计入 `waf_skipped`。
 cargo build --release && ./scripts/smoke.sh
 ```
 
-覆盖 68 项断言：认证（401/错误口令/登录/会话）、转发与路由、后端探活、
+覆盖 211 项断言：认证（401/错误口令/登录/会话）、转发与路由、后端探活、
 **分组内双后端轮询且不跨组、单后端路由不串成员**、自定义 502 错误页（占位符 + footer + no-store）、
 **data_dir 迁移后 status 反映实际路径**、缓存命中、九个 WAF 族各一发、413 体积闸门、
 帧限制头、自定义头改写、**转发与错误页都带统一 Server 头**、WS 101、TLS 握手与版本、
