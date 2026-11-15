@@ -65,7 +65,11 @@
   code,.mono{font-family:var(--mono)}
   .num{font-variant-numeric:tabular-nums}
 
-  .app{display:flex;height:100vh;overflow:hidden}
+  /* 100vh 在移动浏览器上等于"含地址栏/工具栏的完整高度"，
+     会把底部导航栏顶到浏览器工具栏后面再被 overflow:hidden 裁掉——
+     F12 设备模拟（纯视口）看不见这个坑，真机才有。
+     100dvh = 动态视口高度（跟随浏览器 UI 展开/收起），真机才能正确贴底。 */
+  .app{display:flex;height:100vh;height:100dvh;overflow:hidden}
   .rail{width:76px;flex:0 0 76px;background:var(--panel);border-right:1px solid var(--line);
     display:flex;flex-direction:column;align-items:center;height:100%}
   .rail-logo{width:34px;height:34px;margin:14px 0 14px;
