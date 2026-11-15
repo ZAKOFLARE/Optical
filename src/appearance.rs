@@ -35,6 +35,16 @@ pub struct AppearanceConfig {
     /// 界面不透明度（百分比，1..100）。100 = 现在的实心面板；
     /// 调低会透出自定义背景，代价是面板上的小字对比度会掉。
     pub panel_alpha: u8,
+    /// 四张图的外链地址（http/https）。非空时优先于本地上传的文件——
+    /// 外链资源不落盘、不保存到服务器，只记一个 URL，加载时由浏览器直接拉。
+    #[serde(skip_serializing_if = "String::is_empty", default)]
+    pub bg_url: String,
+    #[serde(skip_serializing_if = "String::is_empty", default)]
+    pub loading_url: String,
+    #[serde(skip_serializing_if = "String::is_empty", default)]
+    pub login_url: String,
+    #[serde(skip_serializing_if = "String::is_empty", default)]
+    pub rail_url: String,
 }
 
 impl Default for AppearanceConfig {
@@ -44,6 +54,10 @@ impl Default for AppearanceConfig {
             accent: default_accent(),
             chart_style: default_chart_style(),
             panel_alpha: 100,
+            bg_url: String::new(),
+            loading_url: String::new(),
+            login_url: String::new(),
+            rail_url: String::new(),
         }
     }
 }
@@ -62,6 +76,21 @@ impl AppearanceConfig {
         }
         // 允许低到 1%（用户要求），0 语义是"没设置"，回落到默认 100
         self.panel_alpha = if self.panel_alpha == 0 { 100 } else { self.panel_alpha.clamp(1, 100) };
+        // 外链只认 http/https，其余（javascript:、data:、相对路径）一律当没填。
+        // 防的是把可执行协议塞进 CSS url() 里当图片加载。
+        for u in [
+            &mut self.bg_url,
+            &mut self.loading_url,
+            &mut self.login_url,
+            &mut self.rail_url,
+        ] {
+            let t = u.trim();
+            *u = if t.starts_with("https://") || t.starts_with("http://") {
+                t.to_string()
+            } else {
+                String::new()
+            };
+        }
     }
 }
 
@@ -247,6 +276,10 @@ pub fn payload(cfg: &AppearanceConfig, data_dir: &Path) -> serde_json::Value {
             .map(|a| a.url.clone())
             .unwrap_or_default()
     };
+    // 外链优先：填了外链就盖过本地上传，否则回落到 /api/branding 的本地文件
+    let url_of = |k: &str, ext: &str| {
+        if ext.is_empty() { get(k) } else { ext.to_string() }
+    };
     serde_json::json!({
         "ok": true,
         "enabled": cfg.enabled,
@@ -254,10 +287,15 @@ pub fn payload(cfg: &AppearanceConfig, data_dir: &Path) -> serde_json::Value {
         "chart_style": cfg.chart_style,
         // 手改配置写成 0 也不会把面板变成全透明：出口这里再夹一次
         "panel_alpha": if cfg.panel_alpha == 0 { 100 } else { cfg.panel_alpha.clamp(1, 100) },
-        "bg": get("bg"),
-        "loading": get("loading"),
-        "login": get("login"),
-        "rail": get("rail"),
+        "bg": url_of("bg", &cfg.bg_url),
+        "loading": url_of("loading", &cfg.loading_url),
+        "login": url_of("login", &cfg.login_url),
+        "rail": url_of("rail", &cfg.rail_url),
+        // 外链字段也回传，前端要据此回填输入框
+        "bg_url": cfg.bg_url,
+        "loading_url": cfg.loading_url,
+        "login_url": cfg.login_url,
+        "rail_url": cfg.rail_url,
         "assets": assets,
         "max_asset_mb": MAX_ASSET_BYTES / 1024 / 1024,
     })
@@ -310,6 +348,26 @@ mod tests {
         c.chart_style = "pie".into();
         c.normalize();
         assert_eq!(c.chart_style, "line");
+    }
+
+    #[test]
+    fn external_url_whitelist_and_priority() {
+        let mut c = AppearanceConfig::default();
+        c.bg_url = "https://cdn.example.com/bg.png".into();
+        c.rail_url = "javascript:alert(1)".into();
+        c.login_url = "data:image/png;base64,xxx".into();
+        c.normalize();
+        // 只放行 http/https，可执行协议一律清掉
+        assert_eq!(c.bg_url, "https://cdn.example.com/bg.png");
+        assert_eq!(c.rail_url, "");
+        assert_eq!(c.login_url, "");
+        // 外链优先于本地上传：填了 bg_url，payload 的 bg 就返回外链
+        let dir = std::env::temp_dir().join("opt-app-ext-test");
+        std::fs::remove_dir_all(&dir).ok();
+        let v = payload(&c, &dir);
+        assert_eq!(v["bg"].as_str().unwrap(), "https://cdn.example.com/bg.png");
+        assert_eq!(v["bg_url"].as_str().unwrap(), "https://cdn.example.com/bg.png");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

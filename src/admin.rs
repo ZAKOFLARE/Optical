@@ -1660,6 +1660,15 @@ struct AppearanceReq {
     chart_style: Option<String>,
     #[serde(default)]
     panel_alpha: Option<u8>,
+    /// 外链资源地址。None = 不动；Some("") = 清除；Some(url) = 设置。
+    #[serde(default)]
+    bg_url: Option<String>,
+    #[serde(default)]
+    loading_url: Option<String>,
+    #[serde(default)]
+    login_url: Option<String>,
+    #[serde(default)]
+    rail_url: Option<String>,
 }
 
 async fn api_set_appearance(
@@ -1678,6 +1687,18 @@ async fn api_set_appearance(
     }
     if let Some(v) = req.panel_alpha {
         cfg.appearance.panel_alpha = v;
+    }
+    if let Some(v) = req.bg_url {
+        cfg.appearance.bg_url = v;
+    }
+    if let Some(v) = req.loading_url {
+        cfg.appearance.loading_url = v;
+    }
+    if let Some(v) = req.login_url {
+        cfg.appearance.login_url = v;
+    }
+    if let Some(v) = req.rail_url {
+        cfg.appearance.rail_url = v;
     }
     cfg.appearance.normalize();
     let accent = cfg.appearance.accent.clone();

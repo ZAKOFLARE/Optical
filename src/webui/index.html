@@ -299,6 +299,9 @@
   .brand-prev img{max-width:100%;max-height:100%;object-fit:contain}
   .brand-prev .none{font-size:11px;color:var(--ink-3)}
   .brand-acts{display:flex;gap:6px}
+  .look-url{width:100%;height:28px;margin-top:8px;border:1px solid var(--line-2);background:var(--panel);
+    color:var(--ink);border-radius:var(--r);padding:0 7px;font-family:inherit;font-size:11.5px}
+  .look-url:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(0,82,217,.1)}
   .swatches{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
   .swatch{width:20px;height:20px;border-radius:50%;border:1px solid rgba(0,0,0,.12);cursor:pointer;padding:0}
   .swatch.on{box-shadow:0 0 0 2px var(--panel),0 0 0 4px var(--blue)}
@@ -1467,7 +1470,7 @@
       "look.k.loading":"加载图标","look.k.loading.d":"等待数据时旋转的那一个",
       "look.k.login":"登录页图标","look.k.login.d":"登录框左上角，未登录时也要能显示",
       "look.k.rail":"左上角图标","look.k.rail.d":"侧边栏顶部，登录后的品牌位",
-      "look.builtin":"内置","look.pick":"选择图片","look.drop":"移除",
+      "look.builtin":"内置","look.url.ph":"外链 URL（https://…，不落盘）","look.pick":"选择图片","look.drop":"移除",
       "look.on":"已启用自定义外观","look.off":"当前是内置外观",
       "look.saved":"外观已保存","look.save.failed":"保存失败","look.badhex":"主题色要写成 #rrggbb",
       "look.reset.ok":"已恢复默认外观","look.toobig":"图片超过 4 MB",
@@ -1770,7 +1773,7 @@
       "look.k.loading":"Loading spinner","look.k.loading.d":"Shown while waiting for data",
       "look.k.login":"Login logo","look.k.login.d":"Top-left of the login box, visible before sign-in",
       "look.k.rail":"Rail logo","look.k.rail.d":"Top of the sidebar after sign-in",
-      "look.builtin":"built-in","look.pick":"Choose image","look.drop":"Remove",
+      "look.builtin":"built-in","look.url.ph":"External URL (https://…, not stored on server)","look.pick":"Choose image","look.drop":"Remove",
       "look.on":"Custom appearance enabled","look.off":"Using the built-in appearance",
       "look.saved":"Appearance saved","look.save.failed":"Save failed","look.badhex":"Accent must be #rrggbb",
       "look.reset.ok":"Reverted to the built-in appearance","look.toobig":"Image exceeds 4 MB",
@@ -3905,7 +3908,9 @@
         '<div class="brand-acts">'+
           '<button class="btn btn-sm" data-look-pick="'+m.k+'">'+esc(t("look.pick"))+'</button>'+
           (url ? '<button class="btn btn-sm danger-btn" data-look-drop="'+m.k+'">'+esc(t("look.drop"))+'</button>' : '')+
-        '</div></div>';
+        '</div>'+
+        '<input class="look-url" data-look-url="'+m.k+'" placeholder="'+esc(t("look.url.ph"))+'" value="'+esc(d[m.k+"_url"]||"")+'">'+
+        '</div>';
     }).join("");
     if ($("look-stat")){
       $("look-stat").textContent = d.enabled ? t("look.on") : t("look.off");
@@ -4087,6 +4092,12 @@
     d.accent = accent;
     d.chart_style = style;
     d.panel_alpha = Number($("f-look-alpha").value) || 100;
+    // 外链优先：填了就盖过本地文件，即时预览
+    LOOK_KINDS.forEach(function(m){
+      var el = document.querySelector('[data-look-url="'+m.k+'"]');
+      var v = el ? el.value.trim() : "";
+      if (v) d[m.k] = v;
+    });
     applyLook(d);
     // 只重画图片格子和状态行；输入框是用户正在操作的东西，不能回写
     renderLookAssets(d);
@@ -4101,12 +4112,17 @@
       if (b.classList.contains("on")) style = b.getAttribute("data-style");
     });
     setBusy(btn, true);
+    var body = {
+      enabled: true, accent: accent, chart_style: style,
+      panel_alpha: Number($("f-look-alpha").value) || 100
+    };
+    LOOK_KINDS.forEach(function(m){
+      var el = document.querySelector('[data-look-url="'+m.k+'"]');
+      if (el) body[m.k+"_url"] = el.value.trim();
+    });
     api("/api/appearance", {
       method: "PUT", headers: {"content-type": "application/json"},
-      body: JSON.stringify({
-        enabled: true, accent: accent, chart_style: style,
-        panel_alpha: Number($("f-look-alpha").value) || 100
-      })
+      body: JSON.stringify(body)
     }).then(function(d){
       if (!d.ok) throw new Error(d.error || t("look.save.failed"));
       toast(t("look.saved"), "ok");

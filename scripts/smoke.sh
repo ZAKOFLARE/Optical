@@ -817,13 +817,22 @@ AP2="$(curl -s -m 6 "http://$ADM/api/appearance")"
 check "非法主题色回落到默认蓝" '"accent":"#0052d9"' "$AP2"
 check "非法图表样式回落到折线" '"chart_style":"line"' "$AP2"
 
-# 面板不透明度：能存能读，低于可读下限要被夹住（不是原样存下来）
+# 面板不透明度：能存能读，下限放开到 1%（用户要求），0 回落 100
 curl -s -m 6 "${AUTH[@]}" -X PUT -H 'content-type: application/json' \
   -d '{"panel_alpha":72}' "http://$ADM/api/appearance" >/dev/null
 check "面板不透明度能保存" '"panel_alpha":72' "$(curl -s -m 6 "http://$ADM/api/appearance")"
 curl -s -m 6 "${AUTH[@]}" -X PUT -H 'content-type: application/json' \
-  -d '{"panel_alpha":5}' "http://$ADM/api/appearance" >/dev/null
-check "过低的透明度被夹到 55" '"panel_alpha":55' "$(curl -s -m 6 "http://$ADM/api/appearance")"
+  -d '{"panel_alpha":1}' "http://$ADM/api/appearance" >/dev/null
+check "透明度下限放开到 1%" '"panel_alpha":1' "$(curl -s -m 6 "http://$ADM/api/appearance")"
+# 外链资源：只放行 http/https，javascript: 等可执行协议一律清空
+curl -s -m 6 "${AUTH[@]}" -X PUT -H 'content-type: application/json' \
+  -d '{"rail_url":"https://cdn.example.com/logo.svg","bg_url":"javascript:alert(1)"}' "http://$ADM/api/appearance" >/dev/null
+check "外链资源优先生效（rail 返回外链）" '"rail":"https://cdn.example.com/logo.svg"' \
+  "$(curl -s -m 6 "http://$ADM/api/appearance")"
+check "可执行协议外链被清空" '"bg_url":""' "$(curl -s -m 6 "http://$ADM/api/appearance")"
+# 清掉外链，别影响后面"移除图标→回到内置"的断言
+curl -s -m 6 "${AUTH[@]}" -X PUT -H 'content-type: application/json' \
+  -d '{"rail_url":"","bg_url":""}' "http://$ADM/api/appearance" >/dev/null
 
 check "移除图标" '"removed":true' \
   "$(curl -s -m 6 "${AUTH[@]}" -X DELETE "http://$ADM/api/appearance/asset/rail")"
