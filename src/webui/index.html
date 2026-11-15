@@ -520,8 +520,15 @@
     /* 登录框：340px 在 320px 屏会溢出 */
     .loginbox{width:100%;max-width:340px;padding:20px 16px}
     /* 卡片内边距收紧，给内容多留点地方 */
-    .card-head{padding:9px 12px}
+    .card-head{padding:9px 12px;flex-wrap:wrap;row-gap:6px}
+    .card-head h3{white-space:nowrap;flex:0 0 auto}
     .card-body{padding:10px 12px}
+    /* 会话列表：5 列固定 grid（最小 596px）在手机上必溢出。
+       改成两行 flex：设备名独占一行，IP/最近/到期一行，下线按钮靠右。 */
+    .dev-head{display:none}
+    .dev-row{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center}
+    .dev-row .dev-ua{flex:1 1 100%}
+    .dev-row > :nth-child(5){margin-left:auto}
     /* 页头别挤成一坨：标题和按钮一行，说明文字独占一行。
        否则"自定义规则"这种标题会被 space-between 压成竖排一个字一行 */
     .sec-head{flex-wrap:wrap;row-gap:8px;align-items:center}
