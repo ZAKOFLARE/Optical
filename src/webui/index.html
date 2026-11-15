@@ -392,8 +392,11 @@
   .tblwrap{overflow-x:auto}
   .tbl{width:100%;border-collapse:collapse;table-layout:fixed}
   .tbl.min{min-width:1120px}
+  /* 分组表列少但固定列总和 476px，容器不够时 table-layout:fixed 会把弹性列压成 0 */
+  .tbl.sm{min-width:640px}
   .tbl th{text-align:left;font-size:11.5px;font-weight:500;color:var(--ink-3);background:var(--thead);
-    border-bottom:1px solid var(--line);padding:8px 10px;white-space:nowrap}
+    border-bottom:1px solid var(--line);padding:8px 10px;white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis}
   .tbl td{border-bottom:1px solid var(--line);padding:5px 10px;vertical-align:middle;font-size:12.5px}
   .tbl tbody tr{transition:background .12s}
   .tbl tbody tr:hover{background:var(--hover)}
@@ -1063,7 +1066,7 @@
               <button class="btn btn-primary btn-sm" id="btn-grp-save" data-i18n="btn.save">保存</button>
             </div>
           </div>
-          <div class="tblwrap"><table class="tbl">
+          <div class="tblwrap"><table class="tbl sm">
             <colgroup><col style="width:18%"><col><col style="width:170px"><col style="width:130px"><col style="width:130px"><col style="width:46px"></colgroup>
             <thead><tr>
               <th data-i18n="th.group">分组</th><th data-i18n="th.note">备注</th><th data-i18n="th.strategy">负载均衡</th>
@@ -1317,7 +1320,7 @@
                    塞在里面的 <b> 会连同百分号一起消失 -->
               <div class="field"><label data-i18n="look.alpha">界面不透明度</label>
                 <div style="display:flex;align-items:center;gap:10px">
-                  <input type="range" id="f-look-alpha" min="55" max="100" step="1" value="100" style="flex:1">
+                  <input type="range" id="f-look-alpha" min="1" max="100" step="1" value="100" style="flex:1">
                   <b id="look-alpha-v" class="mono" style="font-size:12px;color:var(--ink-2);min-width:42px;text-align:right">100%</b>
                 </div>
               </div>
@@ -2045,7 +2048,7 @@
       "th.target":"UPSTREAM / BACKEND / GROUP","th.strip":"STRIP","th.rwhost":"RW-HOST","th.timeout":"TIMEOUT",
       "th.on":"ON","th.phase":"PHASE","th.action":"ACTION","th.hname":"NAME","th.value":"VALUE",
       "th.matchpath":"MATCH PATH","th.status":"STATUS","th.group":"GROUP","th.note":"NOTE",
-      "th.strategy":"LOAD BALANCE","th.members":"MEMBERS (UP/TOTAL)","th.weight":"WEIGHT",
+      "th.strategy":"LOAD BALANCE","th.members":"UP / TOTAL","th.weight":"WEIGHT",
       "th.url":"URL","th.health":"HEALTH PATH","th.interval":"INTERVAL","th.state":"STATE",
       "th.id":"ID","th.size":"SIZE","th.reason":"REASON","th.preview":"PREVIEW",
       "th.time":"TIME","th.kind":"KIND","th.path":"PATH","th.detail":"DETAIL","th.body":"HTML TEMPLATE"
@@ -3871,7 +3874,7 @@
 
     // 面板不透明度：只在启用自定义外观时生效，关掉就回到 1
     var alpha = on && d && d.panel_alpha ? Number(d.panel_alpha) : 100;
-    alpha = Math.max(55, Math.min(100, alpha || 100));
+    alpha = Math.max(1, Math.min(100, alpha || 100));
     if (on) root.setProperty("--panel-a", String(alpha / 100));
     else root.removeProperty("--panel-a");
     if ($("look-alpha-v")) $("look-alpha-v").textContent = alpha + "%";
