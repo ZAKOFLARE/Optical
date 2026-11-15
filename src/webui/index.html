@@ -518,7 +518,12 @@
     /* 卡片内边距收紧，给内容多留点地方 */
     .card-head{padding:9px 12px}
     .card-body{padding:10px 12px}
-    .sec-head h2{font-size:16px}
+    /* 页头别挤成一坨：标题和按钮一行，说明文字独占一行。
+       否则"自定义规则"这种标题会被 space-between 压成竖排一个字一行 */
+    .sec-head{flex-wrap:wrap;row-gap:8px;align-items:center}
+    .sec-head h2{font-size:16px;flex:0 0 auto;white-space:nowrap}
+    .sec-head .sec-hint{flex:1 1 100%;order:9;line-height:1.6}
+    .sec-head > span:empty{display:none}
     /* toast 别在窄屏上横着超宽 */
     #toast{right:10px;left:10px;bottom:10px}
     .toast{max-width:none}
