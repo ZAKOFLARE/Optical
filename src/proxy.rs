@@ -602,6 +602,10 @@ pub async fn handle(
             .unwrap_or_else(|_| {
                 error_response(&state, &cfg, StatusCode::INTERNAL_SERVER_ERROR, "自定义响应构造失败", None)
             });
+        // 先套全局 server 头，规则级 server_name 由 apply_rule_headers 在后面覆盖。
+        // 少了这行，custom_response 的响应里 server 头直接缺席——
+        // "server 遵循全局"就成了"server 为空"。
+        apply_server_header(&cfg, resp.headers_mut());
         apply_rule_headers(&mut resp, &rule_hit);
         return resp;
     }

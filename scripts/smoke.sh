@@ -595,6 +595,9 @@ check "规则命中标记" 'custom' "$(curl -si -m 6 "http://$GW/r-custom/" | tr
 check "Token 鉴权拦截无令牌请求" '401' "$(code "http://$GW/r-auth/")"
 check "Token 鉴权放行正确令牌" '200' "$(code -H 'x-token: s3cret' "http://$GW/r-auth/")"
 check "客户端 IP 不在网段内（ncidr）命中" 'NCIDR_OK' "$(curl -s -m 6 "http://$GW/r-ncidr/")"
+# 这条 custom_response 规则没设 server_name，应遵循全局 server 头，而不是凭空消失
+check "custom_response 未设 server_name 时遵循全局 server 头" 'server: optical-smoke' \
+  "$(curl -si -m 6 "http://$GW/r-ncidr/" | tr -d '\r' | grep -i '^server:')"
 check "客户端 IP 在网段内（ncidr）不命中" 'yes' \
   "$(curl -s -m 6 "http://$GW/r-ncidr-neg/" | grep -q SHOULD_NOT_MATCH && echo no || echo yes)"
 check "规则回源到源站组（app 组）" 'x-optical-backend: app-' \

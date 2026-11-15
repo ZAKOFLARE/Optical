@@ -53,6 +53,7 @@ pub async fn run_gateway(config_opt: Option<PathBuf>, args: crate::cli::RunArgs)
     overrides.apply(&mut cfg);
     cfg.validate_ok_in(base_dir_of(&path))?;
     init_logging(&cfg.server.log_level);
+    print_banner();
 
     if created {
         tracing::info!(path = %path.display(), "未找到配置文件，已生成示例配置");
@@ -932,4 +933,26 @@ async fn http_request(req: Request<Full<Bytes>>) -> Result<Bytes> {
     let resp = client.request(req).await?;
     let body = resp.into_body().collect().await?.to_bytes();
     Ok(body)
+}
+
+
+
+/// 启动横幅：Speed 字体的 "Optical" ASCII 艺术字。
+/// 用 pyfiglet(font="speed") 生成后硬编码——为一个启动横幅引入 figlet 依赖不值当。
+/// 仅 stdout 是终端时着色；重定向到文件就不塞 ANSI 转义码，日志保持干净。
+fn print_banner() {
+    const BANNER: &str = r#"_______        __________             ______
+__  __ \_________  /___(_)___________ ___  /
+_  / / /__  __ \  __/_  /_  ___/  __ `/_  /
+/ /_/ /__  /_/ / /_ _  / / /__ / /_/ /_  /
+\____/ _  .___/\__/ /_/  \___/ \__,_/ /_/
+       /_/
+"#;
+    if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        println!("\x1b[36m{}\x1b[0m", BANNER);
+        println!("\x1b[36moptical {} · ZAKOFLARE\x1b[0m", env!("CARGO_PKG_VERSION"));
+    } else {
+        println!("{}", BANNER);
+        println!("optical {} · ZAKOFLARE", env!("CARGO_PKG_VERSION"));
+    }
 }
