@@ -7,7 +7,8 @@
 use bytes::Bytes;
 use http::{HeaderMap, Method, StatusCode};
 use std::collections::{HashMap, VecDeque};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::RwLock;
 use std::time::{Duration, Instant};
 
 struct Entry {
@@ -23,15 +24,16 @@ struct Inner {
     /// 插入顺序，用于 LRU 淘汰
     order: VecDeque<String>,
     bytes: usize,
-    hits: u64,
-    misses: u64,
-    stores: u64,
-    evictions: u64,
 }
 
 #[derive(Default)]
 pub struct ResponseCache {
-    inner: Mutex<Inner>,
+    inner: RwLock<Inner>,
+    // 命中/未命中等计数器单独用原子：lookup 的读锁不用为计数升级成写锁
+    hits: AtomicU64,
+    misses: AtomicU64,
+    stores: AtomicU64,
+    evictions: AtomicU64,
 }
 
 /// 缓存写入策略（容量与 TTL 一起传，避免 store() 参数爆炸）
@@ -65,30 +67,30 @@ impl ResponseCache {
     }
 
     pub fn lookup(&self, key: &str) -> Option<(StatusCode, HeaderMap, Bytes)> {
-        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let expired = match g.map.get(key) {
-            Some(e) => e.expires <= Instant::now(),
-            None => false,
-        };
-        if expired {
-            if let Some(e) = g.map.remove(key) {
-                g.bytes = g.bytes.saturating_sub(e.body.len());
+        // 快路径：读锁。命中未过期 / 完全未命中都只抢读锁，并发互不阻塞。
+        {
+            let g = self.inner.read().unwrap_or_else(|e| e.into_inner());
+            match g.map.get(key) {
+                Some(e) if e.expires > Instant::now() => {
+                    let out = (e.status, e.headers.clone(), e.body.clone());
+                    self.hits.fetch_add(1, Ordering::Relaxed);
+                    return Some(out);
+                }
+                None => {
+                    self.misses.fetch_add(1, Ordering::Relaxed);
+                    return None;
+                }
+                _ => {}
             }
+        }
+        // 慢路径：键存在但已过期，写锁清理。发生频率远低于命中/未命中。
+        let mut g = self.inner.write().unwrap_or_else(|e| e.into_inner());
+        if let Some(e) = g.map.remove(key) {
+            g.bytes = g.bytes.saturating_sub(e.body.len());
             g.order.retain(|k| k != key);
-            g.misses += 1;
-            return None;
         }
-        match g.map.get(key) {
-            Some(e) => {
-                let out = (e.status, e.headers.clone(), e.body.clone());
-                g.hits += 1;
-                Some(out)
-            }
-            None => {
-                g.misses += 1;
-                None
-            }
-        }
+        self.misses.fetch_add(1, Ordering::Relaxed);
+        None
     }
 
     pub fn store(
@@ -103,7 +105,7 @@ impl ResponseCache {
         if body.is_empty() || body.len() > max_bytes / 4 {
             return;
         }
-        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = self.inner.write().unwrap_or_else(|e| e.into_inner());
         if let Some(old) = g.map.remove(&key) {
             g.bytes = g.bytes.saturating_sub(old.body.len());
             g.order.retain(|k| k != &key);
@@ -119,34 +121,36 @@ impl ResponseCache {
             },
         );
         g.order.push_back(key);
-        g.stores += 1;
+        self.stores.fetch_add(1, Ordering::Relaxed);
 
         while (g.bytes > max_bytes || g.map.len() > max_entries) && g.map.len() > 1 {
             let Some(victim) = g.order.pop_front() else { break };
             if let Some(e) = g.map.remove(&victim) {
                 g.bytes = g.bytes.saturating_sub(e.body.len());
-                g.evictions += 1;
+                self.evictions.fetch_add(1, Ordering::Relaxed);
             }
         }
     }
 
     pub fn stats(&self) -> CacheStats {
-        let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let total = g.hits + g.misses;
+        let g = self.inner.read().unwrap_or_else(|e| e.into_inner());
+        let hits = self.hits.load(Ordering::Relaxed);
+        let misses = self.misses.load(Ordering::Relaxed);
+        let total = hits + misses;
         CacheStats {
             entries: g.map.len(),
             bytes: g.bytes,
-            hits: g.hits,
-            misses: g.misses,
-            stores: g.stores,
-            evictions: g.evictions,
-            hit_rate: if total == 0 { 0.0 } else { g.hits as f64 / total as f64 * 100.0 },
+            hits,
+            misses,
+            stores: self.stores.load(Ordering::Relaxed),
+            evictions: self.evictions.load(Ordering::Relaxed),
+            hit_rate: if total == 0 { 0.0 } else { hits as f64 / total as f64 * 100.0 },
         }
     }
 
     /// 全清。手动"清空缓存"用这个。
     pub fn purge(&self) {
-        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = self.inner.write().unwrap_or_else(|e| e.into_inner());
         g.map.clear();
         g.order.clear();
         g.bytes = 0;
@@ -158,7 +162,7 @@ impl ResponseCache {
     /// 占着内存，直到容量淘汰才让位。定时扫一遍比"等它自己撞上"靠谱。
     pub fn purge_expired(&self) -> usize {
         let now = Instant::now();
-        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = self.inner.write().unwrap_or_else(|e| e.into_inner());
         let before = g.map.len();
         let mut freed = 0usize;
         g.map.retain(|_, e| {
@@ -187,13 +191,13 @@ impl ResponseCache {
     /// 按 LRU 顺序清到容量阈值以下。水位清理用这个：
     /// 一次清到底会打穿缓存命中率，压回低水位才是正常做法。
     pub fn purge_to(&self, max_bytes: usize, max_entries: usize) -> usize {
-        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = self.inner.write().unwrap_or_else(|e| e.into_inner());
         let mut removed = 0usize;
         while (g.bytes > max_bytes || g.map.len() > max_entries) && g.map.len() > 1 {
             let Some(victim) = g.order.pop_front() else { break };
             if let Some(e) = g.map.remove(&victim) {
                 g.bytes = g.bytes.saturating_sub(e.body.len());
-                g.evictions += 1;
+                self.evictions.fetch_add(1, Ordering::Relaxed);
                 removed += 1;
             }
         }

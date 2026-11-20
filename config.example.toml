@@ -133,6 +133,14 @@ cache_auto_purge = true
 # matches = [{ kind = "path", op = "prefix", value = "/api" }]
 # [rules.actions.max_in_flight]
 # limit = 32
+#
+# [[rules]]
+# name = "回源协议/端口覆盖"
+# matches = [{ kind = "path", op = "prefix", value = "/legacy" }]
+# [rules.actions]
+# upstream_scheme = "https"   # 只改回源协议、不换后端（设置后禁用本规则的源站组）
+# upstream_port = 8443        # 只改回源端口
+# cache_ttl_secs = 60         # 规则级缓存 TTL，优先级 规则 > 源站组 > 全局
 # key = "client_ip"
 # [rules.actions]
 # connect_timeout_ms = 1500   # 只管建连，总超时仍由 request_timeout_ms 决定
@@ -360,6 +368,7 @@ allow_from = []
 # name = "app"
 # note = "主应用集群"
 # strategy = "wrr"             # 覆盖全局 lb
+# cache_ttl_secs = 60          # 组级缓存 TTL，优先级 规则 > 源站组 > 全局
 
 # ---------- 后端服务（命名上游池） ----------
 # [[backends]]

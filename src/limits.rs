@@ -78,27 +78,31 @@ impl InFlight {
         max_total: usize,
         max_per_key: usize,
     ) -> Option<InFlightGuard> {
-        let mut g = self.per_key.lock().unwrap_or_else(|e| e.into_inner());
-        if max_per_key > 0 {
+        // 总闸：纯原子读，不需要碰 per_key 锁
+        if max_total > 0 && self.total.load(Ordering::Relaxed) >= max_total {
+            return None;
+        }
+        // per-key 计数只在需要 per-key 限时才维护。很多部署只开全局上限，
+        // 这里就不该为每个请求白抢一把 Mutex——快路径零锁。
+        let track_key = max_per_key > 0;
+        if track_key {
+            let mut g = self.per_key.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(k) = key {
                 if g.get(k).copied().unwrap_or(0) >= max_per_key {
                     return None;
                 }
             }
+            self.total.fetch_add(1, Ordering::Relaxed);
+            if let Some(k) = key {
+                *g.entry(k.to_string()).or_insert(0) += 1;
+            }
+        } else {
+            self.total.fetch_add(1, Ordering::Relaxed);
         }
-        // 总闸最后判：先扣按键额度再判总量，失败要回滚，
-        // 所以这里只做读判断 + 原子加，回滚由下面的分支负责。
-        if max_total > 0 && self.total.load(Ordering::Relaxed) >= max_total {
-            return None;
-        }
-        self.total.fetch_add(1, Ordering::Relaxed);
-        if let Some(k) = key {
-            *g.entry(k.to_string()).or_insert(0) += 1;
-        }
-        drop(g);
         Some(InFlightGuard {
             owner: self.clone(),
-            key: key.map(str::to_string),
+            // 不跟踪键就传 None，Drop 时也不会去抢锁归还
+            key: if track_key { key.map(str::to_string) } else { None },
         })
     }
 }

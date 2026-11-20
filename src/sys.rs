@@ -80,6 +80,7 @@ mod imp {
         fn Thread32First(snapshot: isize, entry: *mut ThreadEntry32) -> i32;
         fn Thread32Next(snapshot: isize, entry: *mut ThreadEntry32) -> i32;
         fn CloseHandle(handle: isize) -> i32;
+        fn SetProcessWorkingSetSize(handle: isize, min: usize, max: usize) -> i32;
     }
 
     #[repr(C)]
@@ -137,7 +138,14 @@ mod imp {
         times().map(|(k, u)| k + u)
     }
 
-    pub fn trim_heap() {}
+    pub fn trim_heap() {
+        // Windows 没有 malloc_trim。SetProcessWorkingSetSize(-1,-1) 把工作集压到最小，
+        // RSS 立刻回落（内存被分页出去，下次访问再换页）。这是激进的清理，
+        // 只该由 server.heap_trim_secs 在低流量时低频驱动，不是每个请求都调。
+        unsafe {
+            SetProcessWorkingSetSize(GetCurrentProcess(), usize::MAX, usize::MAX);
+        }
+    }
 
     pub fn sample() -> SysSample {
         let mut c = ProcessMemoryCounters {
@@ -169,7 +177,8 @@ mod imp {
     }
 
     pub fn trim_heap() {
-        // musl 没有 malloc_trim；glibc 才有。用弱符号并不存在，只好按目标三元组判断。
+        // glibc 的 malloc_trim 把空闲页归还 OS；musl 1.2.4+ 也有（void 返回）。
+        // musl 用弱符号：旧版本缺符号时链接为 null，判空跳过，不崩也不链接失败。
         #[cfg(all(target_env = "gnu", target_pointer_width = "64"))]
         unsafe {
             unsafe extern "C" {
@@ -177,9 +186,22 @@ mod imp {
             }
             malloc_trim(0);
         }
-        #[cfg(not(all(target_env = "gnu", target_pointer_width = "64")))]
-        {
-            // 其它 libc 没有等价调用，什么都不做
+        #[cfg(all(target_env = "musl", target_pointer_width = "64"))]
+        unsafe {
+            // musl 的 malloc_trim 只有 1.2.4+ 才导出，rustup 自带的 musl 可能没有，
+            // 直接 extern 声明会链接失败。改用 dlsym 运行时查找：查得到就调，
+            // 查不到静默跳过（老 musl 本来也没有归还空闲页的等价 API）。
+            extern "C" {
+                fn dlsym(
+                    handle: *mut std::ffi::c_void,
+                    symbol: *const std::ffi::c_char,
+                ) -> *mut std::ffi::c_void;
+            }
+            let f = dlsym(std::ptr::null_mut(), b"malloc_trim\0".as_ptr().cast());
+            if !f.is_null() {
+                let malloc_trim: extern "C" fn(usize) = std::mem::transmute(f);
+                malloc_trim(0);
+            }
         }
     }
 
@@ -217,9 +239,24 @@ mod imp {
     use super::SysSample;
 
     /// macOS / BSD 上直接问 ps：一次 fork 换四个数，比引一个 crate 划算
+    #[cfg(target_os = "macos")]
     pub fn trim_heap() {
-        // macOS 没有 malloc_trim；malloc_zone_pressure_relief 需要额外 FFI，先不做
+        // macOS 没有 malloc_trim；malloc_zone_pressure_relief 通知分配器归还空闲页，
+        // 传 NULL 作用在默认 malloc zone、goal=0 表示"能还多少还多少"。
+        unsafe {
+            extern "C" {
+                fn malloc_zone_pressure_relief(
+                    zone: *mut std::ffi::c_void,
+                    goal: usize,
+                ) -> usize;
+            }
+            malloc_zone_pressure_relief(std::ptr::null_mut(), 0);
+        }
     }
+
+    /// 其它 BSD（FreeBSD/OpenBSD…）没有等价调用，什么都不做
+    #[cfg(not(target_os = "macos"))]
+    pub fn trim_heap() {}
 
     pub fn cpu_seconds() -> Option<f64> {
         let out = std::process::Command::new("ps")

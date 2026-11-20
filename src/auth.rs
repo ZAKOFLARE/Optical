@@ -318,6 +318,17 @@ impl AuthState {
     fn record_failure(&self, cfg: &AdminConfig, key: &str) {
         let window = Duration::from_secs(cfg.failed_window_secs.max(1));
         let mut g = self.failures.lock().unwrap_or_else(|e| e.into_inner());
+        // 防御 OOM：海量无效用户名会灌进海量 "user@ip" 键。check_throttle 只在
+        // 同一个键再次出现时才删它，攻击者每次换个用户名就能让这张表无限膨胀。
+        // 这里做两件事：先惰性清一遍过期键；清完还是超限说明窗口内失败记录真的
+        // 爆了——整表清空，宁可暂时放宽限速也不能 OOM。
+        const MAX_FAILURES: usize = 100_000;
+        if g.len() >= MAX_FAILURES {
+            g.retain(|_, (_, first)| first.elapsed() <= window);
+        }
+        if g.len() >= MAX_FAILURES {
+            g.clear();
+        }
         let entry = g.entry(key.to_string()).or_insert((0, Instant::now()));
         if entry.1.elapsed() > window {
             *entry = (1, Instant::now());
