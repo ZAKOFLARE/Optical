@@ -98,7 +98,8 @@ cargo test                     # 177 个单元测试
 ./scripts/build.sh               # 本机目标
 ./scripts/build.sh windows       # Windows x64（gnu，需 mingw-w64）
 ./scripts/build.sh linux-musl    # Linux x64 静态（任何发行版都能跑）
-./scripts/build.sh linux-arm64   # Linux arm64 静态
+./scripts/build.sh linux-arm64   # Linux arm64 静态（ARM v8）
+./scripts/build.sh linux-armv7    # Linux armv7 静态（ARM v7，硬浮点）
 ./scripts/build.sh macos-arm64   # Apple Silicon（M 系列，仅 macOS）
 ./scripts/build.sh macos-x64     # Intel（仅 macOS）
 ./scripts/build.sh all           # 本机能编的都编，编不动的跳过并提示
@@ -110,7 +111,8 @@ cargo test                     # 177 个单元测试
 | --- | --- | --- |
 | `x86_64-pc-windows-gnu` | Windows x64 | Linux/macOS 交叉（需 mingw-w64）；Windows 本机直接 MSVC |
 | `x86_64-unknown-linux-musl` | Linux x64 静态 | 任意平台交叉（需 musl） |
-| `aarch64-unknown-linux-musl` | Linux arm64 静态 | 任意平台交叉（需 musl + 交叉工具链） |
+| `aarch64-unknown-linux-musl` | Linux arm64 静态（ARM v8） | 任意平台交叉（需 musl + 交叉工具链） |
+| `armv7-unknown-linux-musleabihf` | Linux armv7 静态（ARM v7） | 任意平台交叉（需 musl + 交叉工具链） |
 | `aarch64-apple-darwin` | macOS Apple Silicon | **仅 macOS 本机 / macOS CI** |
 | `x86_64-apple-darwin` | macOS Intel | **仅 macOS 本机 / macOS CI** |
 

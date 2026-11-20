@@ -4,7 +4,8 @@
 # 目标矩阵（按平台分组）：
 #   Windows  x86_64-pc-windows-gnu     需要 mingw-w64（Linux/macOS 交叉）；Windows 本机建议直接用 MSVC
 #   Linux    x86_64-unknown-linux-musl  静态链接，任何发行版都能跑
-#   Linux    aarch64-unknown-linux-musl 静态 arm64
+#   Linux    aarch64-unknown-linux-musl 静态 arm64（ARM v8）
+#   Linux    armv7-unknown-linux-musleabihf 静态 armv7（ARM v7，硬浮点）
 #   macOS    aarch64-apple-darwin       Apple Silicon（M 系列）
 #   macOS    x86_64-apple-darwin        Intel
 #
@@ -17,7 +18,8 @@
 #   ./scripts/build.sh                 # 本机目标
 #   ./scripts/build.sh windows         # Windows x64 (gnu)
 #   ./scripts/build.sh linux-musl      # Linux x64 静态
-#   ./scripts/build.sh linux-arm64     # Linux arm64 静态
+#   ./scripts/build.sh linux-arm64     # Linux arm64 静态（ARM v8）
+#   ./scripts/build.sh linux-armv7      # Linux armv7 静态（ARM v7）
 #   ./scripts/build.sh macos-arm64     # Apple Silicon（仅 macOS）
 #   ./scripts/build.sh macos-x64       # Intel（仅 macOS）
 #   ./scripts/build.sh all             # 本机能编的都编，编不动的跳过并提示
@@ -53,6 +55,9 @@ case "$TARGET" in
   linux-arm64|aarch64-unknown-linux-musl)
     build_with_target aarch64-unknown-linux-musl
     ;;
+  linux-armv7|armv7-unknown-linux-musleabihf)
+    build_with_target armv7-unknown-linux-musleabihf
+    ;;
   macos-arm64|aarch64-apple-darwin)
     require_macos aarch64-apple-darwin
     build_with_target aarch64-apple-darwin
@@ -63,7 +68,7 @@ case "$TARGET" in
     ;;
   all)
     cargo build --release
-    for t in x86_64-pc-windows-gnu x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+    for t in x86_64-pc-windows-gnu x86_64-unknown-linux-musl aarch64-unknown-linux-musl armv7-unknown-linux-musleabihf; do
       rustup target add "$t" 2>/dev/null || { echo "⚠️ 跳过 $t（rustup 加不上 target）"; continue; }
       cargo build --release --target "$t" || echo "⚠️ 跳过 $t（缺少交叉工具链）"
     done
@@ -77,7 +82,7 @@ case "$TARGET" in
     ;;
   *)
     echo "未知目标：$TARGET" >&2
-    echo "可用：native windows linux-musl linux-arm64 macos-arm64 macos-x64 all" >&2
+    echo "可用：native windows linux-musl linux-arm64 linux-armv7 macos-arm64 macos-x64 all" >&2
     exit 1
     ;;
 esac
