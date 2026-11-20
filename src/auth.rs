@@ -10,6 +10,7 @@ use hmac::{Hmac, Mac};
 use sha1::Sha1;
 use sha2::{Sha256, Sha512};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -78,11 +79,34 @@ pub struct SessionInfo {
 pub struct AuthState {
     sessions: Mutex<HashMap<String, Session>>,
     failures: Mutex<HashMap<String, (u32, Instant)>>,
+    /// 上次清理失败计数表的时刻（epoch 毫秒），用于节流 retain——
+    /// 满表时不能每个新键都扫一遍 10 万条，那等于把内存攻击换成 CPU 放大。
+    last_gc: AtomicI64,
 }
 
 /// 失败计数表的上限。超限走 fail-closed（见 check_throttle），**绝不 clear 整表**——
 /// 清空会把正在被爆破的老键计数一起归零，等于定期给爆破"续命"。
 const MAX_FAILURES: usize = 100_000;
+
+/// 满表时最多多久做一次全表清理（毫秒）。失败窗口 300 秒，过期键晚清几十秒
+/// 完全无所谓；换来的是攻击者每秒钟刷几千个新用户名也只触发一次 O(n) 扫描。
+const GC_INTERVAL_MS: i64 = 30_000;
+
+/// 节流清理失败计数表：距上次清理超过 GC_INTERVAL_MS 才真正 retain 一遍过期键。
+/// 返回 true 表示这次真的扫了。
+fn maybe_gc(
+    g: &mut HashMap<String, (u32, Instant)>,
+    window: Duration,
+    last_gc: &AtomicI64,
+) -> bool {
+    let now = epoch_ms(SystemTime::now());
+    if now - last_gc.load(Ordering::Relaxed) < GC_INTERVAL_MS {
+        return false;
+    }
+    last_gc.store(now, Ordering::Relaxed);
+    g.retain(|_, (_, first)| first.elapsed() <= window);
+    true
+}
 
 /// 拼限速键前把用户名截短：admin 登录没有 body 上限，一个 2MB 的用户名
 /// 就是一个 2MB 的键，10 万个键照样 OOM。按字节截，落在 UTF-8 边界上。
@@ -177,7 +201,13 @@ impl AuthState {
         client_ip: &str,
         user_agent: &str,
     ) -> Result<String, AuthError> {
-        let throttle_key = format!("{}@{client_ip}", truncate_key(username, 64));
+        // 用户名和 client_ip 都要截：client_ip 来自 X-Forwarded-For，长度由请求头决定，
+        // 伪造一个几 KB 的 IP 一样能把键撑到几百 MB。
+        let throttle_key = format!(
+            "{}@{}",
+            truncate_key(username, 64),
+            truncate_key(client_ip, 64)
+        );
         self.check_throttle(cfg, &throttle_key)?;
 
         let user_ok = username == cfg.username;
@@ -331,10 +361,11 @@ impl AuthState {
             }
             return Ok(());
         }
-        // key 不在表：fail-closed。表满时先惰性清过期腾空间，清完还满就直接 429，
-        // 不往表里加新键。绝不 clear 整表——那会把正在被爆破的老键计数一起归零。
+        // key 不在表：fail-closed。表满时先节流清一遍过期腾空间（不是每个新键都扫），
+        // 清完还满就直接 429，不往表里加新键。绝不 clear 整表——那会把正在被爆破的
+        // 老键计数一起归零。
         if g.len() >= MAX_FAILURES {
-            g.retain(|_, (_, first)| first.elapsed() <= window);
+            maybe_gc(&mut g, window, &self.last_gc);
             if g.len() >= MAX_FAILURES {
                 return Err(AuthError::TooManyAttempts {
                     retry_after_secs: window.as_secs() + 1,
@@ -347,11 +378,11 @@ impl AuthState {
     fn record_failure(&self, cfg: &AdminConfig, key: &str) {
         let window = Duration::from_secs(cfg.failed_window_secs.max(1));
         let mut g = self.failures.lock().unwrap_or_else(|e| e.into_inner());
-        // 只在 key 已在表、或表还没满时才记录。表满且 key 不在 → 放弃记录：
-        // check_throttle 那边会 fail-closed 直接 429，不会漏放爆破，这里不硬塞。
+        // 只在 key 已在表、或表还没满时才记录。表满且 key 不在 → 节流清理后
+        // 仍无空间就放弃记录：check_throttle 那边会 fail-closed 直接 429，不漏放爆破。
         if !g.contains_key(key) && g.len() >= MAX_FAILURES {
-            g.retain(|_, (_, first)| first.elapsed() <= window);
-            if g.len() >= MAX_FAILURES {
+            maybe_gc(&mut g, window, &self.last_gc);
+            if !g.contains_key(key) && g.len() >= MAX_FAILURES {
                 return;
             }
         }
@@ -514,6 +545,17 @@ mod tests {
 
     fn login(a: &AuthState, cfg: &AdminConfig, ua: &str) -> String {
         a.login(cfg, "admin", "s3cret-pass", "", "10.0.0.9", ua).unwrap()
+    }
+
+    #[test]
+    fn maybe_gc_throttles_repeated_scans() {
+        let mut g: HashMap<String, (u32, Instant)> = HashMap::new();
+        let last = AtomicI64::new(0);
+        let window = Duration::from_secs(300);
+        // 首次：距上次（epoch 0）远超 GC_INTERVAL_MS，真的扫
+        assert!(maybe_gc(&mut g, window, &last));
+        // 紧跟着第二次：距上次太近，节流跳过，不扫
+        assert!(!maybe_gc(&mut g, window, &last));
     }
 
     #[test]
