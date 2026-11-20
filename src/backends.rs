@@ -483,6 +483,7 @@ mod tests {
             name: "api".into(),
             note: "主 API".into(),
             strategy: Some(LbStrategy::Rr),
+            cache_ttl_secs: None,
         }];
         cfg.backends = vec![
             group_member("api-1", "api", 2),

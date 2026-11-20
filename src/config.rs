@@ -721,6 +721,10 @@ pub struct BackendGroupConfig {
     /// 本组专用策略；None = 跟随 server.lb
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub strategy: Option<LbStrategy>,
+    /// 本组专用缓存 TTL（秒）；None = 跟随规则级 cache_ttl，再不行落全局 cache.ttl_secs。
+    /// 优先级：规则 > 源站组 > 全局。
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub cache_ttl_secs: Option<u64>,
 }
 
 /// 后端服务（类似宝塔面板里对接的 nginx 站点上游）。
@@ -1740,6 +1744,28 @@ fn home_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+/// 覆盖回源 URL 的协议和端口。只改 scheme/port，host 与 path 原样保留。
+/// 后端地址一般是 `scheme://host[:port]`，host 可能是 IPv6 的 `[::1]`。
+/// 解析失败就不动原串（调用方传进来的都是已经过 check_upstream 校验的地址）。
+pub fn rewrite_origin(raw: &str, scheme: Option<&str>, port: Option<u16>) -> String {
+    let uri: http::Uri = match raw.parse() {
+        Ok(u) => u,
+        Err(_) => return raw.to_string(),
+    };
+    let scheme = scheme.unwrap_or(uri.scheme_str().unwrap_or("http"));
+    let host = uri.host().unwrap_or("");
+    // 无 path 时 http::Uri 的 path_and_query 返回 "/"，别把它拼回去
+    let path_q = uri
+        .path_and_query()
+        .map(|p| p.as_str())
+        .filter(|s| *s != "/")
+        .unwrap_or("");
+    match port {
+        Some(p) => format!("{scheme}://{host}:{p}{path_q}"),
+        None => format!("{scheme}://{host}{path_q}"),
+    }
+}
+
 pub fn check_upstream(raw: &str) -> Result<()> {
     let uri: http::Uri = raw
         .parse()
@@ -1930,6 +1956,18 @@ mod tests {
             errs.iter().any(|e| e.contains("tls.cert")),
             "strict 模式必须明确报错: {errs:?}"
         );
+    }
+
+    #[test]
+    fn rewrite_origin_overrides_scheme_and_port() {
+        use super::rewrite_origin;
+        assert_eq!(rewrite_origin("http://1.2.3.4:8080", Some("https"), Some(443)), "https://1.2.3.4:443");
+        assert_eq!(rewrite_origin("http://1.2.3.4:8080", Some("https"), None), "https://1.2.3.4");
+        assert_eq!(rewrite_origin("http://1.2.3.4:8080", None, Some(9090)), "http://1.2.3.4:9090");
+        assert_eq!(rewrite_origin("http://[::1]:8080", Some("https"), Some(443)), "https://[::1]:443");
+        assert_eq!(rewrite_origin("http://h/path?q=1", None, Some(99)), "http://h:99/path?q=1");
+        // 只改 scheme 不丢 path
+        assert_eq!(rewrite_origin("http://h:80/a/b", Some("https"), None), "https://h/a/b");
     }
 
     #[test]

@@ -108,6 +108,11 @@ pub struct Actions {
     pub origin_group: Option<String>,
     /// 直接指定回源 URL（scheme://host[:port]），优先级最高，连源站组都盖过。
     pub upstream: Option<String>,
+    /// 回源协议覆盖（http/https）。设置后**禁用源站组**——只改协议、不换后端，
+    /// 后端仍是路由选出的那台。适合"同一台后端一会儿 http 一会儿 https"的场景。
+    pub upstream_scheme: Option<String>,
+    /// 回源端口覆盖。设置后同样禁用源站组，只改端口不换后端。
+    pub upstream_port: Option<u16>,
     /// 该规则命中的响应是否允许 gzip 压缩。None = 跟随全局 compression.gzip。
     /// 某些路径（下载站、已经预压好的静态文件）单独关掉比改全局更干净。
     pub gzip: Option<bool>,
@@ -430,6 +435,12 @@ fn merge(dst: &mut Actions, src: &Actions) {
     }
     if src.upstream.is_some() {
         dst.upstream = src.upstream.clone();
+    }
+    if src.upstream_scheme.is_some() {
+        dst.upstream_scheme = src.upstream_scheme.clone();
+    }
+    if src.upstream_port.is_some() {
+        dst.upstream_port = src.upstream_port;
     }
     if src.gzip.is_some() {
         dst.gzip = src.gzip;

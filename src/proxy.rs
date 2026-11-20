@@ -753,8 +753,13 @@ pub async fn handle(
     // 不管哪种，pick 都只在目标范围内挑，绝不跨组。
     let mut backend_name: Option<String> = None;
     let mut lb_used: Option<&'static str> = None;
+    // 当前请求最终落在哪个源站组（用于组级缓存 TTL）。规则 upstream 完全指定 URL 时清空。
+    let mut active_group: Option<String> = None;
     if let Some(r) = &route {
         if let Some(target) = cfg.route_target(r) {
+            if target.is_group() {
+                active_group = Some(target.name().to_string());
+            }
             let strategy = cfg.resolve_lb(Some(r), if target.is_group() { Some(target.name()) } else { None });
             if let Some(p) = state.backends.pick(&cfg, target, strategy, Some(client_ip)) {
                 decision.upstream = p.backend.url.clone();
@@ -778,7 +783,18 @@ pub async fn handle(
         decision.upstream = u.to_string();
         backend_name = None;
         lb_used = None;
+        active_group = None; // 完全指定 URL，不属任何源站组
+    } else if act.upstream_scheme.as_deref().is_some_and(|s| s == "http" || s == "https")
+        || act.upstream_port.is_some_and(|p| p > 0)
+    {
+        // 自定义协议/端口：只改"门牌"，不换后端。后端仍是路由选出的那台，
+        // 所以 backend_name / lb_used 不置空。启用此项即禁用源站组——
+        // 单独指定协议端口和"选一组后端"是互斥的两件事，后者让位。
+        let scheme = act.upstream_scheme.as_deref().filter(|s| *s == "http" || *s == "https");
+        let port = act.upstream_port.filter(|p| *p > 0);
+        decision.upstream = crate::config::rewrite_origin(&decision.upstream, scheme, port);
     } else if let Some(g) = act.origin_group.as_deref().filter(|s| !s.trim().is_empty()) {
+        active_group = Some(g.to_string());
         let strategy = cfg.resolve_lb(None, Some(g));
         if let Some(p) = state.backends.pick(
             &cfg,
@@ -1161,7 +1177,15 @@ pub async fn handle(
                     bytes.clone(),
                     crate::cache::CachePolicy {
                         ttl: Duration::from_secs(
-                            act.cache_ttl_secs.unwrap_or(cfg.cache.ttl_secs).max(1),
+                            act.cache_ttl_secs
+                                .or_else(|| {
+                                    active_group
+                                        .as_deref()
+                                        .and_then(|g| cfg.find_group(g))
+                                        .and_then(|grp| grp.cache_ttl_secs)
+                                })
+                                .unwrap_or(cfg.cache.ttl_secs)
+                                .max(1),
                         ),
                         max_bytes: cfg.cache.max_bytes,
                         max_entries: cfg.cache.max_entries,

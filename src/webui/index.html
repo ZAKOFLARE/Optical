@@ -1071,10 +1071,10 @@
             </div>
           </div>
           <div class="tblwrap"><table class="tbl sm">
-            <colgroup><col style="width:18%"><col><col style="width:170px"><col style="width:130px"><col style="width:130px"><col style="width:46px"></colgroup>
+            <colgroup><col style="width:15%"><col><col style="width:150px"><col style="width:90px"><col style="width:130px"><col style="width:110px"><col style="width:46px"></colgroup>
             <thead><tr>
               <th data-i18n="th.group">分组</th><th data-i18n="th.note">备注</th><th data-i18n="th.strategy">负载均衡</th>
-              <th data-i18n="th.members">成员（健康/总）</th><th data-i18n="th.weight">权重和</th><th></th>
+              <th data-i18n="th.ttl">缓存 TTL</th><th data-i18n="th.members">成员（健康/总）</th><th data-i18n="th.weight">权重和</th><th></th>
             </tr></thead>
             <tbody id="backend-groups"></tbody>
           </table></div>
@@ -1593,7 +1593,7 @@
       "act.cache_ttl":"节点缓存 TTL（秒）","act.browser_ttl":"浏览器缓存 TTL（秒）",
       "act.cache_key":"自定义 cache key","act.server":"server 名","act.force_https":"强制 HTTPS",
       "act.ws":"WebSocket","act.max_upload":"最大上传（字节）","act.timeout":"回源超时（ms）",
-      "act.origin_group":"源站组","act.upstream":"回源 URL","act.gzip":"gzip 压缩","act.brotli":"brotli 压缩",
+      "act.origin_group":"源站组","act.upstream":"回源 URL","act.gzip":"gzip 压缩","act.brotli":"brotli 压缩","act.scheme":"回源协议（禁用源站组）","act.port":"回源端口（禁用源站组）",
       "act.rate":"限速 QPS / 突发","act.rate.key":"限速维度",
       "act.inflight":"在途上限","act.connect_timeout":"建连超时（ms）",
       "lk.client_ip":"按客户端 IP","lk.rule":"按规则总额","lk.rule_ip":"按规则 + IP",
@@ -1749,7 +1749,7 @@
       "th.target":"上游 / 后端 / 分组","th.strip":"剥离","th.rwhost":"改写 Host","th.timeout":"超时",
       "th.on":"启用","th.phase":"阶段","th.action":"动作","th.hname":"头名","th.value":"值",
       "th.matchpath":"匹配路径","th.status":"状态码","th.group":"分组","th.note":"备注",
-      "th.strategy":"负载均衡","th.members":"成员（健康/总）","th.weight":"权重",
+      "th.strategy":"负载均衡","th.ttl":"缓存 TTL","th.members":"成员（健康/总）","th.weight":"权重",
       "th.url":"地址","th.health":"探活路径","th.interval":"间隔(s)","th.state":"状态",
       "th.id":"ID","th.size":"大小","th.reason":"原因","th.preview":"摘要",
       "th.time":"时间","th.kind":"类型","th.path":"路径","th.detail":"详情","th.body":"HTML 模板"
@@ -1896,7 +1896,7 @@
       "act.cache_ttl":"Edge cache TTL (s)","act.browser_ttl":"Browser TTL (s)",
       "act.cache_key":"Custom cache key","act.server":"Server name","act.force_https":"Force HTTPS",
       "act.ws":"WebSocket","act.max_upload":"Max upload (bytes)","act.timeout":"Origin timeout (ms)",
-      "act.origin_group":"Origin group","act.upstream":"Upstream URL","act.gzip":"gzip","act.brotli":"brotli",
+      "act.origin_group":"Origin group","act.upstream":"Upstream URL","act.gzip":"gzip","act.brotli":"brotli","act.scheme":"Upstream scheme (disables group)","act.port":"Upstream port (disables group)",
       "act.rate":"Rate limit QPS / burst","act.rate.key":"Rate limit key",
       "act.inflight":"In-flight cap","act.connect_timeout":"Connect timeout (ms)",
       "lk.client_ip":"per client IP","lk.rule":"per rule","lk.rule_ip":"per rule + IP",
@@ -2052,7 +2052,7 @@
       "th.target":"UPSTREAM / BACKEND / GROUP","th.strip":"STRIP","th.rwhost":"RW-HOST","th.timeout":"TIMEOUT",
       "th.on":"ON","th.phase":"PHASE","th.action":"ACTION","th.hname":"NAME","th.value":"VALUE",
       "th.matchpath":"MATCH PATH","th.status":"STATUS","th.group":"GROUP","th.note":"NOTE",
-      "th.strategy":"LOAD BALANCE","th.members":"UP / TOTAL","th.weight":"WEIGHT",
+      "th.strategy":"LOAD BALANCE","th.ttl":"CACHE TTL","th.members":"UP / TOTAL","th.weight":"WEIGHT",
       "th.url":"URL","th.health":"HEALTH PATH","th.interval":"INTERVAL","th.state":"STATE",
       "th.id":"ID","th.size":"SIZE","th.reason":"REASON","th.preview":"PREVIEW",
       "th.time":"TIME","th.kind":"KIND","th.path":"PATH","th.detail":"DETAIL","th.body":"HTML TEMPLATE"
@@ -3725,6 +3725,8 @@
           actionField(r, i, "actions.upstream_url_rewrite", t("act.url_rewrite"), "text", "/static{path}")+
           actionField(r, i, "actions.origin_group", t("act.origin_group"), "text", "backend-group")+
           actionField(r, i, "actions.upstream", t("act.upstream"), "text", "https://ip:port")+
+          actionField(r, i, "actions.upstream_scheme", t("act.scheme"), "text", "http / https")+
+          actionField(r, i, "actions.upstream_port", t("act.port"), "num", "8080")+
           actionField(r, i, "actions.gzip", t("act.gzip"), "select")+
           actionField(r, i, "actions.brotli", t("act.brotli"), "select")+
         '</div>'+
@@ -5071,7 +5073,7 @@
     var live = {};
     ((state.metrics && state.metrics.backend_groups) || []).forEach(function(g){ live[g.name] = g; });
     if (!state.groups.length){
-      $("backend-groups").innerHTML = emptyRow(6, "be.empty.groups");
+      $("backend-groups").innerHTML = emptyRow(7, "be.empty.groups");
       return;
     }
     $("backend-groups").innerHTML = state.groups.map(function(g,i){
@@ -5084,6 +5086,7 @@
         '<td><input type="text" data-f="name" value="'+esc(g.name)+'" placeholder="app"></td>'+
         '<td><input type="text" data-f="note" value="'+esc(g.note||"")+'"></td>'+
         '<td><select data-f="strategy">'+opts+'</select></td>'+
+        '<td><input type="number" data-f="cache_ttl_secs" value="'+(g.cache_ttl_secs==null?"":g.cache_ttl_secs)+'" placeholder="全局"></td>'+
         '<td class="num grp-members" style="color:var(--ink-2)">'+esc(t("be.members",{h:st.healthy||0,n:st.members||0}))+'</td>'+
         '<td class="num grp-weight" style="color:var(--ink-2)">'+(st.weight||0)+'</td>'+
         '<td><button class="link danger" data-del="'+i+'">×</button></td></tr>';
@@ -5099,9 +5102,11 @@
   });
   $("backend-groups").addEventListener("change", function(ev){
     var el = ev.target, f = el.getAttribute("data-f");
-    if (f !== "strategy") return;
+    if (f !== "strategy" && f !== "cache_ttl_secs") return;
     var i = Number(el.closest("tr").getAttribute("data-i"));
-    if (state.groups[i]) state.groups[i].strategy = el.value;
+    if (!state.groups[i]) return;
+    if (f === "strategy") state.groups[i].strategy = el.value;
+    else state.groups[i].cache_ttl_secs = el.value === "" ? null : Number(el.value);
   });
   $("backend-groups").addEventListener("click", function(ev){
     var btn = ev.target.closest("[data-del]"); if (!btn) return;

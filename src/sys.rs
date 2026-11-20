@@ -74,6 +74,13 @@ mod imp {
             kernel: *mut FileTime,
             user: *mut FileTime,
         ) -> i32;
+        // Windows 8.1+。info_class 用 PROCESS_INFORMATION_CLASS::ProcessThreadCount（= 23）
+        fn GetProcessInformation(
+            handle: isize,
+            info_class: i32,
+            info: *mut u32,
+            size: u32,
+        ) -> i32;
     }
 
     fn times() -> Option<(f64, f64)> {
@@ -97,10 +104,14 @@ mod imp {
             ..Default::default()
         };
         let ok = unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut c, c.cb) };
+        // 线程数：GetProcessInformation(ProcessThreadCount)。旧系统（<8.1）拿不到就返回 0，
+        // UI 显示「—」，不编数字。
+        let mut threads: u32 = 0;
+        let tok = unsafe { GetProcessInformation(GetCurrentProcess(), 23, &mut threads, 4) };
         SysSample {
             rss_bytes: if ok != 0 { c.working_set_size as u64 } else { 0 },
             cpu_pct: 0.0,
-            threads: 0,
+            threads: if tok != 0 { threads } else { 0 },
         }
     }
 }
