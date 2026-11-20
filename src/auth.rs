@@ -80,6 +80,24 @@ pub struct AuthState {
     failures: Mutex<HashMap<String, (u32, Instant)>>,
 }
 
+/// 失败计数表的上限。超限走 fail-closed（见 check_throttle），**绝不 clear 整表**——
+/// 清空会把正在被爆破的老键计数一起归零，等于定期给爆破"续命"。
+const MAX_FAILURES: usize = 100_000;
+
+/// 拼限速键前把用户名截短：admin 登录没有 body 上限，一个 2MB 的用户名
+/// 就是一个 2MB 的键，10 万个键照样 OOM。按字节截，落在 UTF-8 边界上。
+fn truncate_key(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        s
+    } else {
+        let mut end = max;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        &s[..end]
+    }
+}
+
 fn epoch_ms(t: SystemTime) -> i64 {
     t.duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
@@ -159,7 +177,7 @@ impl AuthState {
         client_ip: &str,
         user_agent: &str,
     ) -> Result<String, AuthError> {
-        let throttle_key = format!("{username}@{client_ip}");
+        let throttle_key = format!("{}@{client_ip}", truncate_key(username, 64));
         self.check_throttle(cfg, &throttle_key)?;
 
         let user_ok = username == cfg.username;
@@ -311,6 +329,17 @@ impl AuthState {
                     retry_after_secs: left,
                 });
             }
+            return Ok(());
+        }
+        // key 不在表：fail-closed。表满时先惰性清过期腾空间，清完还满就直接 429，
+        // 不往表里加新键。绝不 clear 整表——那会把正在被爆破的老键计数一起归零。
+        if g.len() >= MAX_FAILURES {
+            g.retain(|_, (_, first)| first.elapsed() <= window);
+            if g.len() >= MAX_FAILURES {
+                return Err(AuthError::TooManyAttempts {
+                    retry_after_secs: window.as_secs() + 1,
+                });
+            }
         }
         Ok(())
     }
@@ -318,16 +347,13 @@ impl AuthState {
     fn record_failure(&self, cfg: &AdminConfig, key: &str) {
         let window = Duration::from_secs(cfg.failed_window_secs.max(1));
         let mut g = self.failures.lock().unwrap_or_else(|e| e.into_inner());
-        // 防御 OOM：海量无效用户名会灌进海量 "user@ip" 键。check_throttle 只在
-        // 同一个键再次出现时才删它，攻击者每次换个用户名就能让这张表无限膨胀。
-        // 这里做两件事：先惰性清一遍过期键；清完还是超限说明窗口内失败记录真的
-        // 爆了——整表清空，宁可暂时放宽限速也不能 OOM。
-        const MAX_FAILURES: usize = 100_000;
-        if g.len() >= MAX_FAILURES {
+        // 只在 key 已在表、或表还没满时才记录。表满且 key 不在 → 放弃记录：
+        // check_throttle 那边会 fail-closed 直接 429，不会漏放爆破，这里不硬塞。
+        if !g.contains_key(key) && g.len() >= MAX_FAILURES {
             g.retain(|_, (_, first)| first.elapsed() <= window);
-        }
-        if g.len() >= MAX_FAILURES {
-            g.clear();
+            if g.len() >= MAX_FAILURES {
+                return;
+            }
         }
         let entry = g.entry(key.to_string()).or_insert((0, Instant::now()));
         if entry.1.elapsed() > window {
@@ -488,6 +514,16 @@ mod tests {
 
     fn login(a: &AuthState, cfg: &AdminConfig, ua: &str) -> String {
         a.login(cfg, "admin", "s3cret-pass", "", "10.0.0.9", ua).unwrap()
+    }
+
+    #[test]
+    fn truncate_key_caps_bytes_on_char_boundary() {
+        assert_eq!(truncate_key("abc", 64), "abc");
+        assert_eq!(truncate_key(&"a".repeat(100), 64), "a".repeat(64));
+        // 多字节字符不能被切开：64 字节落在 63（21 个三字节汉字），不是 64 中间
+        let cjk = "中".repeat(30);
+        assert_eq!(truncate_key(&cjk, 64), "中".repeat(21));
+        assert!(truncate_key(&cjk, 64).len() <= 64);
     }
 
     #[test]

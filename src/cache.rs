@@ -84,13 +84,28 @@ impl ResponseCache {
             }
         }
         // 慢路径：键存在但已过期，写锁清理。发生频率远低于命中/未命中。
+        // 关键：拿写锁后必须**重新检查**——读锁释放和写锁获取之间，别的请求可能
+        // 已经 store() 了同 key 的新条目，直接 remove 会把刚缓存的新值误删还记 miss。
         let mut g = self.inner.write().unwrap_or_else(|e| e.into_inner());
-        if let Some(e) = g.map.remove(key) {
-            g.bytes = g.bytes.saturating_sub(e.body.len());
-            g.order.retain(|k| k != key);
+        match g.map.get(key) {
+            Some(e) if e.expires > Instant::now() => {
+                let out = (e.status, e.headers.clone(), e.body.clone());
+                self.hits.fetch_add(1, Ordering::Relaxed);
+                Some(out)
+            }
+            Some(_) => {
+                if let Some(e) = g.map.remove(key) {
+                    g.bytes = g.bytes.saturating_sub(e.body.len());
+                    g.order.retain(|k| k != key);
+                }
+                self.misses.fetch_add(1, Ordering::Relaxed);
+                None
+            }
+            None => {
+                self.misses.fetch_add(1, Ordering::Relaxed);
+                None
+            }
         }
-        self.misses.fetch_add(1, Ordering::Relaxed);
-        None
     }
 
     pub fn store(
