@@ -146,13 +146,15 @@ cache_auto_purge = true
 # connect_timeout_ms = 1500   # 只管建连，总超时仍由 request_timeout_ms 决定
 
 # ---------- 存储配额（按磁盘大小收紧） ----------
+# 三条配额不是摆设：写盘前就数一遍，超了裁最旧的。快照和审计分开计——
+# 快照是"回滚点"，审计是"谁在什么时间干了什么"，两者保留策略互不干涉。
 [storage]
-config_history_keep = 20             # 保留多少份配置快照
-config_history_max_bytes = 1048576   # 快照总字节上限
-config_history_keep_days = 30        # 快照保留天数（0 = 不限）
-audit_enabled = true
-audit_keep = 2000
-audit_max_bytes = 4194304
+config_history_keep = 20             # 快照最多留多少份
+config_history_max_bytes = 1048576   # 快照总字节上限，超了删最旧
+config_history_keep_days = 30        # 快照保留天数（0 = 不按天裁剪，只按条数和字节）
+audit_enabled = true                 # 是否把 WAF 命中写审计日志（拦截记录，排查用）
+audit_keep = 2000                    # 审计日志最多留多少条
+audit_max_bytes = 4194304            # 审计日志总字节上限（约 4 MiB）
 
 # ---------- 静态站点：网关自己托管，不必再挂 nginx ----------
 # 命中顺序：Host 精确匹配优先，`*` 兜底；命中站点就直接吐文件，不再走 routes。
@@ -260,12 +262,14 @@ history_days = 90
 # ---------- 非固化路径 ----------
 # 空值 = 跟随上一级默认：data_dir 跟配置文件目录，其余跟 <data_dir>/<子目录>。
 # 相对路径按 data_dir 解析，~/ 展开到家目录；容器里挂一个卷就能全部搬走。
+# 为什么这么设计：写死绝对路径的配置换个实例、迁个目录就全指错地方了——
+# 让 data_dir 当唯一事实，其余路径都从它派生，迁移只改一处。
 [paths]
-data_dir = ""                # 例如 "/var/lib/optical"
-config_history_dir = ""      # 默认 <data_dir>/conf-history
-audit_file = ""              # 默认 <data_dir>/optical.audit.jsonl
-tls_dir = ""                 # 默认 <data_dir>/tls（自签证书落这里）
-error_pages_dir = ""         # 默认 <data_dir>/error-pages
+data_dir = ""                # 总根目录，其余不填都跟着它走；例如 "/var/lib/optical"
+config_history_dir = ""      # 配置快照目录，默认 <data_dir>/conf-history
+audit_file = ""              # 审计日志文件，默认 <data_dir>/optical.audit.jsonl
+tls_dir = ""                 # 自签证书目录，默认 <data_dir>/tls
+error_pages_dir = ""         # 自定义错误页目录，默认 <data_dir>/error-pages
 
 # ---------- 自定义错误页 ----------
 # 优先级：<dir>/<status>.html > bodies["<status>"] > 内置模板
