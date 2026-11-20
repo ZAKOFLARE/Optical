@@ -66,6 +66,7 @@ mod imp {
 
     extern "system" {
         fn GetCurrentProcess() -> isize;
+        fn GetCurrentProcessId() -> u32;
         fn K32GetProcessMemoryInfo(handle: isize, counters: *mut ProcessMemoryCounters, cb: u32) -> i32;
         fn GetProcessTimes(
             handle: isize,
@@ -74,13 +75,53 @@ mod imp {
             kernel: *mut FileTime,
             user: *mut FileTime,
         ) -> i32;
-        // Windows 8.1+。info_class 用 PROCESS_INFORMATION_CLASS::ProcessThreadCount（= 23）
-        fn GetProcessInformation(
-            handle: isize,
-            info_class: i32,
-            info: *mut u32,
-            size: u32,
-        ) -> i32;
+        // 线程数走 Toolhelp 快照：从 XP 就有的稳定 API，不依赖版本相关的枚举值。
+        fn CreateToolhelp32Snapshot(flags: u32, process_id: u32) -> isize;
+        fn Thread32First(snapshot: isize, entry: *mut ThreadEntry32) -> i32;
+        fn Thread32Next(snapshot: isize, entry: *mut ThreadEntry32) -> i32;
+        fn CloseHandle(handle: isize) -> i32;
+    }
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct ThreadEntry32 {
+        dw_size: u32,
+        cnt_usage: u32,
+        th32_thread_id: u32,
+        th32_owner_process_id: u32,
+        tp_base_pri: i32,
+        tp_delta_pri: i32,
+        dw_flags: u32,
+    }
+
+    const TH32CS_SNAPTHREAD: u32 = 0x00000004;
+    const INVALID_HANDLE_VALUE: isize = -1;
+
+    fn thread_count() -> u32 {
+        let snap = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
+        if snap == INVALID_HANDLE_VALUE || snap == 0 {
+            return 0;
+        }
+        let pid = unsafe { GetCurrentProcessId() };
+        let mut count = 0u32;
+        let mut entry = ThreadEntry32 {
+            dw_size: std::mem::size_of::<ThreadEntry32>() as u32,
+            ..Default::default()
+        };
+        unsafe {
+            if Thread32First(snap, &mut entry) != 0 {
+                loop {
+                    if entry.th32_owner_process_id == pid {
+                        count += 1;
+                    }
+                    if Thread32Next(snap, &mut entry) == 0 {
+                        break;
+                    }
+                }
+            }
+            CloseHandle(snap);
+        }
+        count
     }
 
     fn times() -> Option<(f64, f64)> {
@@ -104,14 +145,10 @@ mod imp {
             ..Default::default()
         };
         let ok = unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut c, c.cb) };
-        // 线程数：GetProcessInformation(ProcessThreadCount)。旧系统（<8.1）拿不到就返回 0，
-        // UI 显示「—」，不编数字。
-        let mut threads: u32 = 0;
-        let tok = unsafe { GetProcessInformation(GetCurrentProcess(), 23, &mut threads, 4) };
         SysSample {
             rss_bytes: if ok != 0 { c.working_set_size as u64 } else { 0 },
             cpu_pct: 0.0,
-            threads: if tok != 0 { threads } else { 0 },
+            threads: thread_count(),
         }
     }
 }
@@ -237,5 +274,14 @@ mod imp {
     pub fn trim_heap() {}
     pub fn sample() -> SysSample {
         SysSample::default()
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    #[test]
+    fn thread_count_is_nonzero() {
+        let s = super::sample();
+        assert!(s.threads > 0, "线程数应为正数，实际 {}", s.threads);
     }
 }
