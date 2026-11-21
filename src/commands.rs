@@ -328,6 +328,17 @@ fn banner(cfg: &Config, path: &Path, generated_pw: Option<&str>, tls: Option<&cr
         println!("  gateway6  http://{}", cfg.server.listen_v6);
     }
     println!("  webui     http://{}", cfg.server.admin_listen);
+    // 绑了所有网卡就提醒一句：控制台对外可达，别让人裸奔在公网上
+    let wildcard = cfg.server.admin_listen.starts_with("0.0.0.0")
+        || cfg.server.admin_listen.starts_with("[::]")
+        || cfg.server.admin_listen.starts_with("::");
+    if wildcard {
+        if cfg.admin.enabled {
+            println!("  提醒      管理面监听所有网卡（公网可达），已启用认证；防火墙建议只放行可信来源");
+        } else {
+            println!("  警告      管理面监听所有网卡且未启用认证，任何人都能打开控制台！");
+        }
+    }
     if !cfg.server.admin_listen_v6.trim().is_empty() {
         println!("  webui6    http://{}", cfg.server.admin_listen_v6);
     }

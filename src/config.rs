@@ -13,7 +13,9 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 pub const DEFAULT_LISTEN: &str = "0.0.0.0:8080";
-pub const DEFAULT_ADMIN_LISTEN: &str = "127.0.0.1:9100";
+// 默认绑所有网卡：装完就能从别的机器打开控制台，不用先改配置。
+// 代价是管理面对外可达——所以启动横幅会提示，且默认启用认证兜底。
+pub const DEFAULT_ADMIN_LISTEN: &str = "0.0.0.0:9100";
 pub const DEFAULT_UPSTREAM: &str = "http://127.0.0.1:8081";
 pub const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 pub const DEFAULT_HTTPS_PORT: &str = "0.0.0.0:8443";
