@@ -176,8 +176,12 @@ pub struct PasswdArgs {
     /// 明文口令（至少 8 位）；只用于本次计算，不落盘
     pub password: String,
 
-    /// 直接写入配置文件（否则只打印哈希）
+    /// 只打印哈希、不写配置文件（默认会写入并触发热重载）
     #[arg(long)]
+    pub print: bool,
+
+    /// 兼容旧参数：以前要写入必须带 --write，现在默认就写入
+    #[arg(long, hide = true)]
     pub write: bool,
 }
 

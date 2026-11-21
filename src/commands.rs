@@ -712,10 +712,13 @@ pub async fn passwd_cmd(config_opt: Option<PathBuf>, args: crate::cli::PasswdArg
         bail!("口令至少 8 位");
     }
     let hash = crate::auth::hash_password(&args.password)?;
-    if !args.write {
+    // 默认就写入配置——`passwd` 的直觉就是"改密码"，只打印哈希才该是显式特例。
+    // 以前默认只打印、要写入还得记得加 --write，正是"passwd 改了不生效"的来源。
+    if args.print {
         println!("{hash}");
         return Ok(());
     }
+    let _ = args.write; // 兼容旧的 --write，现在默认即写入
     let path = crate::config::resolve_path(config_opt);
     let mut cfg = Config::load(&path)
         .with_context(|| format!("找不到配置文件 {}，先跑一次 `optical run` 或 `config init`", path.display()))?;
