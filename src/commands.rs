@@ -469,9 +469,24 @@ fn add_to_path(dir: &Path) -> Result<Vec<String>> {
     } else if already {
         notes.push(format!("{disp} 已在 shell 配置里，没有重复写入"));
     } else {
-        notes.push(format!(
-            "{disp} 没有可写入的 shell 配置；需要时手动加：{line}"
-        ));
+        // 一个 rc 都没有（精简发行版、或 root 从没建过 .bashrc）：别再只打印一句
+        // "手动加"就收手——install 的意义就是省掉手动那步。建一个最小的 .profile，
+        // 登录 shell 会读它，PATH 才算真装上。
+        let path = PathBuf::from(&home).join(".profile");
+        use std::io::Write;
+        match std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            Ok(mut f) => {
+                let _ = writeln!(f, "\n{line}");
+                notes.push(format!(
+                    "没有任何 shell 配置，已创建 {} 并写入 PATH（重新登录后生效）",
+                    path.display()
+                ));
+            }
+            Err(e) => notes.push(format!(
+                "创建 {} 失败（{e}）；请手动加：{line}",
+                path.display()
+            )),
+        }
     }
     Ok(notes)
 }
