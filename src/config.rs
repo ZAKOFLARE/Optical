@@ -1783,7 +1783,11 @@ pub fn check_upstream(raw: &str) -> Result<()> {
     Ok(())
 }
 
-/// 默认配置路径：环境变量 OPTICAL_CONFIG > 当前目录 optical.toml
+/// 默认配置路径：显式 `-c` > `OPTICAL_CONFIG` > 可执行文件同目录 `optical.toml` > 当前目录。
+///
+/// 为什么优先 exe 同目录而不是 cwd：从 cron / 1Panel / systemd 启动时 cwd 五花八门，
+/// 按 cwd 找配置会读错——甚至读到别的目录里同名的旧文件（这正是"计划任务启动不读
+/// optical.toml"那一类问题的根）。程序该在"自己所在的目录"找配置，从哪儿启动都一致。
 pub fn resolve_path(explicit: Option<PathBuf>) -> PathBuf {
     if let Some(p) = explicit {
         return p;
@@ -1793,6 +1797,15 @@ pub fn resolve_path(explicit: Option<PathBuf>) -> PathBuf {
             return PathBuf::from(p);
         }
     }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let p = dir.join("optical.toml");
+            if p.exists() {
+                return p;
+            }
+        }
+    }
+    // 兜底：cwd（开发时 cargo run 配置就在项目根，或用户确实在当前目录放配置）
     PathBuf::from("optical.toml")
 }
 

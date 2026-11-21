@@ -840,7 +840,7 @@ pub async fn status_cmd(config_opt: Option<PathBuf>, args: StatusArgs) -> Result
 
     let body = match http_get(&path, &admin, "/api/status").await {
         Ok(b) => b,
-        Err(e) => bail!("连不上管理面 http://{admin}（实例可能没启动）: {e}"),
+        Err(e) => bail!("连不上管理面 http://{}（实例可能没启动）: {e}", connect_addr(&admin)),
     };
 
     if args.json {
@@ -931,8 +931,28 @@ fn human_bytes(n: u64) -> String {
 }
 
 /// 尽力通知运行中的实例重载；失败静默（mtime 轮询会兜住）。
+/// 把"监听地址"换成"可连接地址"：`0.0.0.0` / `[::]` / `::` 是绑所有网卡的通配地址，
+/// **不能当连接目标**。本地 CLI 要连同一台机器上的实例，得换成回环地址——
+/// 否则 passwd 写完配置后热重载连不上，实例还用旧口令，看起来就是"改了不生效"。
+/// status / route / config 的热重载通知都走这条路。
+fn connect_addr(admin: &str) -> String {
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+    match admin.parse::<SocketAddr>() {
+        Ok(mut addr) => {
+            if addr.ip().is_unspecified() {
+                addr.set_ip(match addr.ip() {
+                    IpAddr::V4(_) => IpAddr::V4(Ipv4Addr::LOCALHOST),
+                    IpAddr::V6(_) => IpAddr::V6(Ipv6Addr::LOCALHOST),
+                });
+            }
+            addr.to_string()
+        }
+        Err(_) => admin.to_string(),
+    }
+}
+
 async fn notify_reload(config_path: &Path, admin: &str) {
-    let uri = format!("http://{admin}/api/reload");
+    let uri = format!("http://{}/api/reload", connect_addr(admin));
     let mut builder = Request::post(uri);
     if let Some(token) = load_token(config_path) {
         builder = builder.header("cookie", format!("optical_sid={token}"));
@@ -944,7 +964,7 @@ async fn notify_reload(config_path: &Path, admin: &str) {
 
 async fn http_get(config_path: &Path, addr: &str, path: &str) -> Result<String> {
     let mut builder = Request::builder()
-        .uri(format!("http://{addr}{path}"))
+        .uri(format!("http://{}{path}", connect_addr(addr)))
         .header("accept", "application/json");
     if let Some(token) = load_token(config_path) {
         builder = builder.header("cookie", format!("optical_sid={token}"));
