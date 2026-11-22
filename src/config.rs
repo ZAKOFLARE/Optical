@@ -99,6 +99,10 @@ pub struct ServerConfig {
     /// 响应里的 Server 头。非空则统一覆盖（含转发响应），空串则删除该头。
     /// 默认 "optical"：网关是链路上唯一对客户端负责的一跳，版本号不该由上游泄露。
     pub server_header: String,
+    /// 响应里是否隐藏内部调试头（x-optical-upstream / backend / route / lb / cache /
+    /// duration-ms / rule / waf）。true = 脱敏：客户端看不到源站地址、路由名、后端名、
+    /// LB 策略——这些属于内部拓扑，暴露出去等于给扫描器指路。排查链路时再临时关掉。
+    pub mask_debug_headers: bool,
     /// 可信代理：这些来源发来的 `X-Forwarded-For` / `CF-Connecting-IP` 才作数。
     ///
     /// 空 = 谁都不信（默认）。这个默认是安全取向：XFF 是客户端能随便写的头，
@@ -869,6 +873,7 @@ impl Default for ServerConfig {
             max_inspect_bytes: 8192,
             lb: LbStrategy::Wrr,
             server_header: "optical".into(),
+            mask_debug_headers: false,
             trusted_proxies: Vec::new(),
             upstream_keepalive_secs: default_upstream_keepalive(),
             upstream_pool_idle_secs: default_upstream_keepalive(),
@@ -1714,6 +1719,11 @@ impl Config {
     }
 
     /// 该路由是否允许缓存（跟随全局）。
+    /// 是否输出 x-optical-* 调试响应头（server.mask_debug_headers = true 时全部隐藏）
+    pub fn expose_debug_headers(&self) -> bool {
+        !self.server.mask_debug_headers
+    }
+
     pub fn cache_allowed(&self, route: Option<&RouteConfig>) -> bool {
         match route.and_then(|r| r.cache) {
             Some(v) => v && self.cache.enabled,

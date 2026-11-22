@@ -1121,6 +1121,8 @@
                 <div class="field"><label>server.admin_listen_v6</label><input type="text" id="f-admin-v6" data-i18n-ph="ph.v6" placeholder="留空 = 不监听 IPv6"></div>
                 <div class="field wide"><label>default_upstream</label><input type="text" id="f-upstream"></div>
                 <div class="field wide"><label>server.server_header</label><input type="text" id="f-server-header" data-i18n-ph="ph.serverheader" placeholder="留空 = 不发送 Server 头"></div>
+                <div class="field wide"><label>server.mask_debug_headers<i class="q" data-i18n-tip="tip.maskdebug">?</i></label>
+                  <select id="f-mask-debug"><option value="false">false</option><option value="true">true</option></select></div>
                 <!-- 可信代理：逗号分隔的 IP / CIDR。留空 = 谁都不信，防伪造 XFF -->
                 <div class="field wide"><label>server.trusted_proxies<i class="q" data-i18n-tip="tip.trusted">?</i></label>
                   <input type="text" id="f-trusted" data-i18n-ph="ph.trusted" placeholder="10.0.0.0/8, 172.16.0.0/12（留空 = 不信任任何转发头）"></div>
@@ -1593,7 +1595,7 @@
       "act.cache_ttl":"节点缓存 TTL（秒）","act.browser_ttl":"浏览器缓存 TTL（秒）",
       "act.cache_key":"自定义 cache key","act.server":"server 名","act.force_https":"强制 HTTPS",
       "act.ws":"WebSocket","act.max_upload":"最大上传（字节）","act.timeout":"回源超时（ms）",
-      "act.origin_group":"源站组","act.upstream":"回源 URL","act.gzip":"gzip 压缩","act.brotli":"brotli 压缩","act.scheme":"回源协议（禁用源站组）","act.port":"回源端口（禁用源站组）",
+      "act.origin_group":"源站组","act.upstream":"回源 URL","act.expose_rule":"本规则在响应头出现","act.gzip":"gzip 压缩","act.brotli":"brotli 压缩","act.scheme":"回源协议（禁用源站组）","act.port":"回源端口（禁用源站组）",
       "act.rate":"限速 QPS / 突发","act.rate.key":"限速维度",
       "act.inflight":"在途上限","act.connect_timeout":"建连超时（ms）",
       "lk.client_ip":"按客户端 IP","lk.rule":"按规则总额","lk.rule_ip":"按规则 + IP",
@@ -1661,7 +1663,7 @@
       "tip.tlssession":"TLS 1.2 会话缓存的条数。会话恢复让老客户端免一次完整握手（省一个 RTT + 一次非对称计算）。0 = 关闭恢复。",
       "tip.tlsticket":"TLS 1.3 会话票据：true = 客户端恢复时 1-RTT 直连；false = 每次完整握手。关掉更保守（前向保密窗口更短），但每次都要重新算密钥。",
       "ph.trusted":"10.0.0.0/8, 172.16.0.0/12（留空 = 不信任任何转发头）",
-      "tip.trusted":"只有这些来源发来的 X-Forwarded-For / CF-Connecting-IP 才作数。留空 = 谁都不信：XFF 是客户端能随便写的头，无脑采信等于让任何人把自己伪装成任意 IP，IP 黑名单和按 IP 限流会同时失效。挂 CDN 时把它的出口网段填进来。",
+      "tip.maskdebug":"开启后响应里不再带 x-optical-* 调试头（源站地址、路由名、后端名、LB 策略等），防止把内部拓扑泄露给客户端；排查链路时再临时关掉。","tip.trusted":"只有这些来源发来的 X-Forwarded-For / CF-Connecting-IP 才作数。留空 = 谁都不信：XFF 是客户端能随便写的头，无脑采信等于让任何人把自己伪装成任意 IP，IP 黑名单和按 IP 限流会同时失效。挂 CDN 时把它的出口网段填进来。",
       "ph.serverheader":"留空 = 不发送 Server 头",
       "ph.subfile":"留空 = <data_dir>/文件名","ph.errdir":"留空 = paths.error_pages_dir","ph.v6":"留空 = 不监听 IPv6",
       "ph.selfsigned":"留空 = 自动生成自签证书",
@@ -1896,7 +1898,7 @@
       "act.cache_ttl":"Edge cache TTL (s)","act.browser_ttl":"Browser TTL (s)",
       "act.cache_key":"Custom cache key","act.server":"Server name","act.force_https":"Force HTTPS",
       "act.ws":"WebSocket","act.max_upload":"Max upload (bytes)","act.timeout":"Origin timeout (ms)",
-      "act.origin_group":"Origin group","act.upstream":"Upstream URL","act.gzip":"gzip","act.brotli":"brotli","act.scheme":"Upstream scheme (disables group)","act.port":"Upstream port (disables group)",
+      "act.origin_group":"Origin group","act.upstream":"Upstream URL","act.expose_rule":"Expose rule in header","act.gzip":"gzip","act.brotli":"brotli","act.scheme":"Upstream scheme (disables group)","act.port":"Upstream port (disables group)",
       "act.rate":"Rate limit QPS / burst","act.rate.key":"Rate limit key",
       "act.inflight":"In-flight cap","act.connect_timeout":"Connect timeout (ms)",
       "lk.client_ip":"per client IP","lk.rule":"per rule","lk.rule_ip":"per rule + IP",
@@ -1964,7 +1966,7 @@
       "tip.tlssession":"TLS 1.2 session cache size. Resumption spares legacy clients a full handshake (one RTT + one asymmetric key computation). 0 = disabled.",
       "tip.tlsticket":"TLS 1.3 session tickets: true = 1-RTT resumption; false = full handshake every time. Turning it off is more conservative (shorter forward-secrecy window) at the cost of recomputing keys each time.",
       "ph.trusted":"10.0.0.0/8, 172.16.0.0/12 (empty = trust no forwarding headers)",
-      "tip.trusted":"Only these sources may set X-Forwarded-For / CF-Connecting-IP. Empty means trust none: XFF is client-writable, so trusting it blindly lets anyone impersonate any IP and defeats both the IP blocklist and per-IP rate limiting. Put your CDN egress ranges here.",
+      "tip.maskdebug":"When on, responses omit all x-optical-* debug headers (upstream address, route/backend/lb names) so internal topology isn't leaked; turn off temporarily when tracing.","tip.trusted":"Only these sources may set X-Forwarded-For / CF-Connecting-IP. Empty means trust none: XFF is client-writable, so trusting it blindly lets anyone impersonate any IP and defeats both the IP blocklist and per-IP rate limiting. Put your CDN egress ranges here.",
       "ph.serverheader":"Empty = do not send a Server header",
       "ph.subfile":"Empty = <data_dir>/file","ph.errdir":"Empty = paths.error_pages_dir","ph.v6":"Empty = no IPv6 listener",
       "ph.selfsigned":"Empty = auto-generate self-signed",
@@ -3727,6 +3729,7 @@
           actionField(r, i, "actions.upstream", t("act.upstream"), "text", "https://ip:port")+
           actionField(r, i, "actions.upstream_scheme", t("act.scheme"), "text", "http / https")+
           actionField(r, i, "actions.upstream_port", t("act.port"), "num", "8080")+
+          actionField(r, i, "actions.expose_rule_header", t("act.expose_rule"), "select")+
           actionField(r, i, "actions.gzip", t("act.gzip"), "select")+
           actionField(r, i, "actions.brotli", t("act.brotli"), "select")+
         '</div>'+
@@ -4627,6 +4630,25 @@
     return out.join("");
   }
 
+  // 源站组与"回源 URL / 协议 / 端口"互斥：填了一边，另一边灰掉——
+  // 同时填两份，转发时到底用哪个？与其让人猜，不如直接禁掉。
+  function syncRuleMutex(ri){
+    var r = rulesDraft()[ri];
+    if (!r) return;
+    var a = r.actions || {};
+    var nonEmpty = function(v){ return v != null && String(v).trim() !== ""; };
+    var hasGroup = nonEmpty(a.origin_group);
+    var hasDir = nonEmpty(a.upstream) || nonEmpty(a.upstream_scheme) || nonEmpty(a.upstream_port);
+    var setDis = function(p, dis){
+      var el = document.querySelector('[data-ri="'+ri+'"][data-path="'+p+'"]');
+      if (el) el.disabled = dis;
+    };
+    setDis("actions.upstream", hasGroup);
+    setDis("actions.upstream_scheme", hasGroup);
+    setDis("actions.upstream_port", hasGroup);
+    setDis("actions.origin_group", hasDir);
+  }
+
   function renderRules(){
     var box = $("rule-list");
     if (!box) return;
@@ -4636,6 +4658,7 @@
       return;
     }
     box.innerHTML = list.map(ruleCard).join("");
+    list.forEach(function(_, i){ syncRuleMutex(i); });
   }
 
   function bindRules(){
@@ -4674,6 +4697,7 @@
       } else {
         setPath(r, path, val);
       }
+      syncRuleMutex(Number(el.getAttribute("data-ri")));
       // header/cookie 才显示名称框
       if (path.endsWith(".kind")){
         var mi = path.split(".")[1];
@@ -5295,6 +5319,7 @@
     $("f-poolidle").value=c.server.upstream_pool_idle_secs||30;
     $("f-poolmax").value=c.server.upstream_pool_max_idle||32;
     $("f-server-header").value=c.server.server_header==null?"":c.server.server_header;
+    $("f-mask-debug").value=c.server.mask_debug_headers?"true":"false";
     $("f-trusted").value=(c.server.trusted_proxies||[]).join(", ");
     var dl=c.delivery||{};
     $("f-delivery-webui").value=String(dl.webui!==false);
@@ -5376,6 +5401,7 @@
     cfg.server.admin_listen_v6=$("f-admin-v6").value.trim();
     cfg.server.default_upstream=$("f-upstream").value.trim();
     cfg.server.server_header=$("f-server-header").value.trim();
+    cfg.server.mask_debug_headers=$("f-mask-debug").value==="true";
     cfg.server.trusted_proxies=$("f-trusted").value
       .split(",").map(function(x){ return x.trim(); })
       .filter(function(x){ return x.length>0; });

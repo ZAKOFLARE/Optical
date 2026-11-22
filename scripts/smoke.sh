@@ -940,6 +940,31 @@ curl -s -b "$CJ2" -m 8 -X PUT -H 'content-type: application/json' \
 check "单点登录可关回去" '"single_session":false' \
   "$(curl -s -b "$CJ2" -m 6 "http://$ADM/api/config")"
 
+echo "-- 响应头脱敏（server.mask_debug_headers）--"
+# 默认不脱敏：响应里能看到源站地址
+check "默认暴露 x-optical-upstream（含源站地址）" 'x-optical-upstream: 127.0.0.1:18082' \
+  "$(curl -si -m 6 "http://$GW/r-up/x" | tr -d '\r' | grep -i '^x-optical-upstream:')"
+# 开启脱敏：所有 x-optical-* 头都该消失
+set_mask() {
+  local want="$1" rev body
+  # 用 CJ2（末尾单点登录测试仍在用的会话），别用可能已被顶掉的 AUTH
+  rev="$(curl -s -b "$CJ2" -m 6 "http://$ADM/api/config" | python3 -c 'import sys,json;print(json.load(sys.stdin)["rev"])')"
+  body="$(curl -s -b "$CJ2" -m 6 "http://$ADM/api/config" | WANT="$want" python3 -c '
+import sys, json, os
+c = json.load(sys.stdin)["config"]
+c["server"]["mask_debug_headers"] = (os.environ["WANT"] == "true")
+print(json.dumps(c))
+')"
+  curl -s -m 8 -X PUT -b "$CJ2" -H 'content-type: application/json' \
+    -H "x-optical-config-rev: $rev" --data-binary "$body" "http://$ADM/api/config" >/dev/null
+}
+set_mask true
+sleep 1.5
+check "开启脱敏后无任何 x-optical-* 头" '0' \
+  "$(curl -si -m 6 "http://$GW/r-up/x" | tr -d '\r' | grep -ci '^x-optical-')"
+# 恢复，别影响后续手工排查时的头
+set_mask false
+
 
 
 echo

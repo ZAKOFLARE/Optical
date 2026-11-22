@@ -606,7 +606,11 @@ pub async fn handle(
         // 少了这行，custom_response 的响应里 server 头直接缺席——
         // "server 遵循全局"就成了"server 为空"。
         apply_server_header(&cfg, resp.headers_mut());
-        apply_rule_headers(&mut resp, &rule_hit);
+        apply_rule_headers(
+            &mut resp,
+            &rule_hit,
+            cfg.expose_debug_headers() && rule_hit.actions.expose_rule_header != Some(false),
+        );
         return resp;
     }
 
@@ -846,9 +850,11 @@ pub async fn handle(
                 .bytes_out
                 .fetch_add(body.len() as u64, Ordering::Relaxed);
             let mut hm = headers;
-            hm.insert(HeaderName::from_static("x-optical-cache"), HeaderValue::from_static("HIT"));
-            if let Ok(v) = HeaderValue::from_str(decision.route_name.as_deref().unwrap_or("default")) {
-                hm.insert(HeaderName::from_static("x-optical-route"), v);
+            if cfg.expose_debug_headers() {
+                hm.insert(HeaderName::from_static("x-optical-cache"), HeaderValue::from_static("HIT"));
+                if let Ok(v) = HeaderValue::from_str(decision.route_name.as_deref().unwrap_or("default")) {
+                    hm.insert(HeaderName::from_static("x-optical-route"), v);
+                }
             }
             state.record_hit(
                 &ua,
@@ -1105,13 +1111,17 @@ pub async fn handle(
             rparts.headers.insert(name, val);
         }
     }
-    if !rule_hit.hit.is_empty() {
+    if !rule_hit.hit.is_empty()
+        && cfg.expose_debug_headers()
+        && rule_hit.actions.expose_rule_header != Some(false)
+    {
         if let Ok(v) = HeaderValue::from_str(&rule_hit.hit.join(",")) {
             rparts.headers.insert(HeaderName::from_static("x-optical-rule"), v);
         }
     }
     insert_debug_headers(
         &mut rparts.headers,
+        cfg.expose_debug_headers(),
         &decision,
         &authority,
         elapsed,
@@ -1191,9 +1201,11 @@ pub async fn handle(
                         max_entries: cfg.cache.max_entries,
                     },
                 );
-                rparts
-                    .headers
-                    .insert(HeaderName::from_static("x-optical-cache"), HeaderValue::from_static("MISS"));
+                if cfg.expose_debug_headers() {
+                    rparts
+                        .headers
+                        .insert(HeaderName::from_static("x-optical-cache"), HeaderValue::from_static("MISS"));
+                }
                 state
                     .metrics
                     .bytes_out
@@ -1235,9 +1247,11 @@ pub async fn handle(
             }
         }
     } else {
-        rparts
-            .headers
-            .insert(HeaderName::from_static("x-optical-cache"), HeaderValue::from_static("BYPASS"));
+        if cfg.expose_debug_headers() {
+            rparts
+                .headers
+                .insert(HeaderName::from_static("x-optical-cache"), HeaderValue::from_static("BYPASS"));
+        }
         CountingBody {
             inner: rbody,
             state: state.clone(),
@@ -1755,12 +1769,16 @@ fn append_forwarded(
 
 fn insert_debug_headers(
     headers: &mut http::HeaderMap,
+    expose: bool,
     decision: &Decision,
     authority: &str,
     elapsed: Duration,
     backend: Option<&str>,
     lb: Option<&str>,
 ) {
+    if !expose {
+        return;
+    }
     if let Ok(v) = HeaderValue::from_str(decision.route_name.as_deref().unwrap_or("default")) {
         headers.insert(HeaderName::from_static("x-optical-route"), v);
     }
@@ -1899,7 +1917,7 @@ fn redirect_response(
 }
 
 /// 把规则动作里的响应头（server_name / 附加头 / 命中标记）写到响应上。
-fn apply_rule_headers<B>(resp: &mut Response<B>, hit: &crate::rules::Resolved) {
+fn apply_rule_headers<B>(resp: &mut Response<B>, hit: &crate::rules::Resolved, expose: bool) {
     if let Some(name) = &hit.actions.server_name {
         if let Ok(v) = HeaderValue::from_str(name) {
             resp.headers_mut().insert(SERVER, v);
@@ -1913,7 +1931,7 @@ fn apply_rule_headers<B>(resp: &mut Response<B>, hit: &crate::rules::Resolved) {
             resp.headers_mut().insert(name, val);
         }
     }
-    if !hit.hit.is_empty() {
+    if expose && !hit.hit.is_empty() {
         if let Ok(v) = HeaderValue::from_str(&hit.hit.join(",")) {
             resp.headers_mut()
                 .insert(HeaderName::from_static("x-optical-rule"), v);
@@ -1991,8 +2009,10 @@ fn error_response(
         b = b.header(SERVER, v);
     }
     if let Some(r) = rule {
-        if let Ok(v) = HeaderValue::from_str(r) {
-            b = b.header(HeaderName::from_static("x-optical-waf"), v);
+        if cfg.expose_debug_headers() {
+            if let Ok(v) = HeaderValue::from_str(r) {
+                b = b.header(HeaderName::from_static("x-optical-waf"), v);
+            }
         }
     }
     b.body(body).expect("静态构造的响应不会失败")

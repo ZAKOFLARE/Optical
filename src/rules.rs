@@ -128,6 +128,9 @@ pub struct Actions {
     pub token_auth: Option<TokenAuth>,
     /// 是否允许 WebSocket 升级
     pub ws: Option<bool>,
+    /// 该规则命中时是否在响应头写 `x-optical-rule`（规则名）。None = 跟随全局
+    /// `server.mask_debug_headers`；Some(false) = 即使全局没脱敏也隐藏本规则的标记。
+    pub expose_rule_header: Option<bool>,
     /// 附加响应头
     pub response_headers: Vec<(String, String)>,
     /// QPS 限速
@@ -465,6 +468,9 @@ fn merge(dst: &mut Actions, src: &Actions) {
     }
     if src.upstream_timeout_ms.is_some() {
         dst.upstream_timeout_ms = src.upstream_timeout_ms;
+    }
+    if src.expose_rule_header.is_some() {
+        dst.expose_rule_header = src.expose_rule_header;
     }
     if src.host_rewrite.is_some() {
         dst.host_rewrite = src.host_rewrite.clone();
