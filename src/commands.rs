@@ -593,29 +593,49 @@ pub async fn install_cmd(args: crate::cli::InstallArgs) -> Result<()> {
     if target == exe {
         println!("  {} 就是当前位置，无需复制", target.display());
     } else {
-        if target.exists() && !args.force {
-            anyhow::bail!(
-                "{} 已存在。要覆盖请加 --force（或先删掉它）",
+        #[cfg(unix)]
+        {
+            // Unix 用软链接而不是复制：/opt/Optical/optical 升级后，PATH 里的 optical
+            // 自动跟着变——复制则会出现"PATH 里还是旧版本，passwd 改了不生效"这种鬼问题。
+            if target.exists() || target.is_symlink() {
+                if !args.force {
+                    anyhow::bail!(
+                        "{} 已存在。要覆盖请加 --force（或先删掉它）",
+                        target.display()
+                    );
+                }
+                std::fs::remove_file(&target)
+                    .with_context(|| format!("删除旧文件 {} 失败", target.display()))?;
+            }
+            std::os::unix::fs::symlink(&exe, &target).with_context(|| {
+                format!("创建软链接 {} -> {} 失败", target.display(), exe.display())
+            })?;
+            println!(
+                "  已安装（软链接，跟随 {} 升级）{}",
+                exe.display(),
                 target.display()
             );
         }
-        // 先复制到临时名再 rename：正在运行的旧二进制在 Windows 上不能被覆盖，
-        // 但可以被改名——这样"覆盖安装"不会因为进程占用而失败。
-        let tmp = dir.join(format!("{}.new", name.to_string_lossy()));
-        std::fs::copy(&exe, &tmp).with_context(|| format!("复制到 {} 失败", tmp.display()))?;
-        #[cfg(unix)]
+        #[cfg(not(unix))]
         {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755));
+            // Windows 复制（软链接要开发者模式/特权，不折腾）
+            if target.exists() && !args.force {
+                anyhow::bail!(
+                    "{} 已存在。要覆盖请加 --force（或先删掉它）",
+                    target.display()
+                );
+            }
+            let tmp = dir.join(format!("{}.new", name.to_string_lossy()));
+            std::fs::copy(&exe, &tmp).with_context(|| format!("复制到 {} 失败", tmp.display()))?;
+            if target.exists() {
+                let old = dir.join(format!("{}.old", name.to_string_lossy()));
+                let _ = std::fs::remove_file(&old);
+                let _ = std::fs::rename(&target, &old);
+            }
+            std::fs::rename(&tmp, &target)
+                .with_context(|| format!("安装到 {} 失败", target.display()))?;
+            println!("  已安装  {}", target.display());
         }
-        if target.exists() {
-            let old = dir.join(format!("{}.old", name.to_string_lossy()));
-            let _ = std::fs::remove_file(&old);
-            let _ = std::fs::rename(&target, &old);
-        }
-        std::fs::rename(&tmp, &target)
-            .with_context(|| format!("安装到 {} 失败", target.display()))?;
-        println!("  已安装  {}", target.display());
     }
 
     if args.no_path {
