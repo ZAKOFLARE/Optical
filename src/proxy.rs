@@ -1011,7 +1011,11 @@ pub async fn handle(
                 &host_str,
                 Some(decision.route_name.as_deref().unwrap_or("default")),
                 StatusCode::BAD_GATEWAY,
-                format!("构造上游 URI 失败: {e}"),
+                {
+                    // e 里可能带着源站 URI，只进日志，别回给客户端
+                    tracing::warn!(error = %e, "构造上游 URI 失败");
+                    "上游地址解析失败（请检查配置）"
+                },
             )
         }
     };
@@ -1074,9 +1078,16 @@ pub async fn handle(
                 &host_str,
                 Some(decision.route_name.as_deref().unwrap_or("default")),
                 StatusCode::BAD_GATEWAY,
-                format!(
-                    "连接上游失败: {e}（目标 {up_scheme}://{authority}；常见原因：后端没在监听、端口写错、回源协议该用 http 却写了 https）"
-                ),
+                {
+                    // 源站地址只写日志给运维排查，绝不进错误页——错误页面向客户端，
+                    // 把 {up_scheme}://{authority} 吐出去等于给扫描器指路，该脱敏的正是它。
+                    tracing::warn!(
+                        upstream = %format!("{up_scheme}://{authority}"),
+                        error = %e,
+                        "连接上游失败"
+                    );
+                    "连接上游失败（常见原因：后端没在监听、端口写错、回源协议该用 http 却写了 https）"
+                },
             )
         }
         Ok(Ok(r)) => r,
@@ -1390,7 +1401,10 @@ async fn websocket_tunnel(
         .build()
     {
         Ok(u) => u,
-        Err(e) => return error_response(&state, cfg, StatusCode::BAD_GATEWAY, &format!("WS 上游 URI 非法: {e}"), None),
+        Err(e) => {
+            tracing::warn!(error = %e, "WS 上游 URI 非法");
+            return error_response(&state, cfg, StatusCode::BAD_GATEWAY, "WS 上游地址非法", None);
+        }
     };
 
     let tcp = match TcpStream::connect(authority).await {
@@ -1428,7 +1442,10 @@ async fn websocket_tunnel(
     let resp = match tokio::time::timeout(Duration::from_secs(10), sender.send_request(up_req)).await {
         Err(_) => return error_response(&state, cfg, StatusCode::GATEWAY_TIMEOUT, "WS 上游握手超时", Some("ws-timeout")),
         Ok(Err(e)) => {
-            return error_response(&state, cfg, StatusCode::BAD_GATEWAY, &format!("WS 上游错误: {e}"), Some("ws-upstream"))
+            {
+                tracing::warn!(error = %e, "WS 上游错误");
+                return error_response(&state, cfg, StatusCode::BAD_GATEWAY, "WS 上游连接失败", Some("ws-upstream"));
+            }
         }
         Ok(Ok(r)) => r,
     };
