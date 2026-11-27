@@ -1637,7 +1637,8 @@ pub(crate) fn client_ip(
         .unwrap_or_default();
     if chain.is_empty() {
         // 部分 CDN 只给专有头，不给标准 XFF
-        for name in ["cf-connecting-ip", "x-real-ip", "true-client-ip"] {
+        // 各 CDN 的专有头：EdgeOne 用 EO-Connecting-IP，Cloudflare 用 CF-Connecting-IP
+        for name in ["eo-connecting-ip", "cf-connecting-ip", "x-real-ip", "true-client-ip"] {
             if let Some(v) = headers
                 .get(name)
                 .and_then(|v| v.to_str().ok())
