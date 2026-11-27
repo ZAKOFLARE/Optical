@@ -1055,6 +1055,13 @@ fn stats_json(st: &AppState, q: &StatsQuery) -> Value {
         "total": total,
         // 采集时桶容量到顶、有长尾键被挤掉：说明「全部」也只是全部**留存**的值
         "trimmed": r.trimmed,
+        // 整窗所有请求的延迟分位（ms），前端"延迟分析"块直接读这里
+        "latency": {
+            "p50_ms": pct_ms(r.latency_p50_us),
+            "p90_ms": pct_ms(r.latency_p90_us),
+            "p99_ms": pct_ms(r.latency_p99_us),
+            "p999_ms": pct_ms(r.latency_p999_us),
+        },
         "rows": items,
         "filter_fields": q.by.filter_fields(),
         // 当前维度用不上的筛选条件（比如 IP 表按路由筛），前端要如实提示而不是装作生效

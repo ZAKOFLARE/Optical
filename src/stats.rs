@@ -334,6 +334,12 @@ pub struct Ranking {
     pub dropped: Vec<&'static str>,
     pub total: u64,
     pub trimmed: bool,
+    /// 整段时间窗内所有请求的延迟分位（微秒），不受维度/筛选影响——
+    /// 给"延迟分析"那块用，回答"这一小时整体到底慢不慢"。
+    pub latency_p50_us: u64,
+    pub latency_p90_us: u64,
+    pub latency_p99_us: u64,
+    pub latency_p999_us: u64,
 }
 
 pub struct StatsStore {
@@ -466,7 +472,14 @@ impl StatsStore {
         dropped.dedup();
 
         let mut acc: HashMap<String, Counters> = HashMap::new();
+        // 全局延迟直方图：把所有 combo 的 hist 合并，和 by/筛选无关
+        let mut global = Counters::default();
         for b in ring.buckets.iter().filter(|b| b.start + ring.span > from) {
+            for (_, c) in b.combos.iter() {
+                for (gi, hi) in global.hist.iter_mut().zip(c.hist.iter()) {
+                    *gi = gi.wrapping_add(*hi);
+                }
+            }
             match by {
                 Dim::Route | Dim::Backend | Dim::Host | Dim::Status => {
                     for ((route, backend, host, status), c) in b.combos.iter() {
@@ -541,6 +554,10 @@ impl StatsStore {
             dropped,
             total,
             trimmed,
+            latency_p50_us: global.percentile_us(0.5),
+            latency_p90_us: global.percentile_us(0.9),
+            latency_p99_us: global.percentile_us(0.99),
+            latency_p999_us: global.percentile_us(0.999),
         }
     }
 }

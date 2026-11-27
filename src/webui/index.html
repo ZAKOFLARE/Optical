@@ -249,6 +249,10 @@
   .rank-card .mini-row .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2)}
   .rank-card .mini-row .bar{flex:0 0 52px;height:5px;border-radius:3px;background:var(--line);overflow:hidden}
   .rank-card .mini-row .lat{flex:0 0 auto;font-size:10.5px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+  .lat-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:0 12px 12px}
+  .lat-grid .lat-item{background:var(--panel);padding:12px 14px}
+  .lat-grid .lat-k{font-size:11.5px;color:var(--ink-3);margin-bottom:5px}
+  .lat-grid .lat-v{font-size:20px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
   .rank-card .mini-row .bar i{display:block;height:100%;background:var(--blue)}
   .rank-card .mini-row b{font-variant-numeric:tabular-nums}
   /* 自定义规则编辑器 */
@@ -725,6 +729,14 @@
             </div>
           </div>
           <div class="legend" id="legend"></div>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <div class="card-head">
+            <h3 data-i18n="an.lat">延迟分位</h3>
+            <span class="sec-hint" data-i18n="an.lat.hint">整段时间窗内所有请求（不受维度/筛选影响）</span>
+          </div>
+          <div class="lat-grid" id="lat-grid"></div>
         </div>
 
         <!-- 排行榜：维度可切、跟随上方时间范围、支持条件筛选 -->
@@ -1650,7 +1662,7 @@
       "ov.pie.cache":"缓存命中","ov.sys":"系统占用","ov.sys.hint":"本进程",
       "ov.sys.mem":"内存","ov.sys.cpu":"CPU","ov.sys.threads":"线程","ov.sys.up":"运行时长",
       "an.tile.req":"请求数","an.tile.bw":"带宽峰值","an.tile.cache":"缓存命中率","an.tile.waf":"WAF 拦截",
-      "an.cards":"排行榜","an.more":"查看更多","an.click":"点左侧指标切换曲线",
+      "an.lat":"延迟分位","an.lat.hint":"整段时间窗内所有请求（不受维度/筛选影响）","lat.p50":"P50","lat.p90":"P90","lat.p99":"P99","lat.p999":"P999","an.cards":"排行榜","an.more":"查看更多","an.click":"点左侧指标切换曲线",
       "rl.title":"自定义规则","rl.add":"+ 新建规则","rl.save":"保存规则",
       "rl.hint":"按域名/路径/请求头这些特征改变网关行为。从上往下看，命中的规则会叠加，越靠下优先级越高。",
       "rl.order":"生效顺序：先过 WAF，再执行能直接给结果的规则（鉴权、强制 HTTPS、跳转、自定义返回、上传上限、WS 开关），然后才是选路、缓存、回源改写、响应头。安全检查在前，所以规则绕不过 WAF。",
@@ -2018,7 +2030,7 @@
       "ov.pie.cache":"Cache","ov.sys":"Process","ov.sys.hint":"this process",
       "ov.sys.mem":"Memory","ov.sys.cpu":"CPU","ov.sys.threads":"Threads","ov.sys.up":"Uptime",
       "an.tile.req":"Requests","an.tile.bw":"Peak rate","an.tile.cache":"Cache hit","an.tile.waf":"WAF blocks",
-      "an.cards":"Leaderboards","an.more":"More","an.click":"Click a tile to switch the chart",
+      "an.lat":"Latency percentiles","an.lat.hint":"All requests in the window (independent of dimension/filter)","lat.p50":"P50","lat.p90":"P90","lat.p99":"P99","lat.p999":"P999","an.cards":"Leaderboards","an.more":"More","an.click":"Click a tile to switch the chart",
       "rl.title":"Custom rules","rl.add":"+ New rule","rl.save":"Save rules",
       "rl.hint":"Rewrite gateway behaviour by request traits. Rules are evaluated top-down; all matches merge, later ones win.",
       "rl.order":"Order: WAF → short-circuit actions (auth / force HTTPS / redirect / custom response / upload cap / WS) → routing → cache → origin rewrite → response headers.",
@@ -3063,6 +3075,7 @@
     renderFilters();
     renderRank();
     renderAnTiles();
+    renderLatency();
     // 请求总数和"列了几行"是两个量纲，别放在一起比大小
     var shown = (d.rows || []).length;
     var txt = spanText(d.range_secs || view.range) + " · " + t("ov.rank.total") + " " + d.total +
@@ -3070,6 +3083,22 @@
     if (d.trimmed) txt += t("ov.rank.trimmed");
     $("rank-window").textContent = txt;
     maskOff();
+  }
+
+  // 延迟分位块：整窗所有请求的 P50/P90/P99/P999（服务端 stats.latency 直接给）
+  function renderLatency(){
+    var box = $("lat-grid");
+    if (!box) return;
+    var l = (state.rank && state.rank.latency) || {};
+    var items = [
+      [t("lat.p50"), l.p50_ms], [t("lat.p90"), l.p90_ms],
+      [t("lat.p99"), l.p99_ms], [t("lat.p999"), l.p999_ms]
+    ];
+    box.innerHTML = items.map(function(it){
+      var v = it[1];
+      var txt = v == null ? "—" : (v > 0 ? v + " ms" : "<0.1 ms");
+      return '<div class="lat-item"><div class="lat-k">'+esc(it[0])+'</div><div class="lat-v">'+txt+'</div></div>';
+    }).join("");
   }
 
   // ---------- WebSocket 命令通道 ----------

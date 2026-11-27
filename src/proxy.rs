@@ -1625,19 +1625,25 @@ pub(crate) fn client_ip(
     if !trust_all && (trusted.is_empty() || !parse_trusted(trusted, &peer)) {
         return peer;
     }
-    let mut chain: Vec<String> = headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .map(|v| {
-            v.split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect()
-        })
-        .unwrap_or_default();
-    if chain.is_empty() {
+    // 从右往左扫 XFF，找第一个"不在可信段里"的地址（离我们最近的真实客户端）。
+    // 全程零分配：直接在原始字符串上 rsplit/trim/parse，**不** collect 成 Vec<String>。
+    // 那个 Vec（外加每条 String）是每请求一次堆分配；CDN 后面 XFF 常常多跳，
+    // 高 QPS 下就是实打实的性能税——0.3.19 开 trust_xff 后拨测超时变多、解析变慢
+    // 正是它。从左往右取也不行，会被攻击者在最左边伪造的地址坑到。
+    let mut had_xff = false;
+    if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+        had_xff = true;
+        for cand in xff.rsplit(',') {
+            if let Ok(a) = cand.trim().parse::<std::net::IpAddr>() {
+                if !parse_trusted(trusted, &a) {
+                    return a;
+                }
+            }
+        }
+    }
+    if !had_xff {
         // 部分 CDN 只给专有头，不给标准 XFF
-        // 各 CDN 的专有头：EdgeOne 用 EO-Connecting-IP，Cloudflare 用 CF-Connecting-IP
+        // EdgeOne 用 EO-Connecting-IP，Cloudflare 用 CF-Connecting-IP
         for name in ["eo-connecting-ip", "cf-connecting-ip", "x-real-ip", "true-client-ip"] {
             if let Some(v) = headers
                 .get(name)
@@ -1645,17 +1651,11 @@ pub(crate) fn client_ip(
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
             {
-                chain.push(v.to_string());
-                break;
-            }
-        }
-    }
-    // 从右往左找第一个"不在可信段里"的地址：那是离我们最近的真实客户端。
-    // 从左往右取会被伪造链坑到（攻击者在最左边随便写）。
-    for candidate in chain.iter().rev() {
-        if let Ok(a) = candidate.parse::<std::net::IpAddr>() {
-            if !parse_trusted(trusted, &a) {
-                return a;
+                if let Ok(a) = v.parse::<std::net::IpAddr>() {
+                    if !parse_trusted(trusted, &a) {
+                        return a;
+                    }
+                }
             }
         }
     }
