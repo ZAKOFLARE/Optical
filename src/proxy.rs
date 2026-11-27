@@ -1235,6 +1235,20 @@ pub async fn handle(
                                 .metrics
                                 .bytes_saved
                                 .fetch_add((bytes.len() - z.len()) as u64, Ordering::Relaxed);
+                            // 压缩分支提前 return，必须在这里补一次 record_hit——
+                            // 否则「被压缩的正常响应」整条统计（含客户端 IP）全丢，
+                            // 而错误响应走 fail() 反倒记了，看着就像"只有出错才统计 IP"。
+                            state.record_hit(
+                                &ua,
+                                &ip_str,
+                                status.as_u16(),
+                                crate::stats::ReqDims {
+                                    route: decision.route_name.as_deref().unwrap_or("default"),
+                                    backend: backend_name.as_deref().unwrap_or(""),
+                                    host: original_host.as_deref().unwrap_or(""),
+                                },
+                                elapsed.as_micros() as u64,
+                            );
                             return Response::from_parts(
                                 rparts,
                                 Full::new(Bytes::from(z)).map_err(|never| match never {}).boxed(),
