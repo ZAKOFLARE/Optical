@@ -1682,6 +1682,8 @@ struct AppearanceReq {
     chart_style: Option<String>,
     #[serde(default)]
     panel_alpha: Option<u8>,
+    #[serde(default)]
+    mask_alpha: Option<u8>,
     /// 外链资源地址。None = 不动；Some("") = 清除；Some(url) = 设置。
     #[serde(default)]
     bg_url: Option<String>,
@@ -1709,6 +1711,9 @@ async fn api_set_appearance(
     }
     if let Some(v) = req.panel_alpha {
         cfg.appearance.panel_alpha = v;
+    }
+    if let Some(v) = req.mask_alpha {
+        cfg.appearance.mask_alpha = v.min(100);
     }
     if let Some(v) = req.bg_url {
         cfg.appearance.bg_url = v;

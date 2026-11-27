@@ -27,7 +27,7 @@
        直接用 --line 是不透明纯色，面板调透明时它会突兀地留在原地。 */
     --line-rgb:230 233 239;
     /* 全局蒙版：把背景（含自定义图）压一层主题色，降低组件与空白区的对比 */
-    --mask:rgba(244,246,249,.35);
+    --mask-rgb:244 246 249; --mask-a:.35; --mask:rgb(var(--mask-rgb) / var(--mask-a));
     --bg:#f4f6f9; --panel:rgb(255 255 255 / var(--panel-a)); --line:#e6e9ef; --line-2:#d5dae3;
     --ink:#1b222e; --ink-2:#5a6478; --ink-3:#8b93a4;
     --blue:#0052d9; --blue-d:#0043b0; --blue-soft:#ebf2ff;
@@ -43,7 +43,7 @@
     color-scheme: dark;
     --panel-a:1;
     --line-rgb:36 43 53;
-    --mask:rgba(14,17,22,.4);
+    --mask-rgb:14 17 22; --mask-a:.4; --mask:rgb(var(--mask-rgb) / var(--mask-a));
     --bg:#0e1116; --panel:rgb(21 26 33 / var(--panel-a)); --line:#242b35; --line-2:#333c48;
     --ink:#e7ecf3; --ink-2:#9aa7b8; --ink-3:#6d7b8c;
     --blue:#4c8dff; --blue-d:#3d78e0; --blue-soft:#16233a;
@@ -1365,6 +1365,12 @@
                   <b id="look-alpha-v" class="mono" style="font-size:12px;color:var(--ink-2);min-width:42px;text-align:right">100%</b>
                 </div>
               </div>
+              <div class="field"><label data-i18n="look.mask">蒙版强度</label>
+                <div style="display:flex;align-items:center;gap:10px">
+                  <input type="range" id="f-look-mask" min="0" max="100" step="1" value="35" style="flex:1">
+                  <b id="look-mask-v" class="mono" style="font-size:12px;color:var(--ink-2);min-width:42px;text-align:right">35%</b>
+                </div>
+              </div>
             </div>
             <p class="note" id="look-note" style="margin-top:8px"></p>
           </div>
@@ -1563,7 +1569,7 @@
       "look.title":"外观","look.hint":"全部存在服务端，换台设备打开也是这一套",
       "look.reset":"恢复默认","look.theme":"主题","look.accent":"主题色","look.chart":"统计图样式",
       "look.chart.line":"折线","look.chart.bar":"柱状",
-      "look.alpha":"界面不透明度",
+      "look.mask":"蒙版强度","look.alpha":"界面不透明度",
       "look.accent.note":"深浅两档由主色自动推出来，不用另外配。",
       "look.warn.light":"这个颜色太浅（或太深），文字和按钮的对比度会不够——能看清就继续用，看不清就换一个。",
       "look.images":"图片","look.imm":"上传即生效，不用点保存",
@@ -1931,7 +1937,7 @@
       "look.title":"Appearance","look.hint":"Stored on the server — the same look on every device you open it from",
       "look.reset":"Reset","look.theme":"Theme","look.accent":"Accent color","look.chart":"Chart style",
       "look.chart.line":"Line","look.chart.bar":"Bar",
-      "look.alpha":"Panel opacity",
+      "look.mask":"Mask strength","look.alpha":"Panel opacity",
       "look.accent.note":"The darker and lighter shades are derived from the accent — nothing else to configure.",
       "look.warn.light":"This color is very light (or very dark); text and button contrast may suffer. Keep it if it reads fine, otherwise pick another.",
       "look.images":"Images","look.imm":"Applies immediately — no need to save",
@@ -4088,6 +4094,11 @@
     if (on) root.setProperty("--panel-a", String(alpha / 100));
     else root.removeProperty("--panel-a");
     if ($("look-alpha-v")) $("look-alpha-v").textContent = alpha + "%";
+    var maskA = on && d && d.mask_alpha != null ? Number(d.mask_alpha) : 35;
+    maskA = Math.max(0, Math.min(100, maskA));
+    if (on) root.setProperty("--mask-a", String(maskA / 100));
+    else root.removeProperty("--mask-a");
+    if ($("look-mask-v")) $("look-mask-v").textContent = maskA + "%";
 
     var hasBg = !!(on && d && d.bg);
     document.body.classList.toggle("custom-bg", hasBg);
@@ -4140,6 +4151,8 @@
     renderSwatches(d.accent || "#0052d9");
     if ($("f-look-alpha")) $("f-look-alpha").value = String(d.panel_alpha || 100);
     if ($("look-alpha-v")) $("look-alpha-v").textContent = (d.panel_alpha || 100) + "%";
+    if ($("f-look-mask")) $("f-look-mask").value = String(d.mask_alpha == null ? 35 : d.mask_alpha);
+    if ($("look-mask-v")) $("look-mask-v").textContent = (d.mask_alpha == null ? 35 : d.mask_alpha) + "%";
     var seg = $("look-seg");
     if (seg){
       var style = (d.enabled && d.chart_style === "bar") ? "bar" : "line";
@@ -4252,6 +4265,9 @@
       renderSwatches(c);
       previewLook();
     });
+    $("f-look-mask").addEventListener("input", function(){
+      if ($("look-mask-v")) $("look-mask-v").textContent = this.value + "%";
+    });
     $("f-look-alpha").addEventListener("input", function(){
       if ($("look-alpha-v")) $("look-alpha-v").textContent = this.value + "%";
       previewLook();
@@ -4298,6 +4314,7 @@
     d.accent = accent;
     d.chart_style = style;
     d.panel_alpha = Number($("f-look-alpha").value) || 100;
+    d.mask_alpha = Number($("f-look-mask").value);
     // 外链优先：填了就盖过本地文件，即时预览
     LOOK_KINDS.forEach(function(m){
       var el = document.querySelector('[data-look-url="'+m.k+'"]');
@@ -4320,7 +4337,8 @@
     setBusy(btn, true);
     var body = {
       enabled: true, accent: accent, chart_style: style,
-      panel_alpha: Number($("f-look-alpha").value) || 100
+      panel_alpha: Number($("f-look-alpha").value) || 100,
+      mask_alpha: Number($("f-look-mask").value)
     };
     LOOK_KINDS.forEach(function(m){
       var el = document.querySelector('[data-look-url="'+m.k+'"]');

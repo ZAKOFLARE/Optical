@@ -1,6 +1,6 @@
 [package]
 name = "optical"
-version = "0.3.26"
+version = "0.3.27"
 edition = "2021"
 rust-version = "1.75"
 description = "Optical - 跨平台网关：转发/路由 + WAF + TLS + 双操作面"

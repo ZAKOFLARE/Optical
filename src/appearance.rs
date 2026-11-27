@@ -35,6 +35,9 @@ pub struct AppearanceConfig {
     /// 界面不透明度（百分比，1..100）。100 = 现在的实心面板；
     /// 调低会透出自定义背景，代价是面板上的小字对比度会掉。
     pub panel_alpha: u8,
+    /// 全局蒙版强度（百分比 0..100）：压在背景上，降低组件与空白区的对比。
+    /// 0 = 不蒙；100 = 背景几乎被完全盖住。默认 35。
+    pub mask_alpha: u8,
     /// 四张图的外链地址（http/https）。非空时优先于本地上传的文件——
     /// 外链资源不落盘、不保存到服务器，只记一个 URL，加载时由浏览器直接拉。
     #[serde(skip_serializing_if = "String::is_empty", default)]
@@ -54,6 +57,7 @@ impl Default for AppearanceConfig {
             accent: default_accent(),
             chart_style: default_chart_style(),
             panel_alpha: 100,
+            mask_alpha: 35,
             bg_url: String::new(),
             loading_url: String::new(),
             login_url: String::new(),
