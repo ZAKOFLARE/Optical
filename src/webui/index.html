@@ -23,6 +23,11 @@
     /* 面板不透明度：1 = 现在的实心；调低会透出自定义背景。
        用 rgb(... / var()) 而不是 opacity，否则文字和子元素会一起变淡。 */
     --panel-a:1;
+    /* line-rgb 专供"需要用不透明度"的背景（表格缝隙、柱状条轨道）：
+       直接用 --line 是不透明纯色，面板调透明时它会突兀地留在原地。 */
+    --line-rgb:230 233 239;
+    /* 全局蒙版：把背景（含自定义图）压一层主题色，降低组件与空白区的对比 */
+    --mask:rgba(244,246,249,.35);
     --bg:#f4f6f9; --panel:rgb(255 255 255 / var(--panel-a)); --line:#e6e9ef; --line-2:#d5dae3;
     --ink:#1b222e; --ink-2:#5a6478; --ink-3:#8b93a4;
     --blue:#0052d9; --blue-d:#0043b0; --blue-soft:#ebf2ff;
@@ -37,6 +42,8 @@
   :root[data-theme="dark"]{
     color-scheme: dark;
     --panel-a:1;
+    --line-rgb:36 43 53;
+    --mask:rgba(14,17,22,.4);
     --bg:#0e1116; --panel:rgb(21 26 33 / var(--panel-a)); --line:#242b35; --line-2:#333c48;
     --ink:#e7ecf3; --ink-2:#9aa7b8; --ink-3:#6d7b8c;
     --blue:#4c8dff; --blue-d:#3d78e0; --blue-soft:#16233a;
@@ -56,6 +63,9 @@
     background-attachment:fixed, fixed;
     background-repeat:no-repeat, no-repeat;
   }
+  /* 全局蒙版：盖在背景之上、内容之下。背景（纯色或自定义图）被压一层主题色，
+     组件和空白区不再一边实心一边露底，不透明度拉满/拉到最低时观感统一。 */
+  body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;background:var(--mask)}
   body{
     background:var(--bg);color:var(--ink);
     font-family:var(--sans);font-size:14px;line-height:1.5;
@@ -69,7 +79,7 @@
      会把底部导航栏顶到浏览器工具栏后面再被 overflow:hidden 裁掉——
      F12 设备模拟（纯视口）看不见这个坑，真机才有。
      100dvh = 动态视口高度（跟随浏览器 UI 展开/收起），真机才能正确贴底。 */
-  .app{display:flex;height:100vh;height:100dvh;overflow:hidden}
+  .app{display:flex;height:100vh;height:100dvh;overflow:hidden;position:relative;z-index:1}
   .rail{width:76px;flex:0 0 76px;background:var(--panel);border-right:1px solid var(--line);
     display:flex;flex-direction:column;align-items:center;height:100%}
   .rail-logo{width:34px;height:34px;margin:14px 0 14px;
@@ -247,9 +257,9 @@
   .rank-card .mini{padding:4px 12px 10px}
   .rank-card .mini-row{display:flex;align-items:center;gap:8px;font-size:11.5px;padding:3px 0}
   .rank-card .mini-row .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2)}
-  .rank-card .mini-row .bar{flex:0 0 52px;height:5px;border-radius:3px;background:var(--line);overflow:hidden}
+  .rank-card .mini-row .bar{flex:0 0 52px;height:5px;border-radius:3px;background:rgb(var(--line-rgb) / var(--panel-a));overflow:hidden}
   .rank-card .mini-row .lat{flex:0 0 auto;font-size:10.5px;color:var(--ink-3);font-variant-numeric:tabular-nums}
-  .lat-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:var(--line);border-top:1px solid var(--line);overflow:hidden;margin:0}
+  .lat-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:rgb(var(--line-rgb) / var(--panel-a));border-top:1px solid var(--line);overflow:hidden;margin:0}
   .lat-grid .lat-item{background:var(--panel);padding:12px 14px}
   .lat-grid .lat-k{font-size:11.5px;color:var(--ink-3);margin-bottom:5px}
   .lat-grid .lat-v{font-size:20px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
