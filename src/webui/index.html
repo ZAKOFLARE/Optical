@@ -843,14 +843,14 @@
             <div class="card-head"><h3 data-i18n="pt.fw">系统防火墙联动</h3><span class="sec-hint" id="fw-backend">—</span></div>
             <div class="card-body">
               <div class="fields">
-                <div class="field"><label>firewall.enabled</label>
+                <div class="field"><label data-i18n="cfg.firewall.enabled">防火墙联动</label>
                   <select id="f-fw-enabled"><option value="false">false</option><option value="true">true</option></select></div>
-                <div class="field"><label>firewall.backend</label>
+                <div class="field"><label data-i18n="cfg.firewall.backend">防火墙后端</label>
                   <select id="f-fw-backend">
                     <option value="auto">auto</option><option value="nft">nft</option>
                     <option value="iptables">iptables</option><option value="ufw">ufw</option><option value="none">none</option>
                   </select></div>
-                <div class="field"><label>firewall.auto_sync</label>
+                <div class="field"><label data-i18n="cfg.firewall.auto_sync">自动同步防火墙</label>
                   <select id="f-fw-auto"><option value="true">true</option><option value="false">false</option></select></div>
                 <div class="field wide"><label data-i18n="pt.extra">额外放行端口（逗号分隔）</label>
                   <input type="text" id="f-fw-extra" placeholder="2222, 8080"></div>
@@ -1116,12 +1116,12 @@
             <div class="card-head"><h3 data-i18n="cf.server">服务 / 传输</h3></div>
             <div class="card-body">
               <div class="fields">
-                <div class="field"><label>listen</label><input type="text" id="f-listen"></div>
-                <div class="field"><label>admin_listen</label><input type="text" id="f-admin"></div>
-                <div class="field"><label>server.listen_v6</label><input type="text" id="f-listen-v6" data-i18n-ph="ph.v6" placeholder="留空 = 不监听 IPv6"></div>
-                <div class="field"><label>server.admin_listen_v6</label><input type="text" id="f-admin-v6" data-i18n-ph="ph.v6" placeholder="留空 = 不监听 IPv6"></div>
-                <div class="field wide"><label>default_upstream</label><input type="text" id="f-upstream"></div>
-                <div class="field wide"><label>server.server_header</label><input type="text" id="f-server-header" data-i18n-ph="ph.serverheader" placeholder="留空 = 不发送 Server 头"></div>
+                <div class="field"><label data-i18n="cfg.listen">网关监听地址</label><input type="text" id="f-listen"></div>
+                <div class="field"><label data-i18n="cfg.admin_listen">管理面监听地址</label><input type="text" id="f-admin"></div>
+                <div class="field"><label data-i18n="cfg.server.listen_v6">网关 IPv6</label><input type="text" id="f-listen-v6" data-i18n-ph="ph.v6" placeholder="留空 = 不监听 IPv6"></div>
+                <div class="field"><label data-i18n="cfg.server.admin_listen_v6">管理面 IPv6</label><input type="text" id="f-admin-v6" data-i18n-ph="ph.v6" placeholder="留空 = 不监听 IPv6"></div>
+                <div class="field wide"><label data-i18n="cfg.default_upstream">默认上游</label><input type="text" id="f-upstream"></div>
+                <div class="field wide"><label data-i18n="cfg.server.server_header">Server 头</label><input type="text" id="f-server-header" data-i18n-ph="ph.serverheader" placeholder="留空 = 不发送 Server 头"></div>
                 <div class="field wide"><label>server.mask_debug_headers<i class="q" data-i18n-tip="tip.maskdebug">?</i></label>
                   <select id="f-mask-debug"><option value="false">false</option><option value="true">true</option></select></div>
                 <!-- 可信代理：逗号分隔的 IP / CIDR。留空 = 谁都不信，防伪造 XFF -->
@@ -1133,25 +1133,25 @@
                   <select id="f-delivery-webui"><option value="true">true</option><option value="false">false</option></select></div>
                 <div class="field"><label>delivery.websocket<i class="q" data-i18n-tip="tip.delivery">?</i></label>
                   <select id="f-delivery-ws"><option value="true">true</option><option value="false">false</option></select></div>
-                <div class="field"><label>request_timeout_ms</label><input type="number" id="f-timeout" min="1"></div>
-                <div class="field"><label>server.upstream_keepalive_secs</label><input type="number" id="f-keepalive" min="1" step="5"></div>
-                <div class="field"><label>server.upstream_pool_idle_secs</label><input type="number" id="f-poolidle" min="1" step="5"></div>
-                <div class="field"><label>server.upstream_pool_max_idle</label><input type="number" id="f-poolmax" min="1" step="8"></div>
-                <div class="field"><label>log_level</label>
+                <div class="field"><label data-i18n="cfg.request_timeout_ms">请求超时（毫秒）</label><input type="number" id="f-timeout" min="1"></div>
+                <div class="field"><label data-i18n="cfg.server.upstream_keepalive_secs">上游保活秒数</label><input type="number" id="f-keepalive" min="1" step="5"></div>
+                <div class="field"><label data-i18n="cfg.server.upstream_pool_idle_secs">连接池空闲秒数</label><input type="number" id="f-poolidle" min="1" step="5"></div>
+                <div class="field"><label data-i18n="cfg.server.upstream_pool_max_idle">连接池空闲上限</label><input type="number" id="f-poolmax" min="1" step="8"></div>
+                <div class="field"><label data-i18n="cfg.log_level">日志级别</label>
                   <select id="f-loglevel"><option>trace</option><option>debug</option><option>info</option><option>warn</option><option>error</option></select></div>
-                <div class="field"><label>tls.enabled</label>
+                <div class="field"><label data-i18n="cfg.tls.enabled">启用 TLS</label>
                   <select id="f-tls-enabled"><option value="false">false</option><option value="true">true</option></select></div>
-                <div class="field"><label>tls.listen</label><input type="text" id="f-tls-listen"></div>
-                <div class="field"><label>tls.listen_v6</label><input type="text" id="f-tls-listen-v6" data-i18n-ph="ph.v6" placeholder="留空 = 不监听 IPv6"></div>
-                <div class="field"><label>tls.min_version</label>
+                <div class="field"><label data-i18n="cfg.tls.listen">TLS 监听地址</label><input type="text" id="f-tls-listen"></div>
+                <div class="field"><label data-i18n="cfg.tls.listen_v6">TLS IPv6</label><input type="text" id="f-tls-listen-v6" data-i18n-ph="ph.v6" placeholder="留空 = 不监听 IPv6"></div>
+                <div class="field"><label data-i18n="cfg.tls.min_version">最低 TLS 版本</label>
                   <select id="f-tls-min"><option value="1.2">1.2</option><option value="1.3">1.3</option></select></div>
-                <div class="field"><label>tls.cert</label><input type="text" id="f-tls-cert" data-i18n-ph="ph.selfsigned" placeholder="留空自动生成自签"></div>
-                <div class="field wide"><label>tls.key</label><input type="text" id="f-tls-key" data-i18n-ph="ph.selfsigned" placeholder="留空自动生成自签"></div>
-                <div class="field"><label>cache.enabled</label>
+                <div class="field"><label data-i18n="cfg.tls.cert">证书文件</label><input type="text" id="f-tls-cert" data-i18n-ph="ph.selfsigned" placeholder="留空自动生成自签"></div>
+                <div class="field wide"><label data-i18n="cfg.tls.key">私钥文件</label><input type="text" id="f-tls-key" data-i18n-ph="ph.selfsigned" placeholder="留空自动生成自签"></div>
+                <div class="field"><label data-i18n="cfg.cache.enabled">响应缓存</label>
                   <select id="f-cache-enabled"><option value="true">true</option><option value="false">false</option></select></div>
-                <div class="field"><label>cache.ttl_secs</label><input type="number" id="f-cache-ttl" min="1"></div>
-                <div class="field"><label>cache.max_bytes</label><input type="number" id="f-cache-bytes" min="1024" step="1024"></div>
-                <div class="field"><label>cache.max_entries</label><input type="number" id="f-cache-entries" min="1"></div>
+                <div class="field"><label data-i18n="cfg.cache.ttl_secs">缓存 TTL（秒）</label><input type="number" id="f-cache-ttl" min="1"></div>
+                <div class="field"><label data-i18n="cfg.cache.max_bytes">缓存字节上限</label><input type="number" id="f-cache-bytes" min="1024" step="1024"></div>
+                <div class="field"><label data-i18n="cfg.cache.max_entries">缓存条目上限</label><input type="number" id="f-cache-entries" min="1"></div>
                 <div class="field"><label>tls.degrade<i class="q" data-i18n-tip="tip.tlsdegrade">?</i></label>
                   <select id="f-tls-degrade">
                     <option value="self-signed" data-i18n="cf.degrade.self">self-signed（证书坏了退回自签继续服务）</option>
@@ -1161,28 +1161,28 @@
                   <input type="number" id="f-tls-session" min="0" step="64"></div>
                 <div class="field"><label>tls.session_tickets<i class="q" data-i18n-tip="tip.tlsticket">?</i></label>
                   <select id="f-tls-tickets"><option value="true">true</option><option value="false">false</option></select></div>
-                <div class="field"><label>compression.enabled</label>
+                <div class="field"><label data-i18n="cfg.compression.enabled">响应压缩</label>
                   <select id="f-cmp-enabled"><option value="true">true</option><option value="false">false</option></select></div>
-                <div class="field"><label>compression.gzip</label>
+                <div class="field"><label data-i18n="cfg.compression.gzip">gzip 压缩</label>
                   <select id="f-cmp-gzip"><option value="true">true</option><option value="false">false</option></select></div>
-                <div class="field"><label>compression.brotli</label>
+                <div class="field"><label data-i18n="cfg.compression.brotli">brotli 压缩</label>
                   <select id="f-cmp-br"><option value="true">true</option><option value="false">false</option></select></div>
-                <div class="field"><label>compression.level</label><input type="number" id="f-cmp-level" min="1" max="9"></div>
-                <div class="field"><label>compression.min_bytes</label><input type="number" id="f-cmp-min" min="0" step="128"></div>
-                <div class="field"><label>compression.max_bytes</label><input type="number" id="f-cmp-max" min="1024" step="1024"></div>
+                <div class="field"><label data-i18n="cfg.compression.level">压缩级别</label><input type="number" id="f-cmp-level" min="1" max="9"></div>
+                <div class="field"><label data-i18n="cfg.compression.min_bytes">压缩下限字节</label><input type="number" id="f-cmp-min" min="0" step="128"></div>
+                <div class="field"><label data-i18n="cfg.compression.max_bytes">压缩上限字节</label><input type="number" id="f-cmp-max" min="1024" step="1024"></div>
                 <div class="field"><label>backpressure.enabled<i class="q" data-i18n-tip="tip.bp">?</i></label>
                   <select id="f-bp-enabled"><option value="true">true</option><option value="false">false</option></select></div>
-                <div class="field"><label>backpressure.max_in_flight</label><input type="number" id="f-bp-total" min="0" step="64"></div>
-                <div class="field"><label>backpressure.max_in_flight_per_ip</label><input type="number" id="f-bp-ip" min="0" step="8"></div>
-                <div class="field"><label>backpressure.conn_per_ip</label><input type="number" id="f-bp-conn" min="0"></div>
-                <div class="field"><label>backpressure.conn_burst_per_sec</label><input type="number" id="f-bp-burst" min="0"></div>
-                <div class="field"><label>backpressure.retry_after_secs</label><input type="number" id="f-bp-retry" min="1" max="60"></div>
-                <div class="field"><label>maintenance.enabled</label>
+                <div class="field"><label data-i18n="cfg.backpressure.max_in_flight">全局在途上限</label><input type="number" id="f-bp-total" min="0" step="64"></div>
+                <div class="field"><label data-i18n="cfg.backpressure.max_in_flight_per_ip">单 IP 在途上限</label><input type="number" id="f-bp-ip" min="0" step="8"></div>
+                <div class="field"><label data-i18n="cfg.backpressure.conn_per_ip">每 IP 连接上限</label><input type="number" id="f-bp-conn" min="0"></div>
+                <div class="field"><label data-i18n="cfg.backpressure.conn_burst_per_sec">每 IP 连接突发</label><input type="number" id="f-bp-burst" min="0"></div>
+                <div class="field"><label data-i18n="cfg.backpressure.retry_after_secs">拒绝后重试秒数</label><input type="number" id="f-bp-retry" min="1" max="60"></div>
+                <div class="field"><label data-i18n="cfg.maintenance.enabled">定期维护</label>
                   <select id="f-mt-enabled"><option value="true">true</option><option value="false">false</option></select></div>
-                <div class="field"><label>maintenance.interval_secs</label><input type="number" id="f-mt-interval" min="0" step="5"></div>
-                <div class="field"><label>maintenance.cache_high_pct</label><input type="number" id="f-mt-high" min="1" max="100"></div>
-                <div class="field"><label>maintenance.cache_low_pct</label><input type="number" id="f-mt-low" min="1" max="100"></div>
-                <div class="field"><label>maintenance.cache_auto_purge</label>
+                <div class="field"><label data-i18n="cfg.maintenance.interval_secs">维护间隔（秒）</label><input type="number" id="f-mt-interval" min="0" step="5"></div>
+                <div class="field"><label data-i18n="cfg.maintenance.cache_high_pct">缓存高水位 %</label><input type="number" id="f-mt-high" min="1" max="100"></div>
+                <div class="field"><label data-i18n="cfg.maintenance.cache_low_pct">缓存低水位 %</label><input type="number" id="f-mt-low" min="1" max="100"></div>
+                <div class="field"><label data-i18n="cfg.maintenance.cache_auto_purge">缓存自动清理</label>
                   <select id="f-mt-auto"><option value="true">true</option><option value="false">false</option></select></div>
               </div>
               <p class="note" id="mt-stat" style="margin-top:8px"></p>
@@ -1201,21 +1201,21 @@
             <div class="card-head"><h3 data-i18n="cf.storage">存储配额与路径</h3></div>
             <div class="card-body">
               <div class="fields">
-                <div class="field"><label>config_history_keep</label><input type="number" id="f-sh-keep" min="0"></div>
-                <div class="field"><label>config_history_max_bytes</label><input type="number" id="f-sh-bytes" min="0" step="1024"></div>
-                <div class="field"><label>config_history_keep_days</label><input type="number" id="f-sh-days" min="0"></div>
-                <div class="field"><label>audit_keep</label><input type="number" id="f-au-keep" min="0"></div>
-                <div class="field"><label>audit_max_bytes</label><input type="number" id="f-au-bytes" min="0" step="1024"></div>
-                <div class="field"><label>audit_enabled</label>
+                <div class="field"><label data-i18n="cfg.config_history_keep">配置快照保留份数</label><input type="number" id="f-sh-keep" min="0"></div>
+                <div class="field"><label data-i18n="cfg.config_history_max_bytes">配置快照字节上限</label><input type="number" id="f-sh-bytes" min="0" step="1024"></div>
+                <div class="field"><label data-i18n="cfg.config_history_keep_days">配置快照保留天数</label><input type="number" id="f-sh-days" min="0"></div>
+                <div class="field"><label data-i18n="cfg.audit_keep">审计日志保留条数</label><input type="number" id="f-au-keep" min="0"></div>
+                <div class="field"><label data-i18n="cfg.audit_max_bytes">审计日志字节上限</label><input type="number" id="f-au-bytes" min="0" step="1024"></div>
+                <div class="field"><label data-i18n="cfg.audit_enabled">审计日志</label>
                   <select id="f-au-enabled"><option value="true">true</option><option value="false">false</option></select></div>
-                <div class="field"><label>metrics.top_n</label><input type="number" id="f-top-n" min="1"></div>
+                <div class="field"><label data-i18n="cfg.metrics.top_n">Top N</label><input type="number" id="f-top-n" min="1"></div>
                 <div class="field"><label>metrics.history_points<i class="q" data-i18n-tip="tip.histpoints">?</i></label><input type="number" id="f-hist" min="240" max="20000" step="120"></div>
-                <div class="field"><label>metrics.sample_interval_ms</label><input type="number" id="f-sample-ms" min="15000" max="2592000000" step="1000"></div>
-                <div class="field wide"><label>paths.data_dir</label><input type="text" id="f-data-dir" data-i18n-ph="ph.autodir" placeholder="留空 = 配置文件所在目录"></div>
-                <div class="field"><label>paths.config_history_dir</label><input type="text" id="f-hist-dir" data-i18n-ph="ph.subdir" placeholder="留空 = &lt;data_dir&gt;/conf-history"></div>
-                <div class="field"><label>paths.audit_file</label><input type="text" id="f-audit-file" data-i18n-ph="ph.subfile" placeholder="留空 = &lt;data_dir&gt;/optical.audit.jsonl"></div>
-                <div class="field"><label>paths.tls_dir</label><input type="text" id="f-tls-dir" data-i18n-ph="ph.subdir" placeholder="留空 = &lt;data_dir&gt;/tls"></div>
-                <div class="field"><label>paths.error_pages_dir</label><input type="text" id="f-err-dir" data-i18n-ph="ph.subdir" placeholder="留空 = &lt;data_dir&gt;/error-pages"></div>
+                <div class="field"><label data-i18n="cfg.metrics.sample_interval_ms">采样间隔（毫秒）</label><input type="number" id="f-sample-ms" min="15000" max="2592000000" step="1000"></div>
+                <div class="field wide"><label data-i18n="cfg.paths.data_dir">数据目录</label><input type="text" id="f-data-dir" data-i18n-ph="ph.autodir" placeholder="留空 = 配置文件所在目录"></div>
+                <div class="field"><label data-i18n="cfg.paths.config_history_dir">快照目录</label><input type="text" id="f-hist-dir" data-i18n-ph="ph.subdir" placeholder="留空 = &lt;data_dir&gt;/conf-history"></div>
+                <div class="field"><label data-i18n="cfg.paths.audit_file">审计日志文件</label><input type="text" id="f-audit-file" data-i18n-ph="ph.subfile" placeholder="留空 = &lt;data_dir&gt;/optical.audit.jsonl"></div>
+                <div class="field"><label data-i18n="cfg.paths.tls_dir">证书目录</label><input type="text" id="f-tls-dir" data-i18n-ph="ph.subdir" placeholder="留空 = &lt;data_dir&gt;/tls"></div>
+                <div class="field"><label data-i18n="cfg.paths.error_pages_dir">错误页目录</label><input type="text" id="f-err-dir" data-i18n-ph="ph.subdir" placeholder="留空 = &lt;data_dir&gt;/error-pages"></div>
               </div>
               <div class="note" id="paths-resolved" style="margin-top:8px"></div>
               <div class="formfoot">
@@ -1238,11 +1238,11 @@
           </div>
           <div class="card-body">
             <div class="fields">
-              <div class="field"><label>error_pages.enabled</label>
+              <div class="field"><label data-i18n="cfg.error_pages.enabled">自定义错误页</label>
                 <select id="f-err-enabled"><option value="true">true</option><option value="false">false</option></select></div>
-              <div class="field"><label>error_pages.content_type</label><input type="text" id="f-err-ctype"></div>
-              <div class="field"><label>error_pages.dir</label><input type="text" id="f-err-override" data-i18n-ph="ph.errdir" placeholder="留空 = paths.error_pages_dir"></div>
-              <div class="field"><label>error_pages.footer</label><input type="text" id="f-err-footer"></div>
+              <div class="field"><label data-i18n="cfg.error_pages.content_type">错误页 Content-Type</label><input type="text" id="f-err-ctype"></div>
+              <div class="field"><label data-i18n="cfg.error_pages.dir">错误页目录</label><input type="text" id="f-err-override" data-i18n-ph="ph.errdir" placeholder="留空 = paths.error_pages_dir"></div>
+              <div class="field"><label data-i18n="cfg.error_pages.footer">错误页页脚</label><input type="text" id="f-err-footer"></div>
             </div>
             <div class="tblwrap" style="margin-top:10px"><table class="tbl">
               <colgroup><col style="width:110px"><col><col style="width:46px"></colgroup>
@@ -1360,11 +1360,11 @@
             <div class="card-head"><h3 data-i18n="sc.auth">登录与口令</h3></div>
             <div class="card-body">
               <div class="fields">
-                <div class="field"><label>admin.enabled</label>
+                <div class="field"><label data-i18n="cfg.admin.enabled">管理面认证</label>
                   <select id="f-admin-enabled"><option value="true">true</option><option value="false">false</option></select></div>
-                <div class="field"><label>admin.username</label><input type="text" id="f-admin-user"></div>
-                <div class="field"><label>session_ttl_secs</label><input type="number" id="f-admin-ttl" min="60"></div>
-                <div class="field"><label>max_failed_attempts</label><input type="number" id="f-admin-max" min="1"></div>
+                <div class="field"><label data-i18n="cfg.admin.username">管理员用户名</label><input type="text" id="f-admin-user"></div>
+                <div class="field"><label data-i18n="cfg.session_ttl_secs">会话有效期（秒）</label><input type="number" id="f-admin-ttl" min="60"></div>
+                <div class="field"><label data-i18n="cfg.max_failed_attempts">最大失败次数</label><input type="number" id="f-admin-max" min="1"></div>
               </div>
               <div class="formfoot">
                 <span class="spacer"></span>
@@ -1386,12 +1386,12 @@
             <div class="card-head"><h3 data-i18n="sc.totp">二次验证 (TOTP)</h3></div>
             <div class="card-body">
               <div class="fields">
-                <div class="field"><label>totp_enabled</label>
+                <div class="field"><label data-i18n="cfg.totp_enabled">二次验证</label>
                   <select id="f-totp-enabled"><option value="false">false</option><option value="true">true</option></select></div>
-                <div class="field"><label>totp_algorithm</label>
+                <div class="field"><label data-i18n="cfg.totp_algorithm">TOTP 算法</label>
                   <select id="f-totp-alg"><option value="sha1">sha1</option><option value="sha256">sha256</option><option value="sha512">sha512</option></select></div>
-                <div class="field wide"><label>totp_secret (Base32)</label><input type="text" id="f-totp-secret"></div>
-                <div class="field wide"><label>otpauth URI</label><input type="text" id="f-totp-uri" readonly></div>
+                <div class="field wide"><label data-i18n="cfg.totp_secret_Base32">TOTP 密钥（Base32）</label><input type="text" id="f-totp-secret"></div>
+                <div class="field wide"><label data-i18n="cfg.otpauth_URI">otpauth 链接</label><input type="text" id="f-totp-uri" readonly></div>
                 <div class="wide totp-qr" id="totp-qr-wrap" style="display:none">
                   <img id="totp-qr" alt="TOTP QR" width="180" height="180">
                   <span class="note" data-i18n="sc.totp.qr">扫码导入验证器；二维码由网关本地渲染，不走任何外部服务。</span>
@@ -1457,6 +1457,71 @@
 
   var I18N = {
     zh: {
+      "cfg.admin.enabled":"管理面认证",
+      "cfg.admin.username":"管理员用户名",
+      "cfg.admin_listen":"管理面监听地址",
+      "cfg.audit_enabled":"审计日志",
+      "cfg.audit_keep":"审计日志保留条数",
+      "cfg.audit_max_bytes":"审计日志字节上限",
+      "cfg.backpressure.conn_burst_per_sec":"每 IP 连接突发",
+      "cfg.backpressure.conn_per_ip":"每 IP 连接上限",
+      "cfg.backpressure.max_in_flight":"全局在途上限",
+      "cfg.backpressure.max_in_flight_per_ip":"单 IP 在途上限",
+      "cfg.backpressure.retry_after_secs":"拒绝后重试秒数",
+      "cfg.cache.enabled":"响应缓存",
+      "cfg.cache.max_bytes":"缓存字节上限",
+      "cfg.cache.max_entries":"缓存条目上限",
+      "cfg.cache.ttl_secs":"缓存 TTL（秒）",
+      "cfg.compression.brotli":"brotli 压缩",
+      "cfg.compression.enabled":"响应压缩",
+      "cfg.compression.gzip":"gzip 压缩",
+      "cfg.compression.level":"压缩级别",
+      "cfg.compression.max_bytes":"压缩上限字节",
+      "cfg.compression.min_bytes":"压缩下限字节",
+      "cfg.config_history_keep":"配置快照保留份数",
+      "cfg.config_history_keep_days":"配置快照保留天数",
+      "cfg.config_history_max_bytes":"配置快照字节上限",
+      "cfg.default_upstream":"默认上游",
+      "cfg.error_pages.content_type":"错误页 Content-Type",
+      "cfg.error_pages.dir":"错误页目录",
+      "cfg.error_pages.enabled":"自定义错误页",
+      "cfg.error_pages.footer":"错误页页脚",
+      "cfg.firewall.auto_sync":"自动同步防火墙",
+      "cfg.firewall.backend":"防火墙后端",
+      "cfg.firewall.enabled":"防火墙联动",
+      "cfg.listen":"网关监听地址",
+      "cfg.log_level":"日志级别",
+      "cfg.maintenance.cache_auto_purge":"缓存自动清理",
+      "cfg.maintenance.cache_high_pct":"缓存高水位 %",
+      "cfg.maintenance.cache_low_pct":"缓存低水位 %",
+      "cfg.maintenance.enabled":"定期维护",
+      "cfg.maintenance.interval_secs":"维护间隔（秒）",
+      "cfg.max_failed_attempts":"最大失败次数",
+      "cfg.metrics.sample_interval_ms":"采样间隔（毫秒）",
+      "cfg.metrics.top_n":"Top N",
+      "cfg.otpauth_URI":"otpauth 链接",
+      "cfg.paths.audit_file":"审计日志文件",
+      "cfg.paths.config_history_dir":"快照目录",
+      "cfg.paths.data_dir":"数据目录",
+      "cfg.paths.error_pages_dir":"错误页目录",
+      "cfg.paths.tls_dir":"证书目录",
+      "cfg.request_timeout_ms":"请求超时（毫秒）",
+      "cfg.server.admin_listen_v6":"管理面 IPv6",
+      "cfg.server.listen_v6":"网关 IPv6",
+      "cfg.server.server_header":"Server 头",
+      "cfg.server.upstream_keepalive_secs":"上游保活秒数",
+      "cfg.server.upstream_pool_idle_secs":"连接池空闲秒数",
+      "cfg.server.upstream_pool_max_idle":"连接池空闲上限",
+      "cfg.session_ttl_secs":"会话有效期（秒）",
+      "cfg.tls.cert":"证书文件",
+      "cfg.tls.enabled":"启用 TLS",
+      "cfg.tls.key":"私钥文件",
+      "cfg.tls.listen":"TLS 监听地址",
+      "cfg.tls.listen_v6":"TLS IPv6",
+      "cfg.tls.min_version":"最低 TLS 版本",
+      "cfg.totp_algorithm":"TOTP 算法",
+      "cfg.totp_enabled":"二次验证",
+      "cfg.totp_secret_Base32":"TOTP 密钥（Base32）",
       "app.title":"Optical · 网关控制台",
       "login.sub":"网关控制台","login.user":"用户名","login.pass":"口令","login.totp":"动态验证码",
       "login.submit":"登录","login.failed":"登录失败",
@@ -1760,6 +1825,71 @@
       "th.time":"时间","th.kind":"类型","th.path":"路径","th.detail":"详情","th.body":"HTML 模板"
     },
     en: {
+      "cfg.admin.enabled":"Admin auth",
+      "cfg.admin.username":"Admin username",
+      "cfg.admin_listen":"Admin listen address",
+      "cfg.audit_enabled":"Audit log",
+      "cfg.audit_keep":"Audit entries kept",
+      "cfg.audit_max_bytes":"Audit max bytes",
+      "cfg.backpressure.conn_burst_per_sec":"Per-IP conn burst",
+      "cfg.backpressure.conn_per_ip":"Per-IP conn limit",
+      "cfg.backpressure.max_in_flight":"Global in-flight cap",
+      "cfg.backpressure.max_in_flight_per_ip":"Per-IP in-flight cap",
+      "cfg.backpressure.retry_after_secs":"Retry-After (secs)",
+      "cfg.cache.enabled":"Response cache",
+      "cfg.cache.max_bytes":"Cache max bytes",
+      "cfg.cache.max_entries":"Cache max entries",
+      "cfg.cache.ttl_secs":"Cache TTL (secs)",
+      "cfg.compression.brotli":"Brotli",
+      "cfg.compression.enabled":"Response compression",
+      "cfg.compression.gzip":"Gzip",
+      "cfg.compression.level":"Compression level",
+      "cfg.compression.max_bytes":"Compress max bytes",
+      "cfg.compression.min_bytes":"Compress min bytes",
+      "cfg.config_history_keep":"Config snapshots kept",
+      "cfg.config_history_keep_days":"Config snapshots kept days",
+      "cfg.config_history_max_bytes":"Config snapshots max bytes",
+      "cfg.default_upstream":"Default upstream",
+      "cfg.error_pages.content_type":"Error page content-type",
+      "cfg.error_pages.dir":"Error page dir",
+      "cfg.error_pages.enabled":"Custom error pages",
+      "cfg.error_pages.footer":"Error page footer",
+      "cfg.firewall.auto_sync":"Auto sync firewall",
+      "cfg.firewall.backend":"Firewall backend",
+      "cfg.firewall.enabled":"Firewall integration",
+      "cfg.listen":"Gateway listen address",
+      "cfg.log_level":"Log level",
+      "cfg.maintenance.cache_auto_purge":"Cache auto purge",
+      "cfg.maintenance.cache_high_pct":"Cache high water %",
+      "cfg.maintenance.cache_low_pct":"Cache low water %",
+      "cfg.maintenance.enabled":"Periodic maintenance",
+      "cfg.maintenance.interval_secs":"Maintenance interval (secs)",
+      "cfg.max_failed_attempts":"Max failed attempts",
+      "cfg.metrics.sample_interval_ms":"Sampling interval (ms)",
+      "cfg.metrics.top_n":"Top N",
+      "cfg.otpauth_URI":"otpauth URI",
+      "cfg.paths.audit_file":"Audit file",
+      "cfg.paths.config_history_dir":"Snapshot dir",
+      "cfg.paths.data_dir":"Data dir",
+      "cfg.paths.error_pages_dir":"Error pages dir",
+      "cfg.paths.tls_dir":"TLS dir",
+      "cfg.request_timeout_ms":"Request timeout (ms)",
+      "cfg.server.admin_listen_v6":"Admin IPv6",
+      "cfg.server.listen_v6":"Gateway IPv6",
+      "cfg.server.server_header":"Server header",
+      "cfg.server.upstream_keepalive_secs":"Upstream keepalive (secs)",
+      "cfg.server.upstream_pool_idle_secs":"Pool idle (secs)",
+      "cfg.server.upstream_pool_max_idle":"Pool max idle",
+      "cfg.session_ttl_secs":"Session TTL (secs)",
+      "cfg.tls.cert":"Cert file",
+      "cfg.tls.enabled":"Enable TLS",
+      "cfg.tls.key":"Key file",
+      "cfg.tls.listen":"TLS listen address",
+      "cfg.tls.listen_v6":"TLS IPv6",
+      "cfg.tls.min_version":"Min TLS version",
+      "cfg.totp_algorithm":"TOTP algorithm",
+      "cfg.totp_enabled":"Two-factor auth",
+      "cfg.totp_secret_Base32":"TOTP secret (Base32)",
       "app.title":"Optical · Gateway Console",
       "login.sub":"Gateway Console","login.user":"Username","login.pass":"Password","login.totp":"2FA code",
       "login.submit":"Sign in","login.failed":"Sign-in failed",

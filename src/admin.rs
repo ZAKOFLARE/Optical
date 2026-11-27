@@ -640,6 +640,10 @@ async fn ws_loop(mut socket: WebSocket, st: Arc<AppState>, token: String) {
     // 上次推送时的数据版本号：没变就不重算、不重发
     let mut sent_sample_rev = u64::MAX;
     let mut sent_stats_rev = u64::MAX;
+    // 卡片（3 个维度的 stats_query）单独限频：初始设为很久以前，首帧立即算一次
+    let mut sent_cards_sig = String::new();
+    let mut last_cards_at =
+        std::time::Instant::now() - std::time::Duration::from_secs(60);
     // 配置也走这条通道：别的会话改了规则/路由，这边不用刷新页面就能看到
     let mut sent_config_rev = u64::MAX;
     // 应用状态也走这条通道：之前前端每 4 秒单独 GET /api/apps，
@@ -784,12 +788,19 @@ async fn ws_loop(mut socket: WebSocket, st: Arc<AppState>, token: String) {
             let tr = st.stats_rev.load(std::sync::atomic::Ordering::Relaxed);
             if tr != sent_stats_rev {
                 payload["stats"] = stats_json(&st, &v.stats_query());
-                if !v.cards.is_empty() {
+                sent_stats_rev = tr;
+            }
+            // 卡片（最多 3 个维度）不再跟着每个请求的 stats_rev 走——那等于每秒做 3 次
+            // 全表遍历，是实打实的性能杀手。改成：视角变化立即算，否则最多 5 秒一次。
+            if !v.cards.is_empty() {
+                let sig = v.cards.join(",");
+                let now = std::time::Instant::now();
+                let due =
+                    now.duration_since(last_cards_at) >= std::time::Duration::from_secs(5);
+                if sig != sent_cards_sig || due {
                     let base = v.stats_query();
                     // 卡片用**同一套**范围与筛选：否则表格筛了 2xx、卡片还是全量，
                     // 一眼看上去就是两套数（之前正是这样）。
-                    // 返回数组而不是按下标建的 map：每个元素自带 by，
-                    // 前端照着 by 渲染标题和跳转，不可能再和下拉框对不上。
                     let mut cards = Vec::new();
                     for name in v.cards.iter().take(3) {
                         let dim = crate::stats::Dim::parse(name).unwrap_or(crate::stats::Dim::Ip);
@@ -802,8 +813,9 @@ async fn ws_loop(mut socket: WebSocket, st: Arc<AppState>, token: String) {
                         cards.push(stats_json(&st, &q));
                     }
                     payload["cards"] = json!(cards);
+                    sent_cards_sig = sig;
+                    last_cards_at = now;
                 }
-                sent_stats_rev = tr;
             }
         }
         if socket
