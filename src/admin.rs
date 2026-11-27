@@ -160,13 +160,16 @@ async fn api_login(
     if !cfg.admin.enabled {
         return Json(json!({ "ok": true, "note": "admin.enabled = false，未启用认证" })).into_response();
     }
-    let ip = headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v.split(',').next().unwrap_or("").trim().to_string())
-        .filter(|v| !v.is_empty())
-        // 没有 XFF 就用 TCP 对端地址：直连进来时这才是真实来源
-        .unwrap_or_else(|| peer.ip().to_string());
+    // 和数据面用同一套 client_ip 规则：trusted_proxies / trust_xff 决定要不要看转发头，
+    // 且从 XFF 右往左找第一个非可信地址。以前这里直接取 XFF 最左边（甚至不判断可信），
+    // 既会把 CDN 节点 IP 当客户端，也让人能伪造 XFF 绕过登录限速。
+    let ip = crate::proxy::client_ip(
+        &headers,
+        peer.ip(),
+        &cfg.server.trusted_proxies,
+        cfg.server.trust_xff,
+    )
+    .to_string();
     let ua = headers
         .get(header::USER_AGENT)
         .and_then(|v| v.to_str().ok())

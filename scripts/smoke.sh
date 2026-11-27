@@ -584,7 +584,10 @@ c['rules'] = [
    'actions':{'gzip':False,'brotli':False}},
   {'name':'port-override','enabled':True,
    'matches':[{'kind':'path','name':'','op':'prefix','value':'/r-port'}],
-   'actions':{'upstream_port':18082}}
+   'actions':{'upstream_port':18082}},
+  {'name':'expose-test','enabled':True,
+   'matches':[{'kind':'path','name':'','op':'prefix','value':'/r-expose'}],
+   'actions':{'expose_rule_header':True}}
 ]
 print(json.dumps(c))
 " 2>/dev/null
@@ -962,6 +965,11 @@ set_mask true
 sleep 1.5
 check "开启脱敏后无任何 x-optical-* 头" '0' \
   "$(curl -si -m 6 "http://$GW/r-up/x" | tr -d '\r' | grep -ci '^x-optical-')"
+# 规则级优先：全局脱敏时，明确 expose_rule_header=true 的规则仍要出现标记
+check "全局脱敏下 expose_rule_header=true 仍出现 x-optical-rule" 'x-optical-rule:' \
+  "$(curl -si -m 6 "http://$GW/r-expose/x" | tr -d '\r' | grep -i '^x-optical-rule:')"
+check "全局脱敏下未声明 expose_rule_header 的规则不出现 x-optical-rule" '0' \
+  "$(curl -si -m 6 "http://$GW/r-up/x" | tr -d '\r' | grep -ci '^x-optical-rule:')"
 # 恢复，别影响后续手工排查时的头
 set_mask false
 

@@ -192,7 +192,12 @@ pub async fn handle(
     let cfg = state.snapshot().await;
 
     // 真实客户端 IP：默认就取 TCP 对端；只有对端在 trusted_proxies 里才看转发头
-    let client_ip = client_ip(req.headers(), peer.ip(), &cfg.server.trusted_proxies);
+    let client_ip = client_ip(
+        req.headers(),
+        peer.ip(),
+        &cfg.server.trusted_proxies,
+        cfg.server.trust_xff,
+    );
     let ip_str = client_ip.to_string();
 
     // WS 必须在消费 request 之前把 upgrade future 取出来，hyper 只允许这一次
@@ -609,7 +614,9 @@ pub async fn handle(
         apply_rule_headers(
             &mut resp,
             &rule_hit,
-            cfg.expose_debug_headers() && rule_hit.actions.expose_rule_header != Some(false),
+            // 规则级优先：明确设了 expose_rule_header 就听规则的，None 才跟随全局。
+            // 之前写成 cfg && rule != Some(false)，全局脱敏时直接短路，规则设 true 也白搭。
+            rule_hit.actions.expose_rule_header.unwrap_or_else(|| cfg.expose_debug_headers()),
         );
         return resp;
     }
@@ -1112,8 +1119,8 @@ pub async fn handle(
         }
     }
     if !rule_hit.hit.is_empty()
-        && cfg.expose_debug_headers()
-        && rule_hit.actions.expose_rule_header != Some(false)
+        && rule_hit.actions.expose_rule_header
+            .unwrap_or_else(|| cfg.expose_debug_headers())
     {
         if let Ok(v) = HeaderValue::from_str(&rule_hit.hit.join(",")) {
             rparts.headers.insert(HeaderName::from_static("x-optical-rule"), v);
@@ -1608,12 +1615,14 @@ fn parse_trusted(list: &[String], ip: &std::net::IpAddr) -> bool {
 /// 规则很简单，但顺序很关键：**只有直连对端在 `trusted_proxies` 里时才看转发头**。
 /// 否则任何人都能写一个 `X-Forwarded-For: 1.2.3.4` 把自己伪装掉——
 /// 那时 IP 黑名单和按 IP 限流会同时变成摆设。
-fn client_ip(
+pub(crate) fn client_ip(
     headers: &http::HeaderMap,
     peer: std::net::IpAddr,
     trusted: &[String],
+    trust_all: bool,
 ) -> std::net::IpAddr {
-    if trusted.is_empty() || !parse_trusted(trusted, &peer) {
+    // trust_all：显式信任所有 XFF（CDN 场景，省得维护会变的出口网段）
+    if !trust_all && (trusted.is_empty() || !parse_trusted(trusted, &peer)) {
         return peer;
     }
     let mut chain: Vec<String> = headers
@@ -2232,10 +2241,19 @@ mod tests {
         let mut h = http::HeaderMap::new();
         h.insert("x-forwarded-for", HeaderValue::from_static("1.2.3.4"));
         let peer: std::net::IpAddr = "203.0.113.9".parse().unwrap();
-        assert_eq!(client_ip(&h, peer, &[]).to_string(), "203.0.113.9");
+        assert_eq!(client_ip(&h, peer, &[], false).to_string(), "203.0.113.9");
         // 配了可信段，但对端不在里面，同样不采信
         let trusted = vec!["10.0.0.0/8".to_string()];
-        assert_eq!(client_ip(&h, peer, &trusted).to_string(), "203.0.113.9");
+        assert_eq!(client_ip(&h, peer, &trusted, false).to_string(), "203.0.113.9");
+    }
+
+    #[test]
+    fn trust_xff_true_uses_header_even_from_untrusted_peer() {
+        // server.trust_xff = true：跳过可信段判断，直接用 XFF（CDN 场景，省去维护出口网段）
+        let mut h = http::HeaderMap::new();
+        h.insert("x-forwarded-for", HeaderValue::from_static("1.2.3.4"));
+        let peer: std::net::IpAddr = "203.0.113.9".parse().unwrap();
+        assert_eq!(client_ip(&h, peer, &[], true).to_string(), "1.2.3.4");
     }
 
     #[test]
@@ -2249,7 +2267,7 @@ mod tests {
         let peer: std::net::IpAddr = "10.0.0.9".parse().unwrap();
         let trusted = vec!["10.0.0.0/8".to_string()];
         // 从右往左找第一个不可信的：10.0.0.5 在可信段内，继续往左 → 198.51.100.7
-        assert_eq!(client_ip(&h, peer, &trusted).to_string(), "198.51.100.7");
+        assert_eq!(client_ip(&h, peer, &trusted, false).to_string(), "198.51.100.7");
     }
 
     #[test]
@@ -2259,7 +2277,7 @@ mod tests {
         h.insert("cf-connecting-ip", HeaderValue::from_static("198.51.100.7"));
         let peer: std::net::IpAddr = "10.0.0.9".parse().unwrap();
         let trusted = vec!["10.0.0.0/8".to_string()];
-        assert_eq!(client_ip(&h, peer, &trusted).to_string(), "198.51.100.7");
+        assert_eq!(client_ip(&h, peer, &trusted, false).to_string(), "198.51.100.7");
     }
 
     #[test]
@@ -2267,6 +2285,6 @@ mod tests {
         let h = http::HeaderMap::new();
         let peer: std::net::IpAddr = "10.0.0.9".parse().unwrap();
         let trusted = vec!["10.0.0.0/8".to_string()];
-        assert_eq!(client_ip(&h, peer, &trusted).to_string(), "10.0.0.9");
+        assert_eq!(client_ip(&h, peer, &trusted, false).to_string(), "10.0.0.9");
     }
 }

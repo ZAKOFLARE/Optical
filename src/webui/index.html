@@ -247,7 +247,8 @@
   .rank-card .mini{padding:4px 12px 10px}
   .rank-card .mini-row{display:flex;align-items:center;gap:8px;font-size:11.5px;padding:3px 0}
   .rank-card .mini-row .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2)}
-  .rank-card .mini-row .bar{flex:0 0 74px;height:5px;border-radius:3px;background:var(--line);overflow:hidden}
+  .rank-card .mini-row .bar{flex:0 0 52px;height:5px;border-radius:3px;background:var(--line);overflow:hidden}
+  .rank-card .mini-row .lat{flex:0 0 auto;font-size:10.5px;color:var(--ink-3);font-variant-numeric:tabular-nums}
   .rank-card .mini-row .bar i{display:block;height:100%;background:var(--blue)}
   .rank-card .mini-row b{font-variant-numeric:tabular-nums}
   /* 自定义规则编辑器 */
@@ -1126,6 +1127,8 @@
                 <!-- 可信代理：逗号分隔的 IP / CIDR。留空 = 谁都不信，防伪造 XFF -->
                 <div class="field wide"><label>server.trusted_proxies<i class="q" data-i18n-tip="tip.trusted">?</i></label>
                   <input type="text" id="f-trusted" data-i18n-ph="ph.trusted" placeholder="10.0.0.0/8, 172.16.0.0/12（留空 = 不信任任何转发头）"></div>
+                <div class="field wide"><label>server.trust_xff<i class="q" data-i18n-tip="tip.trustxff">?</i></label>
+                  <select id="f-trust-xff"><option value="false">false</option><option value="true">true</option></select></div>
                 <div class="field"><label>delivery.webui<i class="q" data-i18n-tip="tip.delivery">?</i></label>
                   <select id="f-delivery-webui"><option value="true">true</option><option value="false">false</option></select></div>
                 <div class="field"><label>delivery.websocket<i class="q" data-i18n-tip="tip.delivery">?</i></label>
@@ -1663,7 +1666,7 @@
       "tip.tlssession":"TLS 1.2 会话缓存的条数。会话恢复让老客户端免一次完整握手（省一个 RTT + 一次非对称计算）。0 = 关闭恢复。",
       "tip.tlsticket":"TLS 1.3 会话票据：true = 客户端恢复时 1-RTT 直连；false = 每次完整握手。关掉更保守（前向保密窗口更短），但每次都要重新算密钥。",
       "ph.trusted":"10.0.0.0/8, 172.16.0.0/12（留空 = 不信任任何转发头）",
-      "tip.maskdebug":"开启后响应里不再带 x-optical-* 调试头（源站地址、路由名、后端名、LB 策略等），防止把内部拓扑泄露给客户端；排查链路时再临时关掉。","tip.trusted":"只有这些来源发来的 X-Forwarded-For / CF-Connecting-IP 才作数。留空 = 谁都不信：XFF 是客户端能随便写的头，无脑采信等于让任何人把自己伪装成任意 IP，IP 黑名单和按 IP 限流会同时失效。挂 CDN 时把它的出口网段填进来。",
+      "tip.trustxff":"信任所有 X-Forwarded-For，不再要求对端在 trusted_proxies 里。前面挂了 CDN/反代、且它在 XFF 里写了真实 IP 时用这个省事；代价是客户端伪造的 XFF 也会被当真，IP 黑名单/限流可能被绕过。","tip.maskdebug":"开启后响应里不再带 x-optical-* 调试头（源站地址、路由名、后端名、LB 策略等），防止把内部拓扑泄露给客户端；排查链路时再临时关掉。","tip.trusted":"只有这些来源发来的 X-Forwarded-For / CF-Connecting-IP 才作数。留空 = 谁都不信：XFF 是客户端能随便写的头，无脑采信等于让任何人把自己伪装成任意 IP，IP 黑名单和按 IP 限流会同时失效。挂 CDN 时把它的出口网段填进来。",
       "ph.serverheader":"留空 = 不发送 Server 头",
       "ph.subfile":"留空 = <data_dir>/文件名","ph.errdir":"留空 = paths.error_pages_dir","ph.v6":"留空 = 不监听 IPv6",
       "ph.selfsigned":"留空 = 自动生成自签证书",
@@ -1966,7 +1969,7 @@
       "tip.tlssession":"TLS 1.2 session cache size. Resumption spares legacy clients a full handshake (one RTT + one asymmetric key computation). 0 = disabled.",
       "tip.tlsticket":"TLS 1.3 session tickets: true = 1-RTT resumption; false = full handshake every time. Turning it off is more conservative (shorter forward-secrecy window) at the cost of recomputing keys each time.",
       "ph.trusted":"10.0.0.0/8, 172.16.0.0/12 (empty = trust no forwarding headers)",
-      "tip.maskdebug":"When on, responses omit all x-optical-* debug headers (upstream address, route/backend/lb names) so internal topology isn't leaked; turn off temporarily when tracing.","tip.trusted":"Only these sources may set X-Forwarded-For / CF-Connecting-IP. Empty means trust none: XFF is client-writable, so trusting it blindly lets anyone impersonate any IP and defeats both the IP blocklist and per-IP rate limiting. Put your CDN egress ranges here.",
+      "tip.trustxff":"Trust every X-Forwarded-For without requiring the peer to be in trusted_proxies. Handy behind a CDN that writes the real client IP into XFF; the trade-off is forged XFF is also trusted, so IP blocks/rate limits can be bypassed.","tip.maskdebug":"When on, responses omit all x-optical-* debug headers (upstream address, route/backend/lb names) so internal topology isn't leaked; turn off temporarily when tracing.","tip.trusted":"Only these sources may set X-Forwarded-For / CF-Connecting-IP. Empty means trust none: XFF is client-writable, so trusting it blindly lets anyone impersonate any IP and defeats both the IP blocklist and per-IP rate limiting. Put your CDN egress ranges here.",
       "ph.serverheader":"Empty = do not send a Server header",
       "ph.subfile":"Empty = <data_dir>/file","ph.errdir":"Empty = paths.error_pages_dir","ph.v6":"Empty = no IPv6 listener",
       "ph.selfsigned":"Empty = auto-generate self-signed",
@@ -2380,12 +2383,21 @@
   function ymd(d){ return d.getFullYear()+"-"+pad2(d.getMonth()+1)+"-"+pad2(d.getDate()); }
 
   // 横轴标签跟着桶宽走：秒级看时分秒，分钟级看时分，天级看年月日
-  function xLabel(ms){
+  function xLabel(ms, withDate){
     var d = new Date(ms), b = bucketMs();
     if (b >= 86400000) return ymd(d).slice(2);
+    // 时间跨度 ≥ 1 天但桶还很细时，只显示 HH:MM 会在跨天处重复（两个 14:00），得带上日期
+    if (withDate) return pad2(d.getMonth()+1)+"-"+pad2(d.getDate())+" "+pad2(d.getHours())+":"+pad2(d.getMinutes());
     if (b >= 3600000) return pad2(d.getMonth()+1)+"-"+pad2(d.getDate())+" "+pad2(d.getHours())+":00";
     if (b >= 60000) return pad2(d.getHours())+":"+pad2(d.getMinutes());
     return hhmmss(d);
+  }
+
+  // 延迟单元格：0 不是"没有"，是"太快、四舍五入到 0"——直接显示 <0.1 ms，
+  // 别用 falsy 判断把 0 当成空（P50/P999 整列变 '—' 就是这个坑）。
+  function msCell(v){
+    if (v == null) return '—';
+    return v > 0 ? v + ' ms' : '<0.1 ms';
   }
 
   function drawChart(){
@@ -2404,12 +2416,20 @@
     var sc = niceScale(peak, 4);
 
     function yOf(v){ return y1 - (v / sc.max) * (y1 - y0); }
-    // 横轴按真实时间戳铺开：桶宽可能中途变过（降采样），按比例画才不失真
-    var t0 = n ? pts[0].t : 0, t1 = n ? pts[n-1].t : 0;
-    function xOf(i){
-      if (n <= 1 || t1 <= t0) return x0;
-      return x0 + (pts[i].t - t0) / (t1 - t0) * (x1 - x0);
+    // 横轴按「请求的时间范围」铺满，而不是数据点首尾——
+    // 数据不足一个窗口时（服务刚跑 3 小时就选了 1 天），按数据首尾画只会显示 3 小时，
+    // 让人以为时间范围没生效。按 range 铺开，缺数据的地方自然留白。
+    var rangeMs = ((state.history && state.history.range_secs) || view.range || 0) * 1000;
+    var nowMs = Date.now();
+    var t1 = nowMs;
+    var t0 = rangeMs > 0 ? nowMs - rangeMs : (n ? pts[0].t : nowMs - 3600000);
+    function xOfT(t){
+      if (t1 <= t0) return x0;
+      var r = (t - t0) / (t1 - t0);
+      if (r < 0) r = 0; else if (r > 1) r = 1;
+      return x0 + r * (x1 - x0);
     }
+    function xOf(i){ return n ? xOfT(pts[i].t) : x0; }
 
     var out = "";
     for (var k = 0; k <= 4; k++){
@@ -2418,23 +2438,13 @@
       out += '<text class="yl" x="'+(x0-8)+'" y="'+(y+3.5).toFixed(1)+'" text-anchor="end">'+
              esc(isBytes ? fmtBytes(val) + bsuffix : compact(val))+'</text>';
     }
-    var ticks = 5;
-    // 点比刻度还少时，多个刻度会落到同一个索引上，文字叠在一起糊成一片。先去重。
-    var xs = [];
-    if (n <= 1) xs = [0];
-    else {
-      for (var ti = 0; ti <= ticks; ti++){
-        var idx = Math.round((n-1) * ti / ticks);
-        if (xs.indexOf(idx) < 0) xs.push(idx);
-      }
-    }
-    // 变量名不要叫 t：var 是函数级作用域，会把翻译函数 t() 整个函数内遮蔽掉
-    for (var xi = 0; xi < xs.length; xi++){
-      var idx = xs[xi];
-      var tx = n > 1 ? xOf(idx) : x0;
-      var anchor = xi === 0 ? "start" : (xi === xs.length-1 ? "end" : "middle");
-      var label = n > 0 ? xLabel(pts[idx].t) : "--";
-      out += '<text class="xl" x="'+tx.toFixed(1)+'" y="'+(H-8)+'" text-anchor="'+anchor+'">'+label+'</text>';
+    // 刻度按时间均分铺满整个 range：按数据点索引分刻度，数据少时会挤在右边、左边空着没标签
+    var ticks = 4;
+    for (var xi = 0; xi <= ticks; xi++){
+      var tt = t0 + (t1 - t0) * xi / ticks;
+      var tx = xOfT(tt);
+      var anchor = xi === 0 ? "start" : (xi === ticks ? "end" : "middle");
+      out += '<text class="xl" x="'+tx.toFixed(1)+'" y="'+(H-8)+'" text-anchor="'+anchor+'">'+xLabel(tt, rangeMs >= 86400000)+'</text>';
     }
     if (state.chartStyle === "bar"){
       // 柱状：多序列并排。槽宽取相邻点的像素间距，柱子中心正好落在 xOf(i) 上，
@@ -2529,8 +2539,18 @@
       if (!n) return;
       var rect = plot.getBoundingClientRect();
       var x0 = 56, x1 = rect.width - 12;
-      var idx = n <= 1 ? 0 : Math.round((ev.clientX - rect.left - x0) / (x1 - x0) * (n - 1));
-      idx = Math.max(0, Math.min(n - 1, idx));
+      // 数据点按时间定位（可能只占窗口右段），所以悬停也要按时间反推最近点，
+      // 不能按像素均分算索引——数据不满一个窗口时那样会整体错位。
+      var pts = pointsOf();
+      var rangeMs = ((state.history && state.history.range_secs) || view.range || 0) * 1000;
+      var nowMs = Date.now();
+      var t1 = nowMs, t0 = rangeMs > 0 ? nowMs - rangeMs : (n > 1 ? pts[0].t : nowMs - 3600000);
+      var tAtX = t0 + ((ev.clientX - rect.left - x0) / (x1 - x0)) * (t1 - t0);
+      var idx = 0, bestD = Infinity;
+      for (var i = 0; i < n; i++){
+        var d = Math.abs(pts[i].t - tAtX);
+        if (d < bestD){ bestD = d; idx = i; }
+      }
       state.hoverIdx = idx;
       drawChart();
       showTip(ev, idx, n);
@@ -2764,7 +2784,9 @@
         ? '<div class="mini">'+rows.map(function(r){
             var pct = Math.max(0, Math.min(100, Number(r.pct) || 0));
             return '<div class="mini-row"><span class="n" title="'+esc(r.key)+'">'+esc(r.key)+'</span>'+
-              '<span class="bar"><i style="width:'+pct+'%"></i></span><b>'+compact(r.requests)+'</b></div>';
+              '<span class="bar"><i style="width:'+pct+'%"></i></span>'+
+              '<span class="lat" title="P50 / P999 耗时">'+msCell(r.p50_ms)+' / '+msCell(r.p999_ms)+'</span>'+
+              '<b>'+compact(r.requests)+'</b></div>';
           }).join("")+'</div>'
         : '<div class="mini"><div class="mini-row"><span class="n">'+esc(t("ov.rank.empty"))+'</span></div></div>';
       return '<div class="card rank-card">'+head+body+'</div>';
@@ -2846,9 +2868,9 @@
         '<td class="num" style="text-align:right">'+r.requests+'</td>'+
         '<td class="num"'+errStyle+'>'+r.errors+'</td>'+
         '<td><span class="pct"><i style="width:'+pct+'%"></i></span><b class="pct-n">'+pct.toFixed(1)+'%</b></td>'+
-        '<td class="num" style="text-align:right">'+(r.avg_ms ? r.avg_ms + ' ms' : '—')+'</td>'+
-        '<td class="num" style="text-align:right">'+(r.p50_ms ? r.p50_ms + ' ms' : '—')+'</td>'+
-        '<td class="num" style="text-align:right">'+(r.p999_ms ? r.p999_ms + ' ms' : '—')+'</td>'+
+        '<td class="num" style="text-align:right">'+msCell(r.avg_ms)+'</td>'+
+        '<td class="num" style="text-align:right">'+msCell(r.p50_ms)+'</td>'+
+        '<td class="num" style="text-align:right">'+msCell(r.p999_ms)+'</td>'+
       '</tr>';
     }).join("");
     // 每秒重建会把正在拖的选区、正在点的那一行一起抹掉（和 Top 表同一个坑）
@@ -5321,6 +5343,7 @@
     $("f-server-header").value=c.server.server_header==null?"":c.server.server_header;
     $("f-mask-debug").value=c.server.mask_debug_headers?"true":"false";
     $("f-trusted").value=(c.server.trusted_proxies||[]).join(", ");
+    $("f-trust-xff").value=c.server.trust_xff?"true":"false";
     var dl=c.delivery||{};
     $("f-delivery-webui").value=String(dl.webui!==false);
     $("f-delivery-ws").value=String(dl.websocket!==false);
@@ -5405,6 +5428,7 @@
     cfg.server.trusted_proxies=$("f-trusted").value
       .split(",").map(function(x){ return x.trim(); })
       .filter(function(x){ return x.length>0; });
+    cfg.server.trust_xff=$("f-trust-xff").value==="true";
     cfg.delivery=cfg.delivery||{};
     cfg.delivery.webui=$("f-delivery-webui").value==="true";
     cfg.delivery.websocket=$("f-delivery-ws").value==="true";

@@ -111,6 +111,12 @@ pub struct ServerConfig {
     /// 例如 ["10.0.0.0/8", "172.16.0.0/12", "2408:8000::/20"]。
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub trusted_proxies: Vec<String>,
+    /// 信任所有 `X-Forwarded-For`（不管直连对端是否在 trusted_proxies 里）。
+    ///
+    /// 前面挂 CDN/反代、且它会在 XFF 里写真实 IP 时用这个开关，
+    /// 省得去维护一堆会变的 CDN 出口网段。代价：客户端伪造的 XFF 也会被当真，
+    /// IP 黑名单/限流/审计里的来源 IP 都可能被绕过——只在你确定链路可信时开。
+    pub trust_xff: bool,
     /// 上游连接的空闲保活时长（秒）。connector 层：连接空闲这么久就关。
     /// 默认 30——长到能吃到复用红利，短到不会在"后端已经关掉它"之后还攥着半死连接。
     #[serde(default = "default_upstream_keepalive")]
@@ -875,6 +881,7 @@ impl Default for ServerConfig {
             server_header: "optical".into(),
             mask_debug_headers: false,
             trusted_proxies: Vec::new(),
+            trust_xff: false,
             upstream_keepalive_secs: default_upstream_keepalive(),
             upstream_pool_idle_secs: default_upstream_keepalive(),
             upstream_pool_max_idle: default_upstream_pool_max_idle(),
