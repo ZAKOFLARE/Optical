@@ -4267,6 +4267,7 @@
     });
     $("f-look-mask").addEventListener("input", function(){
       if ($("look-mask-v")) $("look-mask-v").textContent = this.value + "%";
+      previewLook(); // 和 panel_alpha 一样拖动即时应用，别只更新数字
     });
     $("f-look-alpha").addEventListener("input", function(){
       if ($("look-alpha-v")) $("look-alpha-v").textContent = this.value + "%";
