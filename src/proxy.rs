@@ -1621,15 +1621,41 @@ pub(crate) fn client_ip(
     trusted: &[String],
     trust_all: bool,
 ) -> std::net::IpAddr {
-    // trust_all：显式信任所有 XFF（CDN 场景，省得维护会变的出口网段）
-    if !trust_all && (trusted.is_empty() || !parse_trusted(trusted, &peer)) {
+    if trust_all {
+        // 信任所有转发头（CDN 场景，省得维护会变的出口网段）：整条链都可信，
+        // 真实客户端就是 XFF 最左边第一个 IP。这里和 trusted 分支方向相反——
+        // 那边要"从右往左跳过可信 CDN 节点"，这边链上全是可信的，直接取最左。
+        // 之前误用同一个"从右往左找非可信"循环：trusted 为空时所有地址都算"非可信"，
+        // 于是返回最右边的 CDN 节点，真实客户端被跳过——拨测 IP 统计成半吊子正是它。
+        if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+            for cand in xff.split(',') {
+                if let Ok(a) = cand.trim().parse::<std::net::IpAddr>() {
+                    return a;
+                }
+            }
+        }
+        // 部分 CDN 只给专有头，不给标准 XFF
+        // EdgeOne 用 EO-Connecting-IP，Cloudflare 用 CF-Connecting-IP
+        for name in ["eo-connecting-ip", "cf-connecting-ip", "x-real-ip", "true-client-ip"] {
+            if let Some(v) = headers
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                if let Ok(a) = v.parse::<std::net::IpAddr>() {
+                    return a;
+                }
+            }
+        }
         return peer;
     }
-    // 从右往左扫 XFF，找第一个"不在可信段里"的地址（离我们最近的真实客户端）。
-    // 全程零分配：直接在原始字符串上 rsplit/trim/parse，**不** collect 成 Vec<String>。
-    // 那个 Vec（外加每条 String）是每请求一次堆分配；CDN 后面 XFF 常常多跳，
-    // 高 QPS 下就是实打实的性能税——0.3.19 开 trust_xff 后拨测超时变多、解析变慢
-    // 正是它。从左往右取也不行，会被攻击者在最左边伪造的地址坑到。
+    // 默认（不信任所有）：只有直连对端在可信段里才看转发头。
+    // 从右往左扫 XFF，找第一个"不在可信段里"的地址（跳过可信 CDN 节点，取真实客户端）。
+    // 全程零分配：rsplit/trim/parse 直接迭代，不 collect 成 Vec<String>。
+    if trusted.is_empty() || !parse_trusted(trusted, &peer) {
+        return peer;
+    }
     let mut had_xff = false;
     if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
         had_xff = true;
@@ -1642,8 +1668,7 @@ pub(crate) fn client_ip(
         }
     }
     if !had_xff {
-        // 部分 CDN 只给专有头，不给标准 XFF
-        // EdgeOne 用 EO-Connecting-IP，Cloudflare 用 CF-Connecting-IP
+        // 没标准 XFF 时，回退 CDN 专有头（EO-Connecting-IP / CF-Connecting-IP 等）
         for name in ["eo-connecting-ip", "cf-connecting-ip", "x-real-ip", "true-client-ip"] {
             if let Some(v) = headers
                 .get(name)
@@ -2253,6 +2278,18 @@ mod tests {
         // server.trust_xff = true：跳过可信段判断，直接用 XFF（CDN 场景，省去维护出口网段）
         let mut h = http::HeaderMap::new();
         h.insert("x-forwarded-for", HeaderValue::from_static("1.2.3.4"));
+        let peer: std::net::IpAddr = "203.0.113.9".parse().unwrap();
+        assert_eq!(client_ip(&h, peer, &[], true).to_string(), "1.2.3.4");
+    }
+
+    #[test]
+    fn trust_xff_true_takes_leftmost_real_client() {
+        // trust_all：真实客户端是 XFF 最左边；多跳时不能取最右的 CDN 节点
+        let mut h = http::HeaderMap::new();
+        h.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("1.2.3.4, 10.0.0.1, 10.0.0.2"),
+        );
         let peer: std::net::IpAddr = "203.0.113.9".parse().unwrap();
         assert_eq!(client_ip(&h, peer, &[], true).to_string(), "1.2.3.4");
     }
