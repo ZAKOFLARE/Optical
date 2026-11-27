@@ -291,6 +291,9 @@ pub fn payload(cfg: &AppearanceConfig, data_dir: &Path) -> serde_json::Value {
         "chart_style": cfg.chart_style,
         // 手改配置写成 0 也不会把面板变成全透明：出口这里再夹一次
         "panel_alpha": if cfg.panel_alpha == 0 { 100 } else { cfg.panel_alpha.clamp(1, 100) },
+        // 蒙版强度：0..100。之前漏在这里，前端重拉配置时拿不到就回落默认 35，
+        // 表现就是"保存后滑块自己往下滑"。
+        "mask_alpha": cfg.mask_alpha.min(100),
         "bg": url_of("bg", &cfg.bg_url),
         "loading": url_of("loading", &cfg.loading_url),
         "login": url_of("login", &cfg.login_url),

@@ -56,12 +56,14 @@
   html,body{margin:0;padding:0;height:100%;overflow:hidden}
   /* 背景图铺在 body 上，再压一层半透明底色：
      纯图片会让 --bg 区域上的说明文字直接糊掉，加层纱既看得见图又看得清字。 */
+  /* 背景图只放图，不再自带 76% 纱：那层纱和 body::before 的 --mask 叠加会把图压两遍
+     （"蒙版重复应用、越来越深"就是它）。统一交给 --mask，强度由用户滑块控制。 */
   body.custom-bg{
-    background-image:linear-gradient(rgba(244,246,249,.76),rgba(244,246,249,.76)), var(--bg-img);
-    background-position:center, center;
-    background-size:cover, cover;
-    background-attachment:fixed, fixed;
-    background-repeat:no-repeat, no-repeat;
+    background-image:var(--bg-img);
+    background-position:center;
+    background-size:cover;
+    background-attachment:fixed;
+    background-repeat:no-repeat;
   }
   /* 全局蒙版：盖在背景之上、内容之下。背景（纯色或自定义图）被压一层主题色，
      组件和空白区不再一边实心一边露底，不透明度拉满/拉到最低时观感统一。 */
@@ -496,7 +498,9 @@
      透明会让登录框浮在"已经渲染了一半的控制台"上面，比不显示背景更难看。
      所以这里复制 body 的那两层背景，保持它是不透明的。 */
   body.custom-bg #login{
-    background-image:linear-gradient(rgba(244,246,249,.76),rgba(244,246,249,.76)), var(--bg-img);
+    /* 登录页独立一层（盖住主界面），body::before 透不过来，所以遮罩得自己画；
+       但强度跟全局 --mask 一致，避免登录页和主界面两种观感。 */
+    background-image:linear-gradient(rgb(var(--mask-rgb) / var(--mask-a)),rgb(var(--mask-rgb) / var(--mask-a))), var(--bg-img);
     background-position:center, center;
     background-size:cover, cover;
     background-attachment:fixed, fixed;
