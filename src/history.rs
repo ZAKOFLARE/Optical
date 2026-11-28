@@ -38,8 +38,11 @@ pub struct Bucketed {
 pub const COARSE_BUCKET_MS: u64 = 3_600_000;
 
 pub struct History {
-    /// 当前每点代表的毫秒数
+    /// 当前每点代表的毫秒数（可能因降采样而增大）
     bucket_ms: u64,
+    /// 配置里的采样间隔（不随降采样变化）。用它判断"配置是否真的变了"，
+    /// 绝不能拿 bucket_ms 比——降采样会把它放大，配置一查就"看着变了"。
+    cfg_bucket_ms: u64,
     /// 点数上限：超了就降采样，绝不无限增长
     cap: usize,
     points: VecDeque<Point>,
@@ -53,8 +56,10 @@ pub struct History {
 
 impl History {
     pub fn new(bucket_ms: u64, cap: usize) -> Self {
+        let b = bucket_ms.max(1000);
         Self {
-            bucket_ms: bucket_ms.max(1000),
+            bucket_ms: b,
+            cfg_bucket_ms: b,
             cap: cap.max(32),
             points: VecDeque::new(),
             coarse: VecDeque::new(),
@@ -106,8 +111,12 @@ impl History {
     pub fn reconfigure(&mut self, bucket_ms: u64, cap: usize) {
         let bucket_ms = bucket_ms.max(1000);
         let cap = cap.max(32);
-        if bucket_ms != self.bucket_ms {
+        // 只认"配置的采样间隔"变化：降采样会把 bucket_ms 放大（5s→20s），
+        // 若拿它跟配置比，每次查询都会误判成"配置变了"并清空历史——
+        // 表现就是"网关跑了 12 小时，图里只剩最近 20 分钟"。
+        if bucket_ms != self.cfg_bucket_ms {
             self.points.clear();
+            self.cfg_bucket_ms = bucket_ms;
             self.bucket_ms = bucket_ms;
             // 小时环不受采集间隔影响：它的桶宽是固定的，清掉反而白丢 90 天
         }
@@ -239,6 +248,22 @@ mod tests {
             requests: req,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn reconfigure_does_not_clear_after_downsample() {
+        // 降采样会把 bucket_ms 放大；reconfigure 若拿它跟配置比，每次查询都会清空历史
+        // cap 有 32 的兜底，所以用 32 点 + 远超它的样本量才会触发降采样
+        let mut h = History::new(5000, 32);
+        for i in 0..400 {
+            h.record(i as i64 * 5000, s(1));
+        }
+        assert!(h.bucket_ms > 5000, "降采样后 bucket 应被放大");
+        let before = h.points.len();
+        // 配置没变（仍是 5000），不该清空、不该丢点
+        h.reconfigure(5000, 32);
+        assert!(!h.points.is_empty(), "配置未变却清空了历史");
+        assert_eq!(h.points.len(), before, "配置未变却改变了点数");
     }
 
     #[test]

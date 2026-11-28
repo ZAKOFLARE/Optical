@@ -131,6 +131,10 @@ pub struct ServerConfig {
     pub upstream_pool_max_idle: usize,
 }
 
+fn default_true() -> bool {
+    true
+}
+
 fn default_upstream_keepalive() -> u64 {
     30
 }
@@ -345,6 +349,11 @@ pub struct ErrorPagesConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MetricsConfig {
+    /// 是否启用统计与分析。false = 完全不采集（record_hit 直接短路），
+    /// 适合硬件极差、扛不住统计开销的场景；代价是分析页/排行榜/延迟分位全空。
+    /// 与 sample_interval_ms 等参数无关：关掉就是彻底不记。
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     /// Top UA / IP 列表长度
     pub top_n: usize,
     /// 采集间隔（毫秒）：服务端按这个节奏记录增量。默认 15 秒。
@@ -976,6 +985,7 @@ impl Default for MetricsConfig {
     fn default() -> Self {
         Self {
             top_n: 8,
+            enabled: true,
             sample_interval_ms: MIN_SAMPLE_MS,
             history_points: 2880,
             history_days: 90,

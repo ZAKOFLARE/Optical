@@ -976,6 +976,9 @@ struct HistoryQuery {
 pub const MAX_RANGE_SECS: u64 = 90 * 86_400;
 
 fn history_json(st: &AppState, gran_secs: u64, range_secs: u64) -> Value {
+    if !st.stats_enabled() {
+        return json!({ "ok": true, "disabled": true, "points": [] });
+    }
     let (sample_ms, points_cap) = st.sampling();
     let gran = gran_secs.clamp((sample_ms / 1000).max(1), 86_400);
     let range = range_secs.clamp(60, MAX_RANGE_SECS);
@@ -1021,6 +1024,15 @@ impl Default for StatsQuery {
 
 /// 排行榜的 JSON 形状，同上。
 fn stats_json(st: &AppState, q: &StatsQuery) -> Value {
+    if !st.stats_enabled() {
+        return json!({
+            "ok": true, "disabled": true,
+            "by": q.by.as_str(), "range_secs": q.range_secs,
+            "rows": [], "total": 0, "returned": 0, "trimmed": false,
+            "latency": { "p50_ms": 0.0, "p90_ms": 0.0, "p99_ms": 0.0, "p999_ms": 0.0 },
+            "filter_fields": q.by.filter_fields(), "dropped_filters": [],
+        });
+    }
     let r = st.stats_query(q.range_secs, q.by, &q.filters, q.limit);
     // total 是整窗真实请求数，不是「返回行之和」：截断后按前者算占比才对得上。
     let total = r.total;

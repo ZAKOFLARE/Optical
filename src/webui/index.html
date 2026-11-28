@@ -1244,6 +1244,7 @@
                 <div class="field"><label data-i18n="cfg.audit_max_bytes">审计日志字节上限</label><input type="number" id="f-au-bytes" min="0" step="1024"></div>
                 <div class="field"><label data-i18n="cfg.audit_enabled">审计日志</label>
                   <select id="f-au-enabled"><option value="true">true</option><option value="false">false</option></select></div>
+                <div class="field"><label data-i18n="cfg.metrics.enabled">启用统计与分析</label><select id="f-metrics-enabled"><option value="true">true</option><option value="false">false</option></select></div>
                 <div class="field"><label data-i18n="cfg.metrics.top_n">Top N</label><input type="number" id="f-top-n" min="1"></div>
                 <div class="field"><label>metrics.history_points<i class="q" data-i18n-tip="tip.histpoints">?</i></label><input type="number" id="f-hist" min="240" max="20000" step="120"></div>
                 <div class="field"><label data-i18n="cfg.metrics.sample_interval_ms">采样间隔（毫秒）</label><input type="number" id="f-sample-ms" min="15000" max="2592000000" step="1000"></div>
@@ -1539,7 +1540,7 @@
       "cfg.maintenance.enabled":"定期维护",
       "cfg.maintenance.interval_secs":"维护间隔（秒）",
       "cfg.max_failed_attempts":"最大失败次数",
-      "cfg.metrics.sample_interval_ms":"采样间隔（毫秒）",
+      "cfg.metrics.enabled":"启用统计与分析（关闭可显著降低 CPU/内存开销）","cfg.metrics.sample_interval_ms":"采样间隔（毫秒）",
       "cfg.metrics.top_n":"Top N",
       "cfg.otpauth_URI":"otpauth 链接",
       "cfg.paths.audit_file":"审计日志文件",
@@ -1692,7 +1693,7 @@
       "ov.pie.cache":"缓存命中","ov.sys":"系统占用","ov.sys.hint":"本进程",
       "ov.sys.mem":"内存","ov.sys.cpu":"CPU","ov.sys.threads":"线程","ov.sys.up":"运行时长",
       "an.tile.req":"请求数","an.tile.bw":"带宽峰值","an.tile.cache":"缓存命中率","an.tile.waf":"WAF 拦截",
-      "an.lat":"延迟分位","an.lat.hint":"整段时间窗内所有请求（不受维度/筛选影响）","lat.p50":"P50","lat.p90":"P90","lat.p99":"P99","lat.p999":"P999","an.cards":"排行榜","an.more":"查看更多","an.click":"点左侧指标切换曲线",
+      "an.disabled":"统计与分析已在配置中关闭（metrics.enabled = false）","an.lat":"延迟分位","an.lat.hint":"整段时间窗内所有请求（不受维度/筛选影响）","lat.p50":"P50","lat.p90":"P90","lat.p99":"P99","lat.p999":"P999","an.cards":"排行榜","an.more":"查看更多","an.click":"点左侧指标切换曲线",
       "rl.title":"自定义规则","rl.add":"+ 新建规则","rl.save":"保存规则",
       "rl.hint":"按域名/路径/请求头这些特征改变网关行为。从上往下看，命中的规则会叠加，越靠下优先级越高。",
       "rl.order":"生效顺序：先过 WAF，再执行能直接给结果的规则（鉴权、强制 HTTPS、跳转、自定义返回、上传上限、WS 开关），然后才是选路、缓存、回源改写、响应头。安全检查在前，所以规则绕不过 WAF。",
@@ -1907,7 +1908,7 @@
       "cfg.maintenance.enabled":"Periodic maintenance",
       "cfg.maintenance.interval_secs":"Maintenance interval (secs)",
       "cfg.max_failed_attempts":"Max failed attempts",
-      "cfg.metrics.sample_interval_ms":"Sampling interval (ms)",
+      "cfg.metrics.enabled":"Enable stats & analytics (turn off to cut CPU/memory cost)","cfg.metrics.sample_interval_ms":"Sampling interval (ms)",
       "cfg.metrics.top_n":"Top N",
       "cfg.otpauth_URI":"otpauth URI",
       "cfg.paths.audit_file":"Audit file",
@@ -2060,7 +2061,7 @@
       "ov.pie.cache":"Cache","ov.sys":"Process","ov.sys.hint":"this process",
       "ov.sys.mem":"Memory","ov.sys.cpu":"CPU","ov.sys.threads":"Threads","ov.sys.up":"Uptime",
       "an.tile.req":"Requests","an.tile.bw":"Peak rate","an.tile.cache":"Cache hit","an.tile.waf":"WAF blocks",
-      "an.lat":"Latency percentiles","an.lat.hint":"All requests in the window (independent of dimension/filter)","lat.p50":"P50","lat.p90":"P90","lat.p99":"P99","lat.p999":"P999","an.cards":"Leaderboards","an.more":"More","an.click":"Click a tile to switch the chart",
+      "an.disabled":"Stats & analytics disabled (metrics.enabled = false)","an.lat":"Latency percentiles","an.lat.hint":"All requests in the window (independent of dimension/filter)","lat.p50":"P50","lat.p90":"P90","lat.p99":"P99","lat.p999":"P999","an.cards":"Leaderboards","an.more":"More","an.click":"Click a tile to switch the chart",
       "rl.title":"Custom rules","rl.add":"+ New rule","rl.save":"Save rules",
       "rl.hint":"Rewrite gateway behaviour by request traits. Rules are evaluated top-down; all matches merge, later ones win.",
       "rl.order":"Order: WAF → short-circuit actions (auth / force HTTPS / redirect / custom response / upload cap / WS) → routing → cache → origin rewrite → response headers.",
@@ -3096,6 +3097,15 @@
   function applyStats(d){
     if (!d) return;
     state.rank = d;
+    if (d.disabled){
+      // 统计已在配置里关掉：别再画空图让人以为"没流量"
+      $("rank-window").textContent = t("an.disabled");
+      renderRank();
+      renderAnTiles();
+      renderLatency();
+      maskOff();
+      return;
+    }
     // 服务端会回显 by：点"查看更多"或别的会话改了维度后，下拉框必须跟着走，
     // 否则就是"表格按路由、下拉写着 IP"这种对不上的状态。
     if (d.by && d.by !== state.rankBy){
@@ -3120,13 +3130,14 @@
     var box = $("lat-grid");
     if (!box) return;
     var l = (state.rank && state.rank.latency) || {};
+    var disabled = !!(state.rank && state.rank.disabled);
     var items = [
       [t("lat.p50"), l.p50_ms], [t("lat.p90"), l.p90_ms],
       [t("lat.p99"), l.p99_ms], [t("lat.p999"), l.p999_ms]
     ];
     box.innerHTML = items.map(function(it){
       var v = it[1];
-      var txt = v == null ? "—" : (v > 0 ? v + " ms" : "<0.1 ms");
+      var txt = disabled ? "—" : (v == null ? "—" : (v > 0 ? v + " ms" : "<0.1 ms"));
       return '<div class="lat-item"><div class="lat-k">'+esc(it[0])+'</div><div class="lat-v">'+txt+'</div></div>';
     }).join("");
   }
@@ -5581,6 +5592,7 @@
     $("f-sh-keep").value=c.storage.config_history_keep; $("f-sh-bytes").value=c.storage.config_history_max_bytes;
     $("f-sh-days").value=c.storage.config_history_keep_days; $("f-au-keep").value=c.storage.audit_keep;
     $("f-au-bytes").value=c.storage.audit_max_bytes; $("f-au-enabled").value=String(!!c.storage.audit_enabled);
+    $("f-metrics-enabled").value=String(!!c.metrics.enabled);
     $("f-top-n").value=c.metrics.top_n; $("f-hist").value=c.metrics.history_points;
     $("f-sample-ms").value=c.metrics.sample_interval_ms||15000;
     var p = c.paths || {};
@@ -5683,6 +5695,7 @@
     cfg.storage.audit_keep=Number($("f-au-keep").value)||0;
     cfg.storage.audit_max_bytes=Number($("f-au-bytes").value)||0;
     cfg.storage.audit_enabled=$("f-au-enabled").value==="true";
+    cfg.metrics.enabled=$("f-metrics-enabled").value==="true";
     cfg.metrics.top_n=Number($("f-top-n").value)||8;
     cfg.metrics.history_points=Number($("f-hist").value)||2880;
     cfg.metrics.sample_interval_ms=Number($("f-sample-ms").value)||15000;

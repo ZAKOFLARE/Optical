@@ -156,6 +156,8 @@ pub struct AppState {
     history: Mutex<crate::history::History>,
     /// 排行榜聚合（按维度 × 时间窗）
     stats: Mutex<crate::stats::StatsStore>,
+    /// 统计总开关（metrics.enabled）。关掉时 record_hit 直接短路，省掉全部采集开销。
+    stats_enabled: std::sync::atomic::AtomicBool,
     /// 采样序列版本号：每采一个点 +1，WS 据此决定要不要重算历史
     pub sample_rev: AtomicU64,
     /// 统计版本号：每记一次请求 +1，没流量时 WS 不必反复算排行榜
@@ -235,6 +237,7 @@ impl AppState {
             config.metrics.sample_interval_ms,
             config.metrics.history_points,
         );
+        let stats_on = config.metrics.enabled;
         Self {
             conf_history: ConfigHistory::with_dir(paths.config_history.clone()),
             audit: AuditLog::with_file(paths.audit_file.clone()),
@@ -249,6 +252,7 @@ impl AppState {
             stats: Mutex::new(crate::stats::StatsStore::default()),
             sample_rev: AtomicU64::new(0),
             stats_rev: AtomicU64::new(0),
+            stats_enabled: std::sync::atomic::AtomicBool::new(stats_on),
             sys_prev: Mutex::new(None),
             apps: Arc::new(crate::apps::AppManager::default()),
             last_sample: Mutex::new(LastSample::default()),
@@ -316,6 +320,8 @@ impl AppState {
         self.overrides.read().await.apply(&mut effective);
         effective.expand_apps();
         effective.validate_ok_in(self.base_dir())?;
+        self.stats_enabled
+            .store(effective.metrics.enabled, std::sync::atomic::Ordering::Relaxed);
         *self.config.write().await = effective;
         // 版本号必须**在这里**同步自增，不能等热重载。
         // 以前的实现只有 watcher 自增：保存后页面立刻 GET 拿到的是旧版本号，
@@ -343,6 +349,8 @@ impl AppState {
         cfg.validate_ok_in(self.base_dir())?;
         self.overrides.read().await.apply(&mut cfg);
         cfg.expand_apps();
+        self.stats_enabled
+            .store(cfg.metrics.enabled, std::sync::atomic::Ordering::Relaxed);
         *self.config.write().await = cfg;
         self.config_rev.fetch_add(1, Ordering::Relaxed);
         self.metrics.reloads.fetch_add(1, Ordering::Relaxed);
@@ -460,6 +468,11 @@ impl AppState {
         dims: crate::stats::ReqDims<'_>,
         upstream_us: u64,
     ) {
+        // 统计总开关关掉时彻底不采集：这是"低配机器省开销"的唯一入口，
+        // 放在最前面，连 ua/ip 的 hashmap 都不碰。
+        if !self.stats_enabled.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
         bump(&self.metrics.ua, ua);
         bump(&self.metrics.ip, ip);
         let mut g = self.metrics.status.lock().unwrap_or_else(|e| e.into_inner());
@@ -688,6 +701,11 @@ impl AppState {
     }
 
     /// 采样设置：采集间隔 + 点数上限。读不到配置时用默认值，绝不 panic。
+    /// 统计总开关是否开启（metrics.enabled）
+    pub fn stats_enabled(&self) -> bool {
+        self.stats_enabled.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     pub fn sampling(&self) -> (u64, usize) {
         match self.try_config() {
             Some(c) => (
