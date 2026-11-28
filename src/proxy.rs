@@ -614,9 +614,10 @@ pub async fn handle(
         apply_rule_headers(
             &mut resp,
             &rule_hit,
-            // 规则级优先：明确设了 expose_rule_header 就听规则的，None 才跟随全局。
-            // 之前写成 cfg && rule != Some(false)，全局脱敏时直接短路，规则设 true 也白搭。
-            rule_hit.actions.expose_rule_header.unwrap_or_else(|| cfg.expose_debug_headers()),
+            // x-optical-rule 只由规则自己决定：None=true 显示、Some(false) 隐藏。
+            // 不再拿全局 mask_debug_headers 兜底——那个开关管的是 upstream/backend
+            // 之类"泄露拓扑"的头，管不到"这条规则想不想露名"。
+            rule_hit.actions.expose_rule_header.unwrap_or(true),
         );
         return resp;
     }
@@ -1130,8 +1131,7 @@ pub async fn handle(
         }
     }
     if !rule_hit.hit.is_empty()
-        && rule_hit.actions.expose_rule_header
-            .unwrap_or_else(|| cfg.expose_debug_headers())
+        && rule_hit.actions.expose_rule_header.unwrap_or(true)
     {
         if let Ok(v) = HeaderValue::from_str(&rule_hit.hit.join(",")) {
             rparts.headers.insert(HeaderName::from_static("x-optical-rule"), v);
@@ -1475,7 +1475,12 @@ async fn websocket_tunnel(
             .unwrap_or_else(|_| error_response(&state, cfg, StatusCode::BAD_GATEWAY, "WS 上游拒绝升级", None));
     }
 
-    let resp_headers = resp.headers().clone();
+    let mut resp_headers = resp.headers().clone();
+    // hyper 的 client 在 101 时会把 Connection / Upgrade 这两个 hop-by-hop 头摘掉
+    // （它自己接管了 upgrade）。转发给浏览器必须补回来，否则浏览器看到"101 但没有
+    // 升级头"直接判失败——表现就是"网关不返回 101 / 响应标头是空的"。
+    resp_headers.insert(CONNECTION, HeaderValue::from_static("Upgrade"));
+    resp_headers.insert(http::header::UPGRADE, HeaderValue::from_static("websocket"));
     let mut resp = resp;
     let upstream_upgrade = hyper::upgrade::on(&mut resp);
     state.metrics.ws_upgrades.fetch_add(1, Ordering::Relaxed);
